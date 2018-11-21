@@ -320,9 +320,9 @@ public:
     this->input_.orthoType = orthoType;
   }
 
-private:
+protected:
   //! Create Belos::OrthoManager instance.
-  void
+  virtual void
   setOrthogonalizer (const std::string& ortho)
   {
     if (ortho_.get () == nullptr || this->input_.orthoType != ortho) {
@@ -384,7 +384,6 @@ private:
     return ortho_->projectAndNormalize (AP, h_array, r_new, Q_array);
   }
 
-protected:
   //! Apply the orthogonalization using Belos' OrthoManager
   void
   projectBelosOrthoManager (const int n,

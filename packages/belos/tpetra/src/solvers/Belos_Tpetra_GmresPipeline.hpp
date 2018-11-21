@@ -42,7 +42,15 @@ public:
   virtual ~GmresPipeline ()
   {}
 
-private:
+protected:
+  virtual void
+  setOrthogonalizer (const std::string& ortho)
+  {
+    if (ortho != "CGS2" && ortho != "MGS") {
+      Gmres<SC, MV, OP>::setOrthogonalizer (ortho);
+    }
+  }
+
   SolverOutput<SC>
   solveOneVec (Teuchos::FancyOStream* outPtr,
                vec_type& X, // in X/out X
@@ -72,8 +80,10 @@ private:
     mag_type b_norm; // initial residual norm
     mag_type b0_norm; // initial residual norm, not left-preconditioned
     mag_type r_norm;
+    dense_matrix_type  C (restart+1, 2, true);
     dense_matrix_type  G (restart+1, restart+1, true);
-    dense_matrix_type  H (restart+1, restart, true);
+    dense_matrix_type  H (restart+1, restart,   true);
+    dense_matrix_type  T (restart+1, restart+1, true);
     dense_vector_type  y (restart+1, true);
     std::vector<mag_type> cs (restart);
     std::vector<SC> sn (restart);
@@ -170,89 +180,226 @@ private:
           // Shift for Newton basis, explicitly for the first iter
           // (rest is done through change-of-basis)
           if (computeRitzValues && iter == 0) {
-            //W.update (-output.ritzValues(iter%ell),  Z, one);
             const complex_type theta = output.ritzValues[iter%ell];
             UpdateNewton<SC, MV>::updateNewtonV (iter, V, theta);
           }
           output.numIters ++;
         }
-        int k = iter+1 - ell; // we synch idot from k-th iteration
+        int k = iter - ell; // we synch idot from k-th iteration
 
         // Compute G and H
         if (k >= 0) {
-          if (k > 0) {
+          if (this->input_.orthoType == "MGS" ||
+              this->input_.orthoType == "CGS2") {
+            // low-synchronous CGS2
+            for (int i = 0; i <= k; i++) {
+              T(i, k) = C(i, 0);
+            }
+            for (int i = 0; i <= k+1; i++) {
+              G(i, k+1) = C(i, 1);
+            }
+
+            // rescaling the previous vector
+            vec_type Vn = * (V.getVectorNonConst (k));
+            vec_type Qn = * (Q.getVectorNonConst (k));
+            const mag_type tkk = STM::squareroot (STS::real (T(k, k)));
+            MVT::MvScale (Vn, one / tkk);
+            MVT::MvScale (Qn, one / tkk);
+            // update T
+            for (int i = 0; i < k; i++) T(i, k) /= tkk;
+            T(k, k) /= T(k, k);
+            // update G
+            G(k, k+1) /= tkk;
+            G(k, k) *= tkk;
+            if (k > 0) {
+              H(k, k-1) *= tkk;
+            }
+
+            // copy T(k, 0:k-1) = T(0:k-1, k);
+            for (int i = 0; i < k; i++) T(k, i) = T(i, k);
+            T(k, k) -= one; // T = Q'*Q - I
+mag_type maxT = std::abs(T(0, 0));
+for (int i = 0; i < k; i++) {
+  for (int j = 0; j <= i; j++) {
+    maxT = std::max(maxT, std::abs(T(i, j)));
+    //printf( " %.2e ",T(i,j) );
+  }
+  //printf( "\n" );
+}
+std::cout << "max:" << maxT << " " << tkk << std::endl;
+
+            // save original coefficients, Q(:,0:n+1)'*Q(:,n+1)
+            dense_vector_type h0 (k+1);
+            for (int i = 0; i < k+1; i++) {
+              h0(i) = G(i, k+1); // original
+            }
+
+            dense_vector_type t (k+1);
+            dense_matrix_type g_prev (Teuchos::View, G, k+1, 1, 0, k+1);
+            if (this->input_.orthoType == "MGS") {
+              // compute G(0:k, k+1) := (I+L)^{-1} G(0:k, k+1)
+              blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::LOWER_TRI,
+                         Teuchos::NO_TRANS, Teuchos::UNIT_DIAG,
+                         k+1, 1,
+                         one, T.values(), T.stride(),
+                              g_prev.values(), g_prev.stride());
+            } else if (this->input_.orthoType == "CGS2") {
+              // update G(0:k, k+1) := (I-T) * G(0:k, k+1), T~=I stores T-I, (for implicitly re-orthogonalize)
+              blas.GEMV(Teuchos::NO_TRANS, k+1, k+1,
+                        -one, T.values(), T.stride(),
+                              g_prev.values(), 1,
+                        zero, t.values(), 1);
+
+              #define REORTHO
+              #ifdef REORTHO
+              //update G(0:k, k)
+              for (int i = 0; i < k+1; i++) {
+                G(i, k+1) += t(i);
+              }
+              #endif
+            }
+
+            // make a copy of the updated coefficient
+            for (int i = 0; i < k+1; i++) {
+              t(i) = G(i, k+1);
+            }
+
+            // copy G into H
+            for (int i = 0; i <= k+1; i++) {
+              H(i, k) = G(i, k+1);
+//printf( " H(%d, %d) = %.2e\n",i,k,H(i,k));
+            }
+
+
+            // merge re-orthogonalization into the coefficient H
+#ifdef REORTHO
+            mag_type oldNorm = STS::real (H(k+1, k));
+            dense_matrix_type h_prev (Teuchos::View, H, k+1, 1, 0, k);
+            #if 1
+            blas.GEMV(Teuchos::NO_TRANS, k+1, k+1,
+                      one, T.values(), T.stride(),
+                           h_prev.values(), 1,
+                      one, t.values(), 1);
+            for (int i = 0; i <= k; ++i) {
+              H(k+1, k) -= (H(i, k) * (h0(i)+(h0(i)- t(i))));
+            }
+            #else
+            blas.GEMV(Teuchos::NO_TRANS, k+1, k+1,
+                      one,  T.values(), T.stride(),
+                            h_prev.values(), 1,
+                      zero, t.values(), 1);
+            for (int i = 0; i <= k; ++i) {
+              H(k+1, k) -= (H(i, k) * (H(i, k) - t(i)));
+            }
+            #endif
+//printf( " H(%d, %d) = %.2e\n",k+1,k,H(k+1,k));
+#else
+            // fix the norm, and update H(0:n, n)
+            for (int i = 0; i <= k; ++i) {
+              H(k+1, k) -= G(i, k+1) * G(i, k+1);
+            }
+#endif
+          } else {
+            // CGS (original single-reduce GMRES)
             req->wait (); // wait for idot
             Kokkos::deep_copy (vals_h, vals);
-
-            for (int i = 0; i <= iter; i++) {
-              G(i, k) = vals_h[i];
-            }
-            for (int i = 0; i <= k; ++i) {
-              H(i, k-1) = G(i, k);
-            }
-            // Integrate shift for Newton basis (applied through
-            // change-of-basis)
-            if (computeRitzValues) {
-              //H(k-1, k-1) += output.getRitzValue((k-1)%ell);
-              const complex_type theta = output.ritzValues[(k-1)%ell];
-              UpdateNewton<SC, MV>::updateNewtonH(k-1, H, theta);
+            for (int i = 0; i <= k+1; i++) {
+              G(i, k+1) = vals_h[i];
+              H(i, k)   = vals_h[i];
+//printf( " H(%d, %d) = %.2e\n",i,k,H(i,k) );
             }
 
             // Fix H
-            for (int i = 0; i < k; ++i) {
-              H(k, k-1) -= (G(i, k)*G(i, k));
+            for (int i = 0; i <= k; ++i) {
+              H(k+1, k) -= (G(i, k+1)*G(i, k+1));
             }
-            TEUCHOS_TEST_FOR_EXCEPTION
-              (STS::real (H(k, k-1)) < STM::zero (), std::runtime_error,
-               "At iteration " << iter << ", H(" << k << ", "
-               << k-1 << ") = " << H(k, k-1) << " < 0.");
-            H(k, k-1) = std::sqrt( H(k, k-1) );
           }
 
-          if (k > 0) {
-            // Orthogonalize V(:, k), k = iter+1-ell
-            vec_type AP = * (Q.getVectorNonConst (k));
-            Teuchos::Range1D index_prev(0, k-1);
-            const MV Qprev = * (Q.subView(index_prev));
-            dense_matrix_type g_prev (Teuchos::View, G, k, 1, 0, k);
-
-            MVT::MvTimesMatAddMv (-one, Qprev, g_prev, one, AP);
-            MVT::MvScale (AP, one/H(k, k-1));
+          // Integrate shift for Newton basis (applied through
+          // change-of-basis)
+          //if (computeRitzValues && k < ell) {
+          if (computeRitzValues) {
+            const complex_type theta = output.ritzValues[k%ell];
+            UpdateNewton<SC, MV>::updateNewtonH(k, H, theta);
           }
-        }
 
-        if (iter < restart) {
-          // Apply change-of-basis to W
-          vec_type W = * (V.getVectorNonConst (iter+1));
-          if (k > 0) {
-            Teuchos::Range1D index_prev(ell, iter);
-            const MV Zprev = * (V.subView(index_prev));
-
-            dense_matrix_type h_prev (Teuchos::View, H, k, 1, 0, k-1);
-            MVT::MvTimesMatAddMv (-one, Zprev, h_prev, one, W);
-
-            MVT::MvScale (W, one/H(k, k-1));
-          }
-        }
-
-        if (k > 0) {
           TEUCHOS_TEST_FOR_EXCEPTION
-            (STS::real (H(k, k-1)) < STM::zero (), std::runtime_error,
-             "At iteration " << k << ", H(" << k << ", " << k-1 << ") = "
-             << H(k, k-1) << " < 0.");
+            (STS::real (H(k+1, k)) < STM::zero (), std::runtime_error,
+             "At iteration " << iter << ", H(" << k+1 << ", "
+             << k << ") = " << H(k+1, k) << " < 0.");
+          H(k+1, k) = std::sqrt( H(k+1, k) );
+
+          // Orthogonalize V(:, k+1), k+1 = iter-ell (using G, potentially removing shifts)
+          vec_type AP = * (Q.getVectorNonConst (k+1));
+          Teuchos::Range1D index_prev(0, k);
+          const MV Qprev = * (Q.subView(index_prev));
+          dense_matrix_type g_prev (Teuchos::View, G, k+1, 1, 0, k+1);
+
+          MVT::MvTimesMatAddMv (-one, Qprev, g_prev, one, AP);
+          MVT::MvScale (AP, one/H(k+1, k));
+        }
+
+        if (k >= 0 && iter < restart) {
+          // Apply change-of-basis to W (using H, potentially with shifts)
+          vec_type W = * (V.getVectorNonConst (iter+1));
+          Teuchos::Range1D index_prev(ell, iter);
+          const MV Zprev = * (V.subView(index_prev));
+
+          dense_matrix_type h_prev (Teuchos::View, H, k+1, 1, 0, k);
+          MVT::MvTimesMatAddMv (-one, Zprev, h_prev, one, W);
+
+          MVT::MvScale (W, one/H(k+1, k));
+        }
+
+        int kk = k;
+        if (this->input_.orthoType == "MGS" ||
+            this->input_.orthoType == "CGS2") {
+          kk --;
+        }
+        if (kk >= 0) {
+          TEUCHOS_TEST_FOR_EXCEPTION
+            (STS::real (H(kk+1, kk)) < STM::zero (), std::runtime_error,
+             "At iteration " << kk << ", H(" << kk+1 << ", " << kk << ") = "
+             << H(kk+1, kk) << " < 0.");
           // NOTE (mfh 16 Sep 2018) It's not entirely clear to me
           // whether the code as given to me was correct for complex
           // arithmetic.  I'll do my best to make it compile.
-          if (STS::real (H(k, k-1)) > STS::real (tolOrtho*G(k, k))) {
+          if (STS::real (H(kk+1, kk)) > STS::real (tolOrtho*G(kk+1, kk+1))) {
             // Apply Givens rotations to new column of H and y
-            this->reduceHessenburgToTriangular (k-1, H, cs, sn, y.values());
+            this->reduceHessenburgToTriangular (kk, H, cs, sn, y.values());
             // Convergence check
-            metric = this->getConvergenceMetric (STS::magnitude (y(k)),
+            metric = this->getConvergenceMetric (STS::magnitude (y(kk+1)),
                                                  b_norm, input);
           }
           else { // breakdown
-            H(k, k-1) = zero;
+            H(kk+1, kk) = zero;
             metric = STM::zero ();
+          }
+          if (outPtr != nullptr) {
+            // Update solution
+            vec_type Y (B.getMap ());
+            vec_type Z (B.getMap ());
+            Tpetra::deep_copy (Y, X);
+            if (kk > 0) {
+              dense_vector_type  z (kk, true);
+              blas.COPY (kk, y.values(), 1, z.values(), 1);
+              blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
+                         Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                         kk, 1, one,
+                         H.values(), H.stride(), z.values(), z.stride());
+              Teuchos::Range1D cols(0, kk-1);
+              Teuchos::RCP<const MV> Qj = Q.subView(cols);
+              dense_vector_type z_iter (Teuchos::View, z.values (), kk);
+              MVT::MvTimesMatAddMv (one, *Qj, z_iter, one, Y);
+            }
+            A.apply (Y, Z);
+            Z.update (one, B, -one);
+            SC z_norm = Z.norm2 (); // residual norm
+            *outPtr << "Current iteration: iter=" << iter << "->" << kk
+                    << ", restart=" << restart
+                    << ", metric=" << metric
+                    << ", real resnorm=" << z_norm << " " << z_norm/b_norm
+                    << endl;
           }
         }
 
@@ -261,15 +408,48 @@ private:
           vec_type AP = * (Q.getVectorNonConst (iter+1));
           Tpetra::deep_copy (AP, * (V.getVectorNonConst (iter+1)));
 
-          // Start all-reduce to compute G(:, iter+1)
-          // [Q(:,1:k-1), V(:,k:iter+1)]'*W
           Teuchos::Range1D index_prev(0, iter+1);
           const MV Qprev  = * (Q.subView(index_prev));
-
-          vec_type W = * (V.getVectorNonConst (iter+1));
-          req = Tpetra::idot (vals, Qprev, W);
+          if (this->input_.orthoType == "MGS" ||
+              this->input_.orthoType == "CGS2") {
+            // Start all-reduce to compute G(:, iter+1)
+            // [Q(:,1:k), V(:,k+1:iter+1)]'* [Q(:,k), V(:,iter+1)]
+            dense_matrix_type c (Teuchos::View, C, iter+2, 2, 0, 0);
+            Teuchos::Range1D index(iter, iter+1);
+            const MV q  = * (Q.subView(index));
+            MVT::MvTransMv(one, Qprev, q, c);
+          } else {
+            // Start all-reduce to compute G(:, iter+1)
+            // [Q(:,1:k), V(:,k+1:iter+1)]'*W
+            vec_type W = * (V.getVectorNonConst (iter+1));
+            req = Tpetra::idot (vals, Qprev, W);
+          }
         }
       } // End of restart cycle
+      if (this->input_.orthoType == "MGS" ||
+          this->input_.orthoType == "CGS2") {
+        int kk = iter - ell - 1;
+        if (kk >= 0) {
+          TEUCHOS_TEST_FOR_EXCEPTION
+            (STS::real (H(kk+1, kk)) < STM::zero (), std::runtime_error,
+             "At iteration " << kk << ", H(" << kk+1 << ", " << kk << ") = "
+             << H(kk+1, kk) << " < 0.");
+          // NOTE (mfh 16 Sep 2018) It's not entirely clear to me
+          // whether the code as given to me was correct for complex
+          // arithmetic.  I'll do my best to make it compile.
+          if (STS::real (H(kk+1, kk)) > STS::real (tolOrtho*G(kk+1, kk+1))) {
+            // Apply Givens rotations to new column of H and y
+            this->reduceHessenburgToTriangular (kk, H, cs, sn, y.values());
+            // Convergence check
+            metric = this->getConvergenceMetric (STS::magnitude (y(kk+1)),
+                                                 b_norm, input);
+          }
+          else { // breakdown
+            H(kk+1, kk) = zero;
+            metric = STM::zero ();
+          }
+        }
+      }
       if (iter > 0) {
         // Update solution
         blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
