@@ -140,6 +140,14 @@ protected:
                                                restart+1);
     auto vals_h = Kokkos::create_mirror_view (vals);
 
+    #define USE_IDOT_FOR_CGS2
+    #ifdef USE_IDOT_FOR_CGS2
+    std::shared_ptr<Tpetra::Details::CommRequest> req2;
+    Kokkos::View<dot_type*, device_type> vals2 ("results2[numVecs]",
+                                               restart+1);
+    auto vals2_h = Kokkos::create_mirror_view (vals2);
+    #endif
+
     // Initialize starting vector
     //Z.scale (one / b_norm);
     G(0, 0) = r_norm*r_norm;
@@ -192,12 +200,26 @@ protected:
           if (this->input_.orthoType == "MGS" ||
               this->input_.orthoType == "CGS2") {
             // low-synchronous CGS2
+            #ifdef USE_IDOT_FOR_CGS2
+            req->wait (); // wait for idot
+            req2->wait (); // wait for idot
+
+            Kokkos::deep_copy (vals_h, vals);
+            for (int i = 0; i <= k; i++) {
+              T(i, k) = vals_h[i];
+            }
+            Kokkos::deep_copy (vals2_h, vals2);
+            for (int i = 0; i <= k+1; i++) {
+              G(i, k+1) = vals2_h[i];
+            }
+            #else
             for (int i = 0; i <= k; i++) {
               T(i, k) = C(i, 0);
             }
             for (int i = 0; i <= k+1; i++) {
               G(i, k+1) = C(i, 1);
             }
+            #endif
 
             // rescaling the previous vector
             vec_type Vn = * (V.getVectorNonConst (k));
@@ -414,10 +436,18 @@ std::cout << "max:" << maxT << " " << tkk << std::endl;
               this->input_.orthoType == "CGS2") {
             // Start all-reduce to compute G(:, iter+1)
             // [Q(:,1:k), V(:,k+1:iter+1)]'* [Q(:,k), V(:,iter+1)]
+            #ifdef USE_IDOT_FOR_CGS2
+            vec_type w1 = * (Q.getVectorNonConst (iter));
+            req = Tpetra::idot (vals, Qprev, w1);
+
+            vec_type w2 = * (Q.getVectorNonConst (iter+1));
+            req2 = Tpetra::idot (vals2, Qprev, w2);
+            #else
             dense_matrix_type c (Teuchos::View, C, iter+2, 2, 0, 0);
             Teuchos::Range1D index(iter, iter+1);
             const MV q  = * (Q.subView(index));
             MVT::MvTransMv(one, Qprev, q, c);
+            #endif
           } else {
             // Start all-reduce to compute G(:, iter+1)
             // [Q(:,1:k), V(:,k+1:iter+1)]'*W
