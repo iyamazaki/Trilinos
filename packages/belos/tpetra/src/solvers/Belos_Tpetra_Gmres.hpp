@@ -553,9 +553,41 @@ protected:
       // restart cycle
       for (iter = 0; iter < restart && metric > input.tol; ++iter) {
         if (outPtr != nullptr) {
+          // Update solution
+          vec_type Y (B.getMap ());
+          vec_type Z (B.getMap ());
+
+          if (iter > 0) {
+            Tpetra::deep_copy (Y, X);
+            dense_vector_type  z (iter, true);
+            blas.COPY (iter, y.values(), 1, z.values(), 1);
+            blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
+                       Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                       iter, 1, one,
+                       H.values(), H.stride(), z.values(), z.stride());
+            Teuchos::Range1D cols(0, iter-1);
+            Teuchos::RCP<const MV> Qj = Q.subView(cols);
+            dense_vector_type z_iter (Teuchos::View, z.values (), iter);
+            if (input.precoSide == "right") {
+              vec_type W1 (B.getMap ());
+              vec_type W2 (B.getMap ());
+
+              MVT::MvTimesMatAddMv (one, *Qj, z_iter, zero, W1);
+              M.apply (W1, W2);
+              Y.update (one, W2, one);
+            }
+            else {
+              MVT::MvTimesMatAddMv (one, *Qj, z_iter, one, Y);
+            }
+            A.apply (Y, Z);
+          }
+          Z.update (one, B, -one);
+          SC z_norm = Z.norm2 (); // residual norm
           *outPtr << "Current iteration: iter=" << iter
                   << ", restart=" << restart
-                  << ", metric=" << metric << endl;
+                  << ", metric=" << metric
+                  << ", real resnorm=" << z_norm << " " << z_norm/b_norm
+                  << endl;
         }
         Indent indent3 (outPtr);
 
