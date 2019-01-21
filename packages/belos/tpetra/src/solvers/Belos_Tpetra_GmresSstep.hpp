@@ -187,6 +187,8 @@ protected:
     if (ortho != "CGS2x" && ortho != "CGS2" && ortho != "CGS1" &&
         ortho != "CGS" && ortho != "MGS") {
       Gmres<SC, MV, OP>::setOrthogonalizer (ortho);
+    } else {
+      this->input_.orthoType = ortho;
     }
   }
 
@@ -272,13 +274,19 @@ protected:
       if (outPtr != nullptr) {
         *outPtr << "Run standard GMRES for first restart cycle" << endl;
       }
+      std::string oldOrthoType (this->input_.orthoType);
       SolverInput<SC> input_gmres = input;
       input_gmres.maxNumIters = input.resCycle;
       input_gmres.computeRitzValues = true;
+      input_gmres.orthoType = "ICGS";
+
+      // default to ICGS
+      setOrthogonalizer (input_gmres.orthoType);
 
       Tpetra::deep_copy (R, B);
       output = Gmres<SC, MV, OP>::solveOneVec (outPtr, X, R, A, M,
                                                input_gmres);
+
       if (output.converged) {
         return output; // standard GMRES converged
       }
@@ -291,6 +299,9 @@ protected:
         r_norm = output.absResid;
       }
       output.numRests++;
+
+      // reset orthogonalizer
+      setOrthogonalizer (oldOrthoType);
     }
 
     // Initialize starting vector
@@ -308,12 +319,12 @@ protected:
     while (output.numIters < input.maxNumIters && ! output.converged) {
       Teuchos::TimeMonitor LocalTimer (*mainTimer);
       if (outPtr != nullptr) {
-        *outPtr << "Restart cycle " << output.numRests << ":" << endl;
+        *outPtr << "Restart cycle " << output.numRests << "(numIters = " << output.numIters << "):" << endl;
       }
       Indent indent2 (outPtr);
-      if (outPtr != nullptr) {
+      /*if (outPtr != nullptr) {
         *outPtr << output;
-      }
+      }*/
 
       if (input.maxNumIters < output.numIters+restart) {
         restart = input.maxNumIters-output.numIters;
@@ -471,8 +482,8 @@ protected:
                 }
                 A.apply (Y, Z);
                 Z.update (one, B, -one);
-                SC z_norm = Z.norm2 (); // residual norm
-                *outPtr << "Current iteration: iter=" << iter
+                SC z_norm = Z.norm2 (); // residual norm from previous step
+                *outPtr << "Current iteration: iter=" << output.numIters-stepSize-1 << ", " << iter
                         << ", restart=" << restart
                         << ", metric=" << metric
                         << ", real resnorm=" << z_norm << " " << z_norm/b_norm
@@ -481,7 +492,8 @@ protected:
             }
 
             // orthogonalize the new vectors against the previous columns
-            rank = projectAndNormalizeCholQR2 (iter, stepSize, step, Q, C, T, G);
+            rank = projectAndNormalizeCholQR2 (output.numIters-stepSize-1,
+                                               iter, stepSize, step, Q, C, T, G);
           } else {
             // orthogonalize
             rank = normalizeCholQR (iter, step, Q, G);
@@ -552,7 +564,7 @@ protected:
             A.apply (Y, Z);
             Z.update (one, B, -one);
             SC z_norm = Z.norm2 (); // residual norm
-            *outPtr << "Current iteration: iter=" << iter
+            *outPtr << "Current iteration: iter=" << output.numIters-1 << ", " << iter
                     << ", restart=" << restart
                     << ", metric=" << metric
                     << ", real resnorm=" << z_norm << " " << z_norm/b_norm
@@ -585,9 +597,9 @@ protected:
       r_norm = P.norm2 (); // residual norm
       output.absResid = r_norm;
       output.relResid = r_norm / b0_norm;
-      if (outPtr != nullptr) {
-          *outPtr << "Residual norm at restart(iter=" << iter << ")=" << output.absResid << " " << output.relResid << endl;
-      }
+      //if (outPtr != nullptr) {
+      //    *outPtr << "Residual norm at restart(iter=" << iter << ")=" << output.absResid << " " << output.relResid << endl;
+      //}
       //printf( " restart(iter=%d, metrit=%.2e, r_norm=%.2e)..\n",iter,metric,r_norm );
 
       metric = this->getConvergenceMetric (r_norm, b0_norm, input);
@@ -798,7 +810,8 @@ protected:
 
   //! Apply the orthogonalization using Belos' OrthoManager
   int
-  projectAndNormalizeCholQR2 (const int iter,
+  projectAndNormalizeCholQR2 (const int numIters,
+                              const int iter,
                               const int stepSize,
                               const int step,
                               MV& Q,
@@ -808,7 +821,6 @@ protected:
   {
     const SC zero = STS::zero ();
     const SC one  = STS::one  ();
-    const SC two  = one+one;
 
     Teuchos::BLAS<LO, SC> blas;
     Teuchos::LAPACK<LO, SC> lapack;
@@ -856,7 +868,7 @@ protected:
           for (int i=0; i < iterPrev; i++) C(j, i) = C(i, j);
         }
 
-        #if 1
+        #if 0
         mag_type maxT = std::abs(C(0, 0));
         for (int i = 0; i < iter; i++) {
           for (int j = 0; j < iter; j++) {
@@ -865,7 +877,7 @@ protected:
           }
           //printf( "\n" );
         }
-        std::cout << "max:" << iter << " " << maxT << std::endl;
+        std::cout << "max:" << numIters << " " << maxT << std::endl;
         #endif
 
         // update H
@@ -923,6 +935,7 @@ protected:
                   one, Rnew.values(), Rnew.stride());
         // H = H - R*P - P*R
         #if 0
+        const SC two  = one+one;
         blas.GEMM(Teuchos::TRANS, Teuchos::NO_TRANS,
                   step+1, step+1, iter,
                  -two, Gnew.values(), Gnew.stride(),
@@ -952,6 +965,42 @@ protected:
       // normalize the new vectors
       // -------------------------
       {
+        #if 0
+        if (! STS::isComplex) {
+          using real_type = typename STS::magnitudeType;
+          using real_vector_type = Teuchos::SerialDenseVector<LO, real_type>;
+
+          int ione = 1;
+          int M = step+1;
+          dense_matrix_type X (M, M, true);
+          real_vector_type S (M, true);
+          for (int i=0; i<M; i++) {
+            X(i, i) = Rnew(i, i);
+            for (int j=i+1; j<M; j++) {
+              X(i, j) = Rnew(i, j);
+              X(j, i) = Rnew(i, j);
+            }
+          }
+          /*for (int i=0; i<M; i++) {
+            for (int j=0; j<M; j++) {
+              printf("%.16e ",X(i, j));
+            }
+            printf("\n");
+          }*/
+          int INFO, LWORK;
+          SC U, VT, TEMP;
+          real_type RWORK;
+          LWORK = -1;
+          lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
+                       &TEMP, LWORK, &RWORK, &INFO);
+          LWORK = Teuchos::as<LO> (STS::real (TEMP));
+          dense_vector_type WORK (LWORK, true);
+          lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
+                       WORK.values (), LWORK, &RWORK, &INFO);
+          std::cout << "cond(G):" << numIters << "," << S(0) << "/" << S(M-1) << '=' << S(0)/S(M-1) << std::endl;
+        }
+        #endif
+
         // Compute the Cholesky factorization of R in place
         int info = 0;
         lapack.POTRF ('U', step+1, Rnew.values (), Rnew.stride(), &info);

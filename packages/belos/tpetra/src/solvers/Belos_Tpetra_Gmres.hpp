@@ -521,6 +521,7 @@ protected:
       Tpetra::deep_copy (B, P);
       return output;
     }
+    r_norm = b_norm;
 
     Teuchos::BLAS<LO ,SC> blas;
     Teuchos::LAPACK<LO ,SC> lapack;
@@ -557,9 +558,10 @@ protected:
           vec_type Y (B.getMap ());
           vec_type Z (B.getMap ());
 
+          SC z_norm = r_norm; // residual norm at previous restart
           if (iter > 0) {
             Tpetra::deep_copy (Y, X);
-            dense_vector_type  z (iter, true);
+            dense_vector_type z (iter, true);
             blas.COPY (iter, y.values(), 1, z.values(), 1);
             blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
                        Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
@@ -580,10 +582,11 @@ protected:
               MVT::MvTimesMatAddMv (one, *Qj, z_iter, one, Y);
             }
             A.apply (Y, Z);
+
+            Z.update (one, B, -one);
+            z_norm = Z.norm2 (); // residual norm
           }
-          Z.update (one, B, -one);
-          SC z_norm = Z.norm2 (); // residual norm
-          *outPtr << "Current iteration: iter=" << iter
+          *outPtr << "Current iteration: iter=" << output.numIters << ", " << iter
                   << ", restart=" << restart
                   << ", metric=" << metric
                   << ", real resnorm=" << z_norm << " " << z_norm/b_norm
