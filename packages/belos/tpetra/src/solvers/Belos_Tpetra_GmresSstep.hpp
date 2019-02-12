@@ -127,6 +127,7 @@ public:
   GmresSstep () :
     base_type::Gmres (),
     stepSize_ (1),
+    useCholQR2_ (false),
     tsqr_ (Teuchos::null)
   {
     this->input_.computeRitzValues = true;
@@ -135,6 +136,7 @@ public:
   GmresSstep (const Teuchos::RCP<const OP>& A) :
     base_type::Gmres (A),
     stepSize_ (1),
+    useCholQR2_ (false),
     tsqr_ (Teuchos::null)
   {
     this->input_.computeRitzValues = true;
@@ -157,31 +159,36 @@ public:
   virtual void
   setParameters (Teuchos::ParameterList& params) {
     base_type::setParameters (params);
-    constexpr bool useCholQR_default = true;
-
     int stepSize = stepSize_;
     if (params.isParameter ("Step Size")) {
       stepSize = params.get<int> ("Step Size");
     }
 
-    bool useCholQR = useCholQR_default;
+    bool useCholQR  = true;
     if (params.isParameter ("CholeskyQR")) {
       useCholQR = params.get<bool> ("CholeskyQR");
     }
+    bool useCholQR2 = false;
+    if (params.isParameter ("CholeskyQR2")) {
+      useCholQR2 = params.get<bool> ("CholeskyQR2");
+    }
 
-    if (useCholQR && tsqr_.is_null ()) {
+    if ((useCholQR || useCholQR2) && tsqr_.is_null ()) {
       tsqr_ = Teuchos::rcp (new CholQR<SC, MV, OP> ());
     }
     stepSize_ = stepSize;
+    useCholQR2_ = useCholQR2;
   }
 
 protected:
   virtual void
   setOrthogonalizer (const std::string& ortho)
   {
-    if (ortho != "CGS2" && ortho != "CGS1" &&
+    if (ortho != "CGS2x" && ortho != "CGS2" && ortho != "CGS1" &&
         ortho != "CGS" && ortho != "MGS") {
       Gmres<SC, MV, OP>::setOrthogonalizer (ortho);
+    } else {
+      this->input_.orthoType = ortho;
     }
   }
 
@@ -234,6 +241,7 @@ protected:
     vec_type R (B.getMap ());
     vec_type MP (B.getMap ());
     MV  Q (B.getMap (), restart+1);
+    MV  W (B.getMap (), restart+1); // for lagged re-normalization
     vec_type P = * (Q.getVectorNonConst (0));
 
     // Compute initial residual (making sure R = B - Ax)
@@ -266,13 +274,19 @@ protected:
       if (outPtr != nullptr) {
         *outPtr << "Run standard GMRES for first restart cycle" << endl;
       }
+      std::string oldOrthoType (this->input_.orthoType);
       SolverInput<SC> input_gmres = input;
       input_gmres.maxNumIters = input.resCycle;
       input_gmres.computeRitzValues = true;
+      input_gmres.orthoType = "ICGS";
+
+      // default to ICGS
+      setOrthogonalizer (input_gmres.orthoType);
 
       Tpetra::deep_copy (R, B);
       output = Gmres<SC, MV, OP>::solveOneVec (outPtr, X, R, A, M,
                                                input_gmres);
+
       if (output.converged) {
         return output; // standard GMRES converged
       }
@@ -285,6 +299,9 @@ protected:
         r_norm = output.absResid;
       }
       output.numRests++;
+
+      // reset orthogonalizer
+      setOrthogonalizer (oldOrthoType);
     }
 
     // Initialize starting vector
@@ -302,12 +319,12 @@ protected:
     while (output.numIters < input.maxNumIters && ! output.converged) {
       Teuchos::TimeMonitor LocalTimer (*mainTimer);
       if (outPtr != nullptr) {
-        *outPtr << "Restart cycle " << output.numRests << ":" << endl;
+        *outPtr << "Restart cycle " << output.numRests << "(numIters = " << output.numIters << "):" << endl;
       }
       Indent indent2 (outPtr);
-      if (outPtr != nullptr) {
+      /*if (outPtr != nullptr) {
         *outPtr << output;
-      }
+      }*/
 
       if (input.maxNumIters < output.numIters+restart) {
         restart = input.maxNumIters-output.numIters;
@@ -359,14 +376,20 @@ protected:
             const complex_type theta = output.ritzValues[step];
             UpdateNewton<SC, MV>::updateNewtonV(iter+step, Q, theta);
           }
+
+          // Save A*Q for lagged re-orthogonalization
+          vec_type Wj = * (W.getVectorNonConst (iter+step));
+          Tpetra::deep_copy (Wj, AP);
+
           output.numIters++;
         }
 
         // Orthogonalization
-        if (this->input_.orthoType == "CGS2" || // block CGS2 + CholQR2
-            this->input_.orthoType == "CGS1" || // block CGS1 + CholQR2
-            this->input_.orthoType == "CGS" ||  // block CGS1 + CholQR
-            this->input_.orthoType == "MGS") {  // block MGS  + CholQR2
+        if (this->input_.orthoType == "CGS2x" || // block CGS2 + explicit reortho + CholQR2
+            this->input_.orthoType == "CGS2"  || // block CGS2 + CholQR2
+            this->input_.orthoType == "CGS1"  || // block CGS1 + CholQR2
+            this->input_.orthoType == "CGS"   || // block CGS1 + CholQR
+            this->input_.orthoType == "MGS") {   // block MGS  + CholQR2
           Teuchos::TimeMonitor LocalTimer (*orthTimer);
 
           if (iter > 0) {
@@ -400,7 +423,9 @@ protected:
               MVT::MvTransMv(one, *Qi, Qnext, *c);
 
               // re-normalize the previous s-step set of vectors (lagged)
-              reNormalizeCholQR2 (iterPrev, stepSize, step, Q, C, G);
+              if (useCholQR2_) {
+                reNormalizeCholQR2 (iterPrev, stepSize, step, Q, C, G);
+              }
 
               // update Hessenburg matrix from previous iter (lagged)
               //printf( "\n updateHessenbug(iterPrev=%d, stepSize=%d)\n",iterPrev,stepSize );
@@ -457,8 +482,8 @@ protected:
                 }
                 A.apply (Y, Z);
                 Z.update (one, B, -one);
-                SC z_norm = Z.norm2 (); // residual norm
-                *outPtr << "Current iteration: iter=" << iter
+                SC z_norm = Z.norm2 (); // residual norm from previous step
+                *outPtr << "Current iteration: iter=" << output.numIters-stepSize-1 << ", " << iter
                         << ", restart=" << restart
                         << ", metric=" << metric
                         << ", real resnorm=" << z_norm << " " << z_norm/b_norm
@@ -467,8 +492,10 @@ protected:
             }
 
             // orthogonalize the new vectors against the previous columns
-            rank = projectAndNormalizeCholQR2 (iter, stepSize, step, Q, C, T, G);
+            rank = projectAndNormalizeCholQR2 (output.numIters-stepSize-1,
+                                               iter, stepSize, step, Q, C, T, G);
           } else {
+            // orthogonalize
             rank = normalizeCholQR (iter, step, Q, G);
           }
         } else { // Belos block OrthoManager + CholQR
@@ -478,10 +505,11 @@ protected:
           rank = normalizeCholQR (iter, step, Q, G);
         }
 
-        if (//(this->input_.orthoType != "CGS2" &&
-             //this->input_.orthoType != "CGS1" &&
+        if ((this->input_.orthoType != "CGS2x" &&
+             this->input_.orthoType != "CGS2"  &&
+             this->input_.orthoType != "CGS1"  &&
              //this->input_.orthoType != "CGS" && // single-reduce, without renormalization
-             //this->input_.orthoType != "MGS") ||
+             this->input_.orthoType != "MGS") ||
             iter+step >= restart || metric <= input.tol) {
           updateHessenburg (iter, step, output.ritzValues, H, G);
 
@@ -536,7 +564,7 @@ protected:
             A.apply (Y, Z);
             Z.update (one, B, -one);
             SC z_norm = Z.norm2 (); // residual norm
-            *outPtr << "Current iteration: iter=" << iter
+            *outPtr << "Current iteration: iter=" << output.numIters-1 << ", " << iter
                     << ", restart=" << restart
                     << ", metric=" << metric
                     << ", real resnorm=" << z_norm << " " << z_norm/b_norm
@@ -569,9 +597,9 @@ protected:
       r_norm = P.norm2 (); // residual norm
       output.absResid = r_norm;
       output.relResid = r_norm / b0_norm;
-      if (outPtr != nullptr) {
-          *outPtr << "Residual norm at restart(iter=" << iter << ")=" << output.absResid << " " << output.relResid << endl; 
-      }
+      //if (outPtr != nullptr) {
+      //    *outPtr << "Residual norm at restart(iter=" << iter << ")=" << output.absResid << " " << output.relResid << endl;
+      //}
       //printf( " restart(iter=%d, metrit=%.2e, r_norm=%.2e)..\n",iter,metric,r_norm );
 
       metric = this->getConvergenceMetric (r_norm, b0_norm, input);
@@ -712,29 +740,28 @@ protected:
 
     //printf( " reNormalizeCholQR2(%d:%d, iterPrev=%d, iter=%d, stepSize=%d, step=%d..\n",iterPrev,iter, iterPrev,iter,stepSize,step );
     // re-normalize the previous s-step set of vectors (lagged)
-    // making a copy of C(iterPrev,iterPrev) 
-    //  since C(:,iter) is reused for ortho, 
-    //  and G still contains coeff from previous step for convergence check
-    dense_matrix_type Rfix (stepSize+1, stepSize+1, true);
-    for (int i=0; i < stepSize+1; i++) {
-      for (int j=i; j < stepSize+1; j++) {
+    // making a copy of C(iterPrev,iterPrev):
+    // G still contains coeff from previous step for convergence check
+    dense_matrix_type Rfix (stepSize, stepSize, true);
+    for (int i=0; i < stepSize; i++) {
+      for (int j=i; j < stepSize; j++) {
         Rfix(i, j) = C(iterPrev+i, iterPrev+j);
       }
     }
 
     // Compute the Cholesky factorization of R in place
     int info = 0;
-    lapack.POTRF ('U', stepSize+1, Rfix.values (), Rfix.stride(), &info);
+    lapack.POTRF ('U', stepSize, Rfix.values (), Rfix.stride(), &info);
     if (info < 0) {
       // FIXME (mfh 17 Sep 2018) Don't throw; report an error code.
       rank = info;
       throw std::runtime_error("Cholesky factorization failed");
     } else {
-      rank = stepSize+1;
+      rank = stepSize;
     }
 
     // Compute A_cur / R (Matlab notation for A_cur * R^{-1}) in place.
-    Teuchos::Range1D index_old(iterPrev, iter);
+    Teuchos::Range1D index_old(iterPrev, iter-1);
     MV Qold = * (Q.subView(index_old));
 
     Qold.template sync<Kokkos::HostSpace> ();
@@ -752,56 +779,30 @@ protected:
                one, Rfix.values(), Rfix.stride(),
                     Q_lcl_raw, LDQ);
 
-    /*printf( "before T(%d:%d, %d:%d):\n",iterPrev,iter, iterPrev,iter);
-    for (int i = 0; i <= iter; i++) {
-      for (int j = 0; j <= iter; j++) {
-        printf( "%.2e ",C(i, j));
-      }
-      printf( "\n" );
-    }
-    printf( "\n" );*/
-
-    // update coefficients
-    // for (int i = 0; i < n; i++) T(i, n) /= tnn;
-    dense_matrix_type c1(Teuchos::View, C, iter+1, stepSize+1, 0, iterPrev);
-    blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
-               Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-               iter+1, stepSize+1, 
-               one, Rfix.values(), Rfix.stride(),
-                    c1.values(), c1.stride());
-    // H(n, n) /= tnn;
-    dense_matrix_type c2 (Teuchos::View, C, stepSize+1, step+1, iterPrev, iterPrev);
-    blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
-               Teuchos::TRANS, Teuchos::NON_UNIT_DIAG,
-               stepSize+1, stepSize+step+1, 
-               one, Rfix.values(), Rfix.stride(),
-                    c2.values(), c2.stride());
-    /*printf( "after: T(%d:%d, %d:%d):\n",iterPrev,iter, iterPrev,iter);
-    for (int i = 0; i <= iter; i++) {
-      for (int j = 0; j <= iter; j++) {
-        printf( "%.2e ",C(i, j));
-      }
-      printf( "\n" );
-    }
-    printf( "\n" );*/
-
     // merge two R
     // H(n, n-1) *= tnn;
-    dense_matrix_type Rold (Teuchos::View, G, stepSize+1, stepSize+1, iterPrev, 0);
+    dense_matrix_type Rold (Teuchos::View, G, stepSize, stepSize, iterPrev, 0);
     blas.TRMM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
                Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-               stepSize+1, stepSize+1,
+               stepSize, stepSize,
                one, Rfix.values(), Rfix.stride(),
                     Rold.values(), Rold.stride());
 
-    /*printf( "G:\n" );
-    for (int i = 0; i <= iter; i++) {
-      for (int j = 0; j <= stepSize; j++) {
-        printf( "%.2e ",G(i, j));
-      }
-      printf( "\n" );
-    }
-    printf( "\n" );*/
+    // update coefficients
+    // for (int i = 0; i < n; i++) T(i, n) /= tnn;
+    dense_matrix_type c1(Teuchos::View, C, iter, stepSize, 0, iterPrev);
+    blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
+               Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+               iter+1, stepSize,
+               one, Rfix.values(), Rfix.stride(),
+                    c1.values(), c1.stride());
+    // H(n, n) /= tnn;
+    dense_matrix_type c2 (Teuchos::View, C, stepSize, step, iterPrev, iterPrev);
+    blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
+               Teuchos::TRANS, Teuchos::NON_UNIT_DIAG,
+               stepSize, stepSize+step+1,
+               one, Rfix.values(), Rfix.stride(),
+                    c2.values(), c2.stride());
 
     Qold.template sync<typename MV::device_type::memory_space> ();
     return rank;
@@ -809,7 +810,8 @@ protected:
 
   //! Apply the orthogonalization using Belos' OrthoManager
   int
-  projectAndNormalizeCholQR2 (const int iter,
+  projectAndNormalizeCholQR2 (const int numIters,
+                              const int iter,
                               const int stepSize,
                               const int step,
                               MV& Q,
@@ -855,8 +857,9 @@ protected:
           }
         }
         #else
-        for (int i=0; i < stepSize+1; i++) {
-          C(iterPrev+i, iterPrev+i) = zero;
+        for (int i=0; i < stepSize; i++) {
+          //C(iterPrev+i, iterPrev+i) = zero;
+          C(iterPrev+i, iterPrev+i) -= one;
         }
         #endif
 
@@ -867,23 +870,15 @@ protected:
 
         #if 0
         mag_type maxT = std::abs(C(0, 0));
-        for (int i = 0; i <= iter; i++) {
-          for (int j = 0; j <= iter; j++) {
+        for (int i = 0; i < iter; i++) {
+          for (int j = 0; j < iter; j++) {
             //printf( "%.2e ",C(i,j));
             maxT = std::max(maxT, std::abs(C(i, j)));
           }
           //printf( "\n" );
         }
-        //std::cout << "max:" << iter << " " << maxT << std::endl;
+        std::cout << "max:" << numIters << " " << maxT << std::endl;
         #endif
-
-        /*printf( " update H:\n" );
-        for (int i=0; i < iter; i++) {
-          printf( " > T(%d, %d:%d)=",i, 0,iter );
-          for (int j=0; j < iter; j++) printf( "%.2e ",C(i, j) );
-          printf( "\n" );
-        }
-        printf( "\n" );*/
 
         // update H
         if (this->input_.orthoType == "MGS") {
@@ -893,7 +888,8 @@ protected:
                        iter, step+1,
                        one, C.values(), C.stride(),
                             Gnew.values(), Gnew.stride());
-        } else if (this->input_.orthoType == "CGS2") {
+        } else if (this->input_.orthoType == "CGS2x" ||
+                   this->input_.orthoType == "CGS2" ) {
             // H := (I-T)H
             blas.GEMM(Teuchos::NO_TRANS, Teuchos::NO_TRANS,
                       iter, step+1, iter,
@@ -901,34 +897,22 @@ protected:
                            Cnew.values(), Cnew.stride(),
                       one, Gnew.values(), Gnew.stride());
         }
-        /*for (int i = 0; i < iter; i++) {
-          printf( " + H(%d,%d:%d) = ",i,0,step );
-          for (int j = 0; j < step+1; j++) {
-            printf("%.2e, ",G(i, j));
-          }
-          printf("\n");
-        }
-        printf("\n");*/
       }
 
+      // ----------------------------------------------------------
       // orthogonalize the new vectors against the previous columns
+      // ----------------------------------------------------------
       Teuchos::Range1D index_new(iter, iter+step);
       MV Qnew = * (Q.subView(index_new));
 
       Teuchos::Range1D index_prev(0, iter-1);
       Teuchos::RCP< const MV > Qprev = MVT::CloneView(Q, index_prev);
 
-      /*printf( " ortho(0:%d, %d:%d):\n",iter-1,iter,iter+step );
-      for (int i=0; i<iter; i++) {
-        for (int j=0; j<step+1; j++) printf( "%.2e ",Gnew(i,j) );
-        printf( "\n" );
-      }*/
       MVT::MvTimesMatAddMv(-one, *Qprev, Gnew, one, Qnew);
 
       // the scaling factor
       dense_matrix_type Rnew (Teuchos::View, G, step+1, step+1, iter, 0);
       if (this->input_.orthoType != "CGS") {
-      //if (1) {
         // fix the coefficients
         // H-=R*P+P*R-P*(T+I)*P
         dense_matrix_type Ctmp (iter, step+1, true);
@@ -950,6 +934,14 @@ protected:
                        Ctmp.values(), Ctmp.stride(),
                   one, Rnew.values(), Rnew.stride());
         // H = H - R*P - P*R
+        #if 0
+        const SC two  = one+one;
+        blas.GEMM(Teuchos::TRANS, Teuchos::NO_TRANS,
+                  step+1, step+1, iter,
+                 -two, Gnew.values(), Gnew.stride(),
+                       Gnew.values(), Gnew.stride(),
+                  one, Rnew.values(), Rnew.stride());
+        #else
         blas.GEMM(Teuchos::TRANS, Teuchos::NO_TRANS,
                   step+1, step+1, iter,
                  -one, Gnew.values(), Gnew.stride(),
@@ -960,6 +952,7 @@ protected:
                  -one, Cnew.values(), Cnew.stride(),
                        Gnew.values(), Gnew.stride(),
                   one, Rnew.values(), Rnew.stride());
+        #endif
       } else {
         blas.GEMM(Teuchos::TRANS, Teuchos::NO_TRANS,
                   step+1, step+1, iter,
@@ -968,8 +961,46 @@ protected:
                   one, Rnew.values(), Rnew.stride());
       }
 
+      // -------------------------
       // normalize the new vectors
+      // -------------------------
       {
+        #if 0
+        if (! STS::isComplex) {
+          using real_type = typename STS::magnitudeType;
+          using real_vector_type = Teuchos::SerialDenseVector<LO, real_type>;
+
+          int ione = 1;
+          int M = step+1;
+          dense_matrix_type X (M, M, true);
+          real_vector_type S (M, true);
+          for (int i=0; i<M; i++) {
+            X(i, i) = Rnew(i, i);
+            for (int j=i+1; j<M; j++) {
+              X(i, j) = Rnew(i, j);
+              X(j, i) = Rnew(i, j);
+            }
+          }
+          /*for (int i=0; i<M; i++) {
+            for (int j=0; j<M; j++) {
+              printf("%.16e ",X(i, j));
+            }
+            printf("\n");
+          }*/
+          int INFO, LWORK;
+          SC U, VT, TEMP;
+          real_type RWORK;
+          LWORK = -1;
+          lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
+                       &TEMP, LWORK, &RWORK, &INFO);
+          LWORK = Teuchos::as<LO> (STS::real (TEMP));
+          dense_vector_type WORK (LWORK, true);
+          lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
+                       WORK.values (), LWORK, &RWORK, &INFO);
+          std::cout << "cond(G):" << numIters << "," << S(0) << "/" << S(M-1) << '=' << S(0)/S(M-1) << std::endl;
+        }
+        #endif
+
         // Compute the Cholesky factorization of R in place
         int info = 0;
         lapack.POTRF ('U', step+1, Rnew.values (), Rnew.stride(), &info);
@@ -1000,18 +1031,16 @@ protected:
         rank = ncols;
       }
 
-      #if 0
-      if (this->input_.orthoType == "CGS2") {
+      if (this->input_.orthoType == "CGS2x") {
         // reorthogonalize against previous vectors
         dense_matrix_type Greo (iter, step+1, true);
         MVT::MvTransMv(one, *Qprev, Qnew, Greo);
 
         MVT::MvTimesMatAddMv(-one, *Qprev, Greo, one, Qnew);
-        //for (int i=0; i<iter; i++) {
-        //  for (int j=0; j<step+1; j++) Gnew(i, j) += Greo(i, j);
-        //}
+        for (int i=0; i<iter; i++) {
+          for (int j=0; j<step+1; j++) Gnew(i, j) += Greo(i, j);
+        }
       }
-      #endif
     } else {
       rank = normalizeCholQR (iter, step, Q, G);
     }
@@ -1021,6 +1050,7 @@ protected:
 
 private:
   int stepSize_;
+  bool useCholQR2_;
   Teuchos::RCP<CholQR<SC, MV, OP> > tsqr_;
 };
 
