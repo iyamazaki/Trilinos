@@ -231,6 +231,10 @@ protected:
     dense_matrix_type  G (restart+1, step+1,    true);  // Upper-triangular matrix from ortho process
     dense_matrix_type  C (restart+1, restart+1, true);
     dense_vector_type  y (restart+1, true);
+
+    dense_matrix_type  H2 (restart+1, restart,   true);  // Hessenburg matrix, used for early convergence check for CGS2
+    dense_matrix_type  T2 (restart+1, restart,   true);  // H reduced to upper-triangular matrix
+    dense_vector_type  y2 (restart+1, true);
     std::vector<mag_type> cs (restart);
     std::vector<SC> sn (restart);
 
@@ -310,6 +314,7 @@ protected:
     }
     P.scale (one / r_norm);
     y[0] = r_norm;
+    y2[0] = r_norm;
 
     // Main loop
     Teuchos::RCP< Teuchos::Time > mainTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep iteration");
@@ -503,74 +508,103 @@ protected:
 
           this->projectBelosOrthoManager (iter, step, Q, G);
           rank = normalizeCholQR (iter, step, Q, G);
-        }
+        } // End of orthogonalization
 
-        if ((this->input_.orthoType != "CGS2x" &&
-             this->input_.orthoType != "CGS2"  &&
-             this->input_.orthoType != "CGS1"  &&
-             //this->input_.orthoType != "CGS" && // single-reduce, without renormalization
-             this->input_.orthoType != "MGS") ||
-            iter+step >= restart || metric <= input.tol) {
-          updateHessenburg (iter, step, output.ritzValues, H, G);
+        { // convergence check
+          if ((this->input_.orthoType != "CGS2x" &&
+               this->input_.orthoType != "CGS2"  &&
+               this->input_.orthoType != "CGS1"  &&
+               //this->input_.orthoType != "CGS" && // single-reduce, without renormalization
+               this->input_.orthoType != "MGS") ||
+              iter+step >= restart || metric <= input.tol) {
 
-          // Check negative norm
-          TEUCHOS_TEST_FOR_EXCEPTION
-            (STS::real (H(iter+step, iter+step-1)) < STM::zero (),
-             std::runtime_error, "At iteration " << output.numIters << ", H("
-             << iter+step << ", " << iter+step-1 << ") = "
-             << H(iter+step, iter+step-1) << " < 0.");
+            updateHessenburg (iter, step, output.ritzValues, H, G);
 
-          // Convergence check
-          if (rank == step+1 && H(iter+step, iter+step-1) != zero) {
-            // Copy H to T and apply Givens rotations to new columns of T and y
-            for (int iiter = 0; iiter < step; iiter++) {
-              for (int i = 0; i <= iter+iiter+1; i++) {
-                T(i, iter+iiter) = H(i, iter+iiter);
+            // Check negative norm
+            TEUCHOS_TEST_FOR_EXCEPTION
+              (STS::real (H(iter+step, iter+step-1)) < STM::zero (),
+               std::runtime_error, "At iteration " << output.numIters << ", H("
+               << iter+step << ", " << iter+step-1 << ") = "
+               << H(iter+step, iter+step-1) << " < 0.");
+
+            // Convergence check
+            if (rank == step+1 && H(iter+step, iter+step-1) != zero) {
+              // Copy H to T and apply Givens rotations to new columns of T and y
+              for (int iiter = 0; iiter < step; iiter++) {
+                for (int i = 0; i <= iter+iiter+1; i++) {
+                  T(i, iter+iiter) = H(i, iter+iiter);
+                }
+                this->reduceHessenburgToTriangular(iter+iiter, T, cs, sn, y);
               }
-              this->reduceHessenburgToTriangular(iter+iiter, T, cs, sn, y);
+              metric = this->getConvergenceMetric (STS::magnitude (y(iter+step)), b_norm, input);
             }
-            metric = this->getConvergenceMetric (STS::magnitude (y(iter+step)), b_norm, input);
-          }
-          else {
-            metric = STM::zero ();
-          }
+            else {
+              metric = STM::zero ();
+            }
 
-          //printf( " Convergence check(iter=%d, step=%d) metric=%.2e..\n",iter,step,metric );
-          if (outPtr != nullptr) {
-            // Update solution
-            vec_type Y (B.getMap ());
-            vec_type Z (B.getMap ());
+            //printf( " Convergence check(iter=%d, step=%d) metric=%.2e..\n",iter,step,metric );
+            if (outPtr != nullptr) {
+              // Update solution
+              vec_type Y (B.getMap ());
+              vec_type Z (B.getMap ());
 
-            vec_type W1 (B.getMap ());
-            vec_type W2 (B.getMap ());
-            Tpetra::deep_copy (Y, X);
-            dense_vector_type  z (iter+step, true);
-            blas.COPY (iter+step, y.values(), 1, z.values(), 1);
-            blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
-                       Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-                       iter+step, 1, one,
-                       T.values(), T.stride(), z.values(), z.stride());
-            Teuchos::Range1D cols(0, iter+step-1);
-            Teuchos::RCP<const MV> Qj = Q.subView(cols);
-            dense_vector_type z_iter (Teuchos::View, z.values (), iter+step);
-            if (input.precoSide == "right") {
+              vec_type W1 (B.getMap ());
+              vec_type W2 (B.getMap ());
+              Tpetra::deep_copy (Y, X);
+              dense_vector_type  z (iter+step, true);
+              blas.COPY (iter+step, y.values(), 1, z.values(), 1);
+              blas.TRSM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
+                         Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                         iter+step, 1, one,
+                         T.values(), T.stride(), z.values(), z.stride());
+              Teuchos::Range1D cols(0, iter+step-1);
+              Teuchos::RCP<const MV> Qj = Q.subView(cols);
+              dense_vector_type z_iter (Teuchos::View, z.values (), iter+step);
+              if (input.precoSide == "right") {
                 MVT::MvTimesMatAddMv (one, *Qj, z_iter, zero, W1);
                 M.apply (W1, W2);
                 Y.update (one, W2, one);
+              }
+              else {
+                 MVT::MvTimesMatAddMv (one, *Qj, z_iter, one, Y);
+              }
+              A.apply (Y, Z);
+              Z.update (one, B, -one);
+              SC z_norm = Z.norm2 (); // residual norm
+              *outPtr << "Current iteration: iter=" << output.numIters-1 << ", " << iter
+                      << ", restart=" << restart
+                      << ", metric=" << metric
+                      << ", real resnorm=" << z_norm << " " << z_norm/b_norm
+                      << endl;
+            }
+          } else {
+            // convergence check (before re-normalization) in temporary spaces H2, T2, and y2
+            // to avoid extra steps 
+            updateHessenburg (iter, step, output.ritzValues, H2, G);
+
+            // Check negative norm
+            TEUCHOS_TEST_FOR_EXCEPTION
+              (STS::real (H2(iter+step, iter+step-1)) < STM::zero (),
+               std::runtime_error, "At iteration " << output.numIters << ", H("
+               << iter+step << ", " << iter+step-1 << ") = "
+               << H2(iter+step, iter+step-1) << " < 0.");
+
+            // Convergence check
+            if (rank == step+1 && H2(iter+step, iter+step-1) != zero) {
+              // Copy H to T and apply Givens rotations to new columns of T and y
+              for (int iiter = 0; iiter < step; iiter++) {
+                for (int i = 0; i <= iter+iiter+1; i++) {
+                  T2(i, iter+iiter) = H2(i, iter+iiter);
+                }
+                this->reduceHessenburgToTriangular(iter+iiter, T2, cs, sn, y2);
+              }
+              metric = this->getConvergenceMetric (STS::magnitude (y2(iter+step)), b_norm, input);
             }
             else {
-                MVT::MvTimesMatAddMv (one, *Qj, z_iter, one, Y);
+              metric = STM::zero ();
             }
-            A.apply (Y, Z);
-            Z.update (one, B, -one);
-            SC z_norm = Z.norm2 (); // residual norm
-            *outPtr << "Current iteration: iter=" << output.numIters-1 << ", " << iter
-                    << ", restart=" << restart
-                    << ", metric=" << metric
-                    << ", real resnorm=" << z_norm << " " << z_norm/b_norm
-                    << endl;
           }
-        }
+        } // End of convergence check
       } // End of restart cycle
 
       // Update solution
@@ -615,8 +649,10 @@ protected:
         }
         P.scale (one / r_norm);
         y[0] = SC {r_norm};
+        y2[0] = SC {r_norm};
         for (int i=1; i < restart+1; ++i) {
           y[i] = STS::zero ();
+          y2[i] = STS::zero ();
         }
         output.numRests++;
       }
