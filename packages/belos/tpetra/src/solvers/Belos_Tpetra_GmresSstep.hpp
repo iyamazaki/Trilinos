@@ -997,7 +997,9 @@ protected:
           dense_vector_type WORK (LWORK, true);
           lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
                        WORK.values (), LWORK, &RWORK, &INFO);
-          std::cout << "cond(G):" << numIters << "," << S(0) << "/" << S(M-1) << '=' << S(0)/S(M-1) << std::endl;
+          std::cout << "cond(G):" << numIters << ", sqrt(" << S(0) << "/" << S(M-1) << ")="
+                    << "sqrt(" << S(0)/S(M-1) << ")="
+                    << std::sqrt(S(0)/S(M-1)) << std::endl;
         }
         #endif
 
