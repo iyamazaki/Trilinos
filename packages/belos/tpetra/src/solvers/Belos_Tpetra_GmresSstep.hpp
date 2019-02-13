@@ -131,6 +131,7 @@ public:
     tsqr_ (Teuchos::null)
   {
     this->input_.computeRitzValues = true;
+    this->input_.computeRitzValuesOnFly = false;
   }
 
   GmresSstep (const Teuchos::RCP<const OP>& A) :
@@ -140,6 +141,7 @@ public:
     tsqr_ (Teuchos::null)
   {
     this->input_.computeRitzValues = true;
+    this->input_.computeRitzValuesOnFly = false;
   }
 
   virtual ~GmresSstep ()
@@ -202,12 +204,12 @@ protected:
                const SolverInput<SC>& input)
   {
     using std::endl;
-    const int stepSize = stepSize_;
+    int prevStep = 0;
+    int stepSize = stepSize_;
     int restart = input.resCycle;
     int step = stepSize;
     const SC zero = STS::zero ();
     const SC one  = STS::one ();
-    const bool computeRitzValues = input.computeRitzValues;
 
     // initialize output parameters
     SolverOutput<SC> output {};
@@ -233,6 +235,7 @@ protected:
     dense_matrix_type  C (restart+1, restart+1, true);
     dense_vector_type  y (restart+1, true);
 
+    dense_matrix_type  G2 (restart+1, step+1,    true);  // Used to generate Ritz on Fly
     dense_matrix_type  H2 (restart+1, restart,   true);  // Hessenburg matrix, used for early convergence check for CGS2
     dense_matrix_type  T2 (restart+1, restart,   true);  // H reduced to upper-triangular matrix
     dense_vector_type  y2 (restart+1, true);
@@ -273,7 +276,7 @@ protected:
       // Return residual norm as B
       Tpetra::deep_copy (B, P);
       return output;
-    } else if (computeRitzValues) {
+    } else if (input.computeRitzValues && !input.computeRitzValuesOnFly) {
       // Invoke standard Gmres for the first restart cycle, to compute
       // Ritz values for use as Newton shifts
       if (outPtr != nullptr) {
@@ -318,6 +321,7 @@ protected:
     y2[0] = r_norm;
 
     // Main loop
+    std::vector<complex_type> prevRitzValues =  output.ritzValues; // save Ritz values
     Teuchos::RCP< Teuchos::Time > mainTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep iteration");
     Teuchos::RCP< Teuchos::Time > spmvTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep matrix-vector");
     Teuchos::RCP< Teuchos::Time > precTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep preconditioner");
@@ -343,6 +347,12 @@ protected:
         Indent indent3 (outPtr);
 
         // Compute matrix powers
+        prevStep = stepSize;
+        if (input.computeRitzValuesOnFly && iter < stepSize_) {
+          stepSize = 1;
+        } else {
+          stepSize = stepSize_;
+        }
         //printf( "\n -- matrix-power(%d:%d) --\n",iter+1,iter+stepSize );
         for (step=0; step < stepSize && iter+step < restart; step++) {
           // AP = A*P
@@ -399,7 +409,7 @@ protected:
           Teuchos::TimeMonitor LocalTimer (*orthTimer);
 
           if (iter > 0) {
-            int iterPrev = iter-stepSize;
+            int iterPrev = iter-prevStep;
             if (this->input_.orthoType == "CGS") {
               // dot-product for single-reduce orthogonalization
               Teuchos::Range1D index_next(iter, iter+step);
@@ -425,17 +435,18 @@ protected:
 
               // compute coefficient, C(:,iter-stepSize:iter+step) = Q(:,0:iter+step)'*Q(iter-stepSize:iter+step)
               Teuchos::RCP< dense_matrix_type > c
-                = Teuchos::rcp( new dense_matrix_type( Teuchos::View, C, iter+step+1, stepSize+step+1, 0, iterPrev ) );
+                = Teuchos::rcp( new dense_matrix_type( Teuchos::View, C, iter+step+1, prevStep+step+1, 0, iterPrev ) );
               MVT::MvTransMv(one, *Qi, Qnext, *c);
 
               // re-normalize the previous s-step set of vectors (lagged)
               if (useCholQR2_) {
-                reNormalizeCholQR2 (iterPrev, stepSize, step, Q, C, G);
+                reNormalizeCholQR2 (iterPrev, prevStep, step, Q, C, G);
               }
 
               // update Hessenburg matrix from previous iter (lagged)
-              //printf( "\n updateHessenbug(iterPrev=%d, stepSize=%d)\n",iterPrev,stepSize );
-              updateHessenburg (iterPrev, stepSize, output.ritzValues, H, G);
+              //printf( "\n updateHessenbug(iterPrev=%d, prevStep=%d)\n",iterPrev,prevStep );
+              updateHessenburg (iterPrev, prevStep, prevRitzValues, H, G);
+              prevRitzValues = output.ritzValues;
 
               // Check negative norm from previous iter (lagged)
               TEUCHOS_TEST_FOR_EXCEPTION
@@ -445,15 +456,15 @@ protected:
                  << H(iter, iter-1) << " < 0.");
 
               // Convergence check from previous iter (lagged)
-              if (rank == stepSize+1 && H(iter, iter-1) != zero) {
+              if (rank == prevStep+1 && H(iter, iter-1) != zero) {
                 // Copy H to T and apply Givens rotations to new columns of T and y
-                for (int iiter = 0; iiter < stepSize; iiter++) {
+                for (int iiter = 0; iiter < prevStep; iiter++) {
                   for (int i = 0; i <= iterPrev+iiter+1; i++) {
                     T(i, iterPrev+iiter) = H(i, iterPrev+iiter);
                   }
                   this->reduceHessenburgToTriangular(iterPrev+iiter, T, cs, sn, y);
                 }
-                metric = this->getConvergenceMetric (STS::magnitude (y(iterPrev+stepSize)), b_norm, input);
+                metric = this->getConvergenceMetric (STS::magnitude (y(iterPrev+prevStep)), b_norm, input);
               }
               else {
                 metric = STM::zero ();
@@ -489,7 +500,7 @@ protected:
                 A.apply (Y, Z);
                 Z.update (one, B, -one);
                 SC z_norm = Z.norm2 (); // residual norm from previous step
-                *outPtr << "> Current iteration: iter=" << output.numIters-stepSize-1 << ", " << iter
+                *outPtr << "> Current iteration: iter=" << output.numIters-step-1 << ", " << iter
                         << ", restart=" << restart
                         << ", metric=" << metric
                         << ", real resnorm=" << z_norm << " " << z_norm/b_norm
@@ -498,8 +509,8 @@ protected:
             }
 
             // orthogonalize the new vectors against the previous columns
-            rank = projectAndNormalizeCholQR2 (output.numIters-stepSize-1,
-                                               iter, stepSize, step, Q, C, T, G);
+            rank = projectAndNormalizeCholQR2 (output.numIters-step-1,
+                                               iter, prevStep, step, Q, C, T, G);
           } else {
             // orthogonalize
             rank = normalizeCholQR (iter, step, Q, G);
@@ -579,6 +590,18 @@ protected:
                       << ", real resnorm=" << z_norm << " " << z_norm/b_norm
                       << endl;
             }
+
+            if (input.computeRitzValuesOnFly && int (output.ritzValues.size()) == 0 
+                && output.numIters >= stepSize_) {
+              //printf( " ComputeRitzValues(%d, %d, %d)\n",output.numIters, iter+step, stepSize_ );
+              for (int i = 0; i < stepSize_; i++) {
+                for (int iiter = 0; iiter < stepSize_; iiter++) {
+                  G2(i, iiter) = H(i, iiter);
+                }
+              }
+              computeRitzValues (stepSize_, G2, output.ritzValues);
+              sortRitzValues <LO, SC> (stepSize_, output.ritzValues);
+            }
           } else {
             // convergence check (before re-normalization) in temporary spaces H2, T2, and y2
             // to avoid extra steps 
@@ -609,14 +632,27 @@ protected:
             // converged, copy the temporary matrices to the real ones
             if (metric <= input.tol) {
               for (int iiter = 0; iiter < step; iiter++) {
-                  for (int i = 0; i <= iter+iiter+1; i++) {
-                    T(i, iter+iiter) = T2(i, iter+iiter);
-                  }
-                  y[iter+iiter] = y2[iter+iiter];
+                for (int i = 0; i <= iter+iiter+1; i++) {
+                  T(i, iter+iiter) = T2(i, iter+iiter);
+                }
+                y[iter+iiter] = y2[iter+iiter];
               }
+            }
+
+            if (input.computeRitzValuesOnFly && int (output.ritzValues.size()) == 0
+                && output.numIters >= stepSize_) {
+              //printf( " ComputeRitzValues(%d, %d, %d)\n",output.numIters, iter+step, stepSize_ );
+              for (int i = 0; i < stepSize_; i++) {
+                for (int iiter = 0; iiter < stepSize_; iiter++) {
+                  G2(i, iiter) = H2(i, iiter);
+                }
+              }
+              computeRitzValues (stepSize_, G2, output.ritzValues);
+              sortRitzValues <LO, SC> (stepSize_, output.ritzValues);
             }
           }
         } // End of convergence check
+
         //printf ("metric=%.2e, tol=%.2e, iter+step=%d\n\n", metric, input.tol, iter+step );
       } // End of restart cycle
 

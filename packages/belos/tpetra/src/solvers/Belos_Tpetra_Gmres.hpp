@@ -296,6 +296,11 @@ public:
       computeRitzValues = params.get<bool> ("Compute Ritz Values");
     }
 
+    bool computeRitzValuesOnFly = this->input_.computeRitzValuesOnFly;
+    if (params.isParameter ("Compute Ritz Values on Fly")) {
+      computeRitzValuesOnFly = params.get<bool> ("Compute Ritz Values on Fly");
+    }
+
     bool needToReortho = this->input_.needToReortho;
     if (params.isParameter ("Reorthogonalize Blocks")) {
       needToReortho = params.get<bool> ("Reorthogonalize Blocks");
@@ -315,6 +320,7 @@ public:
     }
 
     this->input_.computeRitzValues = computeRitzValues;
+    this->input_.computeRitzValuesOnFly = computeRitzValuesOnFly;
     this->input_.needToReortho = needToReortho;
     this->input_.resCycle = resCycle;
     this->input_.orthoType = orthoType;
