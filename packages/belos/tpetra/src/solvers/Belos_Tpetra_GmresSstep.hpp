@@ -163,6 +163,7 @@ public:
     if (params.isParameter ("Step Size")) {
       stepSize = params.get<int> ("Step Size");
     }
+    this->input_.stepSize = stepSize;
 
     bool useCholQR  = true;
     if (params.isParameter ("CholeskyQR")) {
@@ -488,7 +489,7 @@ protected:
                 A.apply (Y, Z);
                 Z.update (one, B, -one);
                 SC z_norm = Z.norm2 (); // residual norm from previous step
-                *outPtr << "Current iteration: iter=" << output.numIters-stepSize-1 << ", " << iter
+                *outPtr << "> Current iteration: iter=" << output.numIters-stepSize-1 << ", " << iter
                         << ", restart=" << restart
                         << ", metric=" << metric
                         << ", real resnorm=" << z_norm << " " << z_norm/b_norm
@@ -511,6 +512,7 @@ protected:
         } // End of orthogonalization
 
         { // convergence check
+          //printf( " iter+step = %d+%d = %d, restart=%d\n",iter,step,iter+step,restart );
           if ((this->input_.orthoType != "CGS2x" &&
                this->input_.orthoType != "CGS2"  &&
                this->input_.orthoType != "CGS1"  &&
@@ -571,7 +573,7 @@ protected:
               A.apply (Y, Z);
               Z.update (one, B, -one);
               SC z_norm = Z.norm2 (); // residual norm
-              *outPtr << "Current iteration: iter=" << output.numIters-1 << ", " << iter
+              *outPtr << "+ Current iteration: iter=" << output.numIters-1 << ", " << iter
                       << ", restart=" << restart
                       << ", metric=" << metric
                       << ", real resnorm=" << z_norm << " " << z_norm/b_norm
@@ -603,8 +605,19 @@ protected:
             else {
               metric = STM::zero ();
             }
+
+            // converged, copy the temporary matrices to the real ones
+            if (metric <= input.tol) {
+              for (int iiter = 0; iiter < step; iiter++) {
+                  for (int i = 0; i <= iter+iiter+1; i++) {
+                    T(i, iter+iiter) = T2(i, iter+iiter);
+                  }
+                  y[iter+iiter] = y2[iter+iiter];
+              }
+            }
           }
         } // End of convergence check
+        //printf ("metric=%.2e, tol=%.2e, iter+step=%d\n\n", metric, input.tol, iter+step );
       } // End of restart cycle
 
       // Update solution
