@@ -319,11 +319,16 @@ public:
       orthoType = params.get<std::string> ("Orthogonalization");
     }
 
+    int maxOrthoSteps = this->input_.maxOrthoSteps;
+    if (params.isParameter ("Max Orthogonalization Passes")) {
+      maxOrthoSteps = params.get<int> ("Max Orthogonalization Passes");
+    }
     this->input_.computeRitzValues = computeRitzValues;
     this->input_.computeRitzValuesOnFly = computeRitzValuesOnFly;
     this->input_.needToReortho = needToReortho;
     this->input_.resCycle = resCycle;
     this->input_.orthoType = orthoType;
+    this->input_.maxOrthoSteps = maxOrthoSteps;
   }
 
 protected:
@@ -340,8 +345,14 @@ protected:
       // Belos::OrthoManagerFactory here.
       Belos::OrthoManagerFactory<SC, MV, OP> factory;
       Teuchos::RCP<Belos::OutputManager<SC>> outMan; // can be null
-      Teuchos::RCP<Teuchos::ParameterList> params; // can be null
-      ortho_ = factory.makeMatOrthoManager (ortho, Teuchos::null, outMan, "Belos", params);
+      if (this->input_.maxOrthoSteps > 0) {
+        Teuchos::RCP<Teuchos::ParameterList> params = Teuchos::rcp (new Teuchos::ParameterList());
+        params->set ("maxNumOrthogPasses", this->input_.maxOrthoSteps);
+        ortho_ = factory.makeMatOrthoManager (ortho, Teuchos::null, outMan, "Belos", params);
+      } else {
+        Teuchos::RCP<Teuchos::ParameterList> params; // can be null
+        ortho_ = factory.makeMatOrthoManager (ortho, Teuchos::null, outMan, "Belos", params);
+      }
       TEUCHOS_TEST_FOR_EXCEPTION
         (ortho_.get () == nullptr, std::runtime_error, "Gmres: Failed to "
          "create (Mat)OrthoManager of type \"" << ortho << "\".");
