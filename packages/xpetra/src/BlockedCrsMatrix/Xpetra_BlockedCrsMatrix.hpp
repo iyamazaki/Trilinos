@@ -171,7 +171,7 @@ namespace Xpetra {
      * \param npr extimated number of entries per row in each block(!)
      * \param pftype Xpetra profile type
      */
-    BlockedCrsMatrix(const Teuchos::RCP<const Thyra::BlockedLinearOpBase<Scalar> >& thyraOp, const Teuchos::RCP<const Teuchos::Comm<int> >& comm)
+    BlockedCrsMatrix(const Teuchos::RCP<const Thyra::BlockedLinearOpBase<Scalar> >& thyraOp, const Teuchos::RCP<const Teuchos::Comm<int> >& /* comm */)
       : is_diagonal_(true), thyraOp_(thyraOp)
     {
       // extract information from Thyra blocked operator and rebuilt information
@@ -1246,6 +1246,21 @@ namespace Xpetra {
         }
     }
 
+    //! @name Overridden from Teuchos::LabeledObject
+    //@{
+    void setObjectLabel( const std::string &objectLabel ) { 
+      XPETRA_MONITOR("TpetraBlockedCrsMatrix::setObjectLabel"); 
+      for (size_t r = 0; r < Rows(); ++r)
+        for (size_t c = 0; c < Cols(); ++c) {
+          if(getMatrix(r,c)!=Teuchos::null) {
+            std::ostringstream oss; oss<< objectLabel << "(" << r << "," << c << ")";
+            getMatrix(r,c)->setObjectLabel(oss.str());
+          }
+        }   
+    }
+    //@}
+
+
     //! Supports the getCrsGraph() call
     bool hasCrsGraph() const {
       if (Rows() == 1 && Cols () == 1) return true;
@@ -1311,9 +1326,9 @@ namespace Xpetra {
       TEUCHOS_TEST_FOR_EXCEPTION(c > Cols(), std::out_of_range, "Error, c = " << Cols() << " is too big");
 
       // transfer strided/blocked map information
-      if (blocks_[r*Cols()+c] != Teuchos::null &&
+      /*      if (blocks_[r*Cols()+c] != Teuchos::null &&
           blocks_[r*Cols()+c]->IsView("stridedMaps") == false)
-        blocks_[r*Cols()+c]->CreateView("stridedMaps", getRangeMap(r,bRangeThyraMode_), getDomainMap(c,bDomainThyraMode_));
+          blocks_[r*Cols()+c]->CreateView("stridedMaps", getRangeMap(r,bRangeThyraMode_), getDomainMap(c,bDomainThyraMode_));*/
       return blocks_[r*Cols()+c];
     }
 

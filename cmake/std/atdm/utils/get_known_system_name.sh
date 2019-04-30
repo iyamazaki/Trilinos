@@ -16,6 +16,7 @@ if [ "$called" == "$0" ] ; then
   echo "This script '$0' is being called.  Instead, it must be sourced!"
   exit 1
 fi
+unset called
 
 # Assert that ATDM_CONFIG_BUILD_NAME is set!
 if [ -z "$ATDM_CONFIG_BUILD_NAME" ] ; then
@@ -46,8 +47,17 @@ elif [[ $ATDM_CONFIG_REAL_HOSTNAME == "ride"* ]] ; then
 elif [[ $ATDM_CONFIG_REAL_HOSTNAME == "chama"* ]] ; then
   ATDM_HOSTNAME=chama
   ATDM_SYSTEM_NAME=chama
-elif [[ $ATDM_CONFIG_REAL_HOSTNAME == "serrano"* ]] || [[ $ATDM_CONFIG_REAL_HOSTNAME =~ ser[0-9]+ ]] ; then
+elif [[ $ATDM_CONFIG_REAL_HOSTNAME == "serrano"* ]] \
+  || [[ $ATDM_CONFIG_REAL_HOSTNAME =~ ser[0-9]+ ]] ; then
   ATDM_HOSTNAME=serrano
+  ATDM_SYSTEM_NAME=serrano
+elif [[ $ATDM_CONFIG_REAL_HOSTNAME == "eclipse"* ]] \
+  || [[ $ATDM_CONFIG_REAL_HOSTNAME =~ ec[0-9]+ ]] ; then
+  ATDM_HOSTNAME=eclipse
+  ATDM_SYSTEM_NAME=serrano
+elif [[ $ATDM_CONFIG_REAL_HOSTNAME == "ghost"* ]] \
+  || [[ $ATDM_CONFIG_REAL_HOSTNAME =~ gho[0-9]+ ]] ; then
+  ATDM_HOSTNAME=ghost
   ATDM_SYSTEM_NAME=serrano
 elif [[ $ATDM_CONFIG_REAL_HOSTNAME == "mutrino"* ]] ; then
   ATDM_HOSTNAME=mutrino
@@ -58,7 +68,11 @@ elif [[ $ATDM_CONFIG_REAL_HOSTNAME == "waterman"* ]] ; then
 elif [[ -f /projects/sems/modulefiles/utils/get-platform ]] ; then
   # This machine has the SEMS modules!
   ATDM_SYSTEM_NAME=`source /projects/sems/modulefiles/utils/get-platform`
-  if [[ $ATDM_SYSTEM_NAME == "rhel6-x86_64" ]] ; then
+  if [[ $ATDM_SYSTEM_NAME == "rhel7-x86_64" ]] ; then
+    # This is a RHEL7 platform that has the SEMS modules.
+    ATDM_HOSTNAME=sems-rhel7
+    ATDM_SYSTEM_NAME=sems-rhel7
+  elif [[ $ATDM_SYSTEM_NAME == "rhel6-x86_64" ]] ; then
     # This is a RHEL6 platform that has the SEMS modules.  But is this also a
     # CEE LAN mahcine?
     if [[ -f /projects/sparc/modules/cee-rhel6/sparc/master ]] ; then
@@ -91,6 +105,13 @@ elif [[ -f /projects/sems/modulefiles/utils/get-platform ]] ; then
       ATDM_HOSTNAME=sems-rhel6
       ATDM_SYSTEM_NAME=sems-rhel6
     fi
+  else
+    echo
+    echo "***"
+    echo "*** Error, hostname='$ATDM_CONFIG_REAL_HOSTNAME' has the SEMS env"
+    echo "*** mounted but the SEMS system '${ATDM_SYSTEM_NAME}' is not yet supported!"
+    echo "***"
+    return
   fi
 fi
 

@@ -112,9 +112,10 @@ namespace MueLuTests {
     RCP<Matrix> A = Pr->BuildMatrix();
     fineLevel.Request("A");
     fineLevel.Set("A", A);
-    fineLevel.Set("Coordinates", Coordinates);
-    fineLevel.Set("gNodesPerDim", gNodesPerDir);
-    fineLevel.Set("lNodesPerDim", lNodesPerDir);
+    fineLevel.Set("Coordinates",   Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
+    fineLevel.Set("gNodesPerDim",  gNodesPerDir);
+    fineLevel.Set("lNodesPerDim",  lNodesPerDir);
 
     // only one NS vector -> exercises manual orthogonalization
     LocalOrdinal NSdim = 1;
@@ -127,10 +128,9 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -161,8 +161,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // GlobalLexiTentative1D
@@ -214,9 +215,10 @@ namespace MueLuTests {
     RCP<Matrix> A = Pr->BuildMatrix();
     fineLevel.Request("A");
     fineLevel.Set("A", A);
-    fineLevel.Set("Coordinates", Coordinates);
-    fineLevel.Set("gNodesPerDim", gNodesPerDir);
-    fineLevel.Set("lNodesPerDim", lNodesPerDir);
+    fineLevel.Set("Coordinates",   Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
+    fineLevel.Set("gNodesPerDim",  gNodesPerDir);
+    fineLevel.Set("lNodesPerDim",  lNodesPerDir);
 
     // only one NS vector -> exercises manual orthogonalization
     LocalOrdinal NSdim = 1;
@@ -229,10 +231,9 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -263,8 +264,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // GlobalLexiTentative2D
@@ -316,9 +318,10 @@ namespace MueLuTests {
     RCP<Matrix> A = Pr->BuildMatrix();
     fineLevel.Request("A");
     fineLevel.Set("A", A);
-    fineLevel.Set("Coordinates", Coordinates);
-    fineLevel.Set("gNodesPerDim", gNodesPerDir);
-    fineLevel.Set("lNodesPerDim", lNodesPerDir);
+    fineLevel.Set("Coordinates",   Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
+    fineLevel.Set("gNodesPerDim",  gNodesPerDir);
+    fineLevel.Set("lNodesPerDim",  lNodesPerDir);
 
     // only one NS vector -> exercises manual orthogonalization
     LocalOrdinal NSdim = 1;
@@ -331,10 +334,9 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -365,8 +367,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // GlobalLexiTentative3D
@@ -419,9 +422,10 @@ namespace MueLuTests {
     RCP<Matrix> A = Pr->BuildMatrix();
     fineLevel.Request("A");
     fineLevel.Set("A", A);
-    fineLevel.Set("Coordinates", Coordinates);
-    fineLevel.Set("gNodesPerDim", gNodesPerDir);
-    fineLevel.Set("lNodesPerDim", lNodesPerDir);
+    fineLevel.Set("Coordinates",   Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
+    fineLevel.Set("gNodesPerDim",  gNodesPerDir);
+    fineLevel.Set("lNodesPerDim",  lNodesPerDir);
     fineLevel.Set("aggregation: mesh data", meshData);
 
     // only one NS vector -> exercises manual orthogonalization
@@ -435,10 +439,9 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -469,8 +472,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // LocalLexiTentative1D
@@ -523,9 +527,10 @@ namespace MueLuTests {
     RCP<Matrix> A = Pr->BuildMatrix();
     fineLevel.Request("A");
     fineLevel.Set("A", A);
-    fineLevel.Set("Coordinates", Coordinates);
-    fineLevel.Set("gNodesPerDim", gNodesPerDir);
-    fineLevel.Set("lNodesPerDim", lNodesPerDir);
+    fineLevel.Set("Coordinates",   Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
+    fineLevel.Set("gNodesPerDim",  gNodesPerDir);
+    fineLevel.Set("lNodesPerDim",  lNodesPerDir);
     fineLevel.Set("aggregation: mesh data", meshData);
 
     // only one NS vector -> exercises manual orthogonalization
@@ -539,10 +544,9 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -573,8 +577,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // LocalLexiTentative2D
@@ -627,9 +632,10 @@ namespace MueLuTests {
     RCP<Matrix> A = Pr->BuildMatrix();
     fineLevel.Request("A");
     fineLevel.Set("A", A);
-    fineLevel.Set("Coordinates", Coordinates);
-    fineLevel.Set("gNodesPerDim", gNodesPerDir);
-    fineLevel.Set("lNodesPerDim", lNodesPerDir);
+    fineLevel.Set("Coordinates",   Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
+    fineLevel.Set("gNodesPerDim",  gNodesPerDir);
+    fineLevel.Set("lNodesPerDim",  lNodesPerDir);
     fineLevel.Set("aggregation: mesh data", meshData);
 
     // only one NS vector -> exercises manual orthogonalization
@@ -644,10 +650,9 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -678,8 +683,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // LocalLexiTentative3D
@@ -739,6 +745,7 @@ namespace MueLuTests {
     fineLevel.Request("A");
     fineLevel.Set("A", A);
     fineLevel.Set("Coordinates", Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
     fineLevel.Set("gNodesPerDim", gNodesPerDir);
     fineLevel.Set("lNodesPerDim", lNodesPerDir);
     fineLevel.Set("aggregation: mesh data", meshData);
@@ -754,12 +761,11 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: coupling",
+    StructuredAggFact->SetParameter("aggregation: mode",
                                     Teuchos::ParameterEntry(coupling));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -790,8 +796,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // UncoupledLocalLexiTentative1D
@@ -850,9 +857,10 @@ namespace MueLuTests {
     RCP<Matrix> A = Pr->BuildMatrix();
     fineLevel.Request("A");
     fineLevel.Set("A", A);
-    fineLevel.Set("Coordinates", Coordinates);
-    fineLevel.Set("gNodesPerDim", gNodesPerDir);
-    fineLevel.Set("lNodesPerDim", lNodesPerDir);
+    fineLevel.Set("Coordinates",   Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
+    fineLevel.Set("gNodesPerDim",  gNodesPerDir);
+    fineLevel.Set("lNodesPerDim",  lNodesPerDir);
     fineLevel.Set("aggregation: mesh data", meshData);
 
     // only one NS vector -> exercises manual orthogonalization
@@ -866,12 +874,11 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: coupling",
+    StructuredAggFact->SetParameter("aggregation: mode",
                                     Teuchos::ParameterEntry(coupling));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -902,8 +909,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // UncoupledLocalLexiTentative2D
@@ -962,9 +970,10 @@ namespace MueLuTests {
     RCP<Matrix> A = Pr->BuildMatrix();
     fineLevel.Request("A");
     fineLevel.Set("A", A);
-    fineLevel.Set("Coordinates", Coordinates);
-    fineLevel.Set("gNodesPerDim", gNodesPerDir);
-    fineLevel.Set("lNodesPerDim", lNodesPerDir);
+    fineLevel.Set("Coordinates",   Coordinates);
+    fineLevel.Set("numDimensions", numDimensions);
+    fineLevel.Set("gNodesPerDim",  gNodesPerDir);
+    fineLevel.Set("lNodesPerDim",  lNodesPerDir);
     fineLevel.Set("aggregation: mesh data", meshData);
 
     // only one NS vector -> exercises manual orthogonalization
@@ -979,12 +988,11 @@ namespace MueLuTests {
     dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
     RCP<StructuredAggregationFactory> StructuredAggFact = rcp(new StructuredAggregationFactory());
     StructuredAggFact->SetFactory("Graph", dropFact);
+    StructuredAggFact->SetFactory("DofsPerNode", dropFact);
     StructuredAggFact->SetParameter("aggregation: mesh layout",
                                     Teuchos::ParameterEntry(meshLayout));
-    StructuredAggFact->SetParameter("aggregation: coupling",
+    StructuredAggFact->SetParameter("aggregation: mode",
                                     Teuchos::ParameterEntry(coupling));
-    StructuredAggFact->SetParameter("aggregation: number of spatial dimensions",
-                                    Teuchos::ParameterEntry(numDimensions));
     StructuredAggFact->SetParameter("aggregation: coarsening order",
                                     Teuchos::ParameterEntry(0));
     StructuredAggFact->SetParameter("aggregation: coarsening rate",
@@ -1015,8 +1023,9 @@ namespace MueLuTests {
     Teuchos::RCP<Xpetra::Vector<Scalar,LocalOrdinal,GlobalOrdinal,Node> > diagVec = Xpetra::VectorFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>::Build(PtentTPtent->getRowMap());
     PtentTPtent->getLocalDiagCopy(*diagVec);
     if (TST::name().find("complex") == std::string::npos) //skip check for Scalar=complex
-      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<double>(diagVec->getGlobalLength()), 1e-12);
-    TEST_FLOATING_EQUALITY(diagVec->normInf(), 1.0,  1e-12);
+      TEST_FLOATING_EQUALITY(diagVec->norm1(), Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(diagVec->getGlobalLength()), 1e-12);
+    const typename Teuchos::ScalarTraits<Scalar>::magnitudeType expectedNorm = Teuchos::as<typename Teuchos::ScalarTraits<Scalar>::magnitudeType>(1.0);
+    TEST_FLOATING_EQUALITY(diagVec->normInf(), expectedNorm,  1e-12);
     TEST_EQUALITY(PtentTPtent->getGlobalNumEntries(), diagVec->getGlobalLength());
 
   } // UncoupledLocalLexiTentative3D
@@ -1101,13 +1110,14 @@ namespace MueLuTests {
     CDropfact->SetParameter("lightweight wrap", Teuchos::ParameterEntry(true));
     CDropfact->SetParameter("aggregation: drop tol", Teuchos::ParameterEntry(0.0));
 
-    Aggfact->SetParameter("aggregation: coupling", Teuchos::ParameterEntry(std::string("uncoupled")));
+    Aggfact->SetParameter("aggregation: mode", Teuchos::ParameterEntry(std::string("uncoupled")));
 
     Tfact->SetParameter("structured aggregation", Teuchos::ParameterEntry(true));
 
     // Set interfactory dependencies
     CDropfact->SetFactory("UnAmalgamationInfo", AmalgFact);
     Aggfact->SetFactory("Graph", CDropfact);
+    Aggfact->SetFactory("DofsPerNode", CDropfact);
     coarseMapFact->SetFactory("Aggregates", Aggfact);
     Pfact->SetFactory("Aggregates", Aggfact);
     Pfact->SetFactory("CoarseMap", coarseMapFact);
@@ -1122,6 +1132,7 @@ namespace MueLuTests {
     M.SetFactory("Nullspace",          NSfact);
     M.SetFactory("Graph",              CDropfact);
     M.SetFactory("lNodesPerDim",       Tfact);
+    M.SetFactory("numDimensions",      Tfact);
     M.SetFactory("lCoarseNodesPerDim", Aggfact);
 
     // setup smoothers
@@ -1145,7 +1156,8 @@ namespace MueLuTests {
     Finest->Set("A", A);                        // set fine level matrix
     Finest->Set("Nullspace", nullSpace);        // set null space information for finest level
     // Finest->Set("Coordinates", Coordinates);    // set fine level coordinates
-    Finest->Set("lNodesPerDim", lNodesPerDir);  // set GeneralGeometricPFactory specific info
+    Finest->Set("numDimensions", numDimensions);  // set GeneralGeometricPFactory specific info
+    Finest->Set("lNodesPerDim",  lNodesPerDir);  // set GeneralGeometricPFactory specific info
 
     // Setup the hierarchy
     LO maxLevels = 5;

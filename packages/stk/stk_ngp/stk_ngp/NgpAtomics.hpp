@@ -30,8 +30,8 @@
  // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef PACKAGES_STK_STK_LEARNING_KOKKOS_NGPATOMICS_H_
-#define PACKAGES_STK_STK_LEARNING_KOKKOS_NGPATOMICS_H_
+#ifndef STK_NGP_NGPATOMICS_H_
+#define STK_NGP_NGPATOMICS_H_
 
 #include <stk_util/stk_config.h>
 #include <Kokkos_Core.hpp>
@@ -41,7 +41,7 @@ namespace ngp {
 template <typename T> STK_FUNCTION
 void atomic_add(T *dest, const T src)
 {
-#if defined(KOKKOS_HAVE_CUDA) || defined(KOKKOS_HAVE_OPENMP)
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_OPENMP)
     Kokkos::atomic_add(dest, src);
 #else
     *dest += src;
@@ -50,4 +50,4 @@ void atomic_add(T *dest, const T src)
 
 }
 
-#endif /* PACKAGES_STK_STK_LEARNING_KOKKOS_NGPATOMICS_H_ */
+#endif /* STK_NGP_NGPATOMICS_H_ */

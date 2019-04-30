@@ -1,19 +1,12 @@
 #include "mpi.h"
 #include <stk_balance/balance.hpp>
-#include <stk_io/StkMeshIoBroker.hpp>
 
 #include <stk_balance/balanceUtils.hpp>
 #include <stk_balance/internal/Inputs.hpp>
 #include <stk_balance/internal/balanceCommandLine.hpp>
 #include <stk_balance/internal/balanceDefaults.hpp>
 
-#include <stk_mesh/base/MetaData.hpp>
-#include <stk_mesh/base/BulkData.hpp>
-#include <stk_mesh/base/Field.hpp>
-
 #include <stk_util/parallel/ParallelReduceBool.hpp>
-#include <stk_util/command_line/CommandLineParser.hpp>
-#include <stk_util/command_line/CommandLineParserParallel.hpp>
 #include <stk_util/command_line/CommandLineParserUtils.hpp>
 #include <stk_util/environment/FileUtils.hpp>
 
@@ -53,7 +46,13 @@ int main(int argc, const char**argv)
     stk::parallel::require_file_exists(balanceOptions.inFile, execName, quickExample, comm);
 
     stk::balance::print_running_msg(execName, balanceOptions, comm);
-    stk::balance::run_stk_rebalance(balanceOptions.outputDirectory, balanceOptions.inFile, balanceOptions.appTypeDefaults, comm);
+    try {
+        stk::balance::run_stk_rebalance(balanceOptions.outputDirectory, balanceOptions.inFile, balanceOptions.appTypeDefaults, comm);
+    }
+    catch(std::exception& e)
+    {
+        std::cerr<<e.what()<<std::endl;
+    }
 
     MPI_Finalize();
     return 0;

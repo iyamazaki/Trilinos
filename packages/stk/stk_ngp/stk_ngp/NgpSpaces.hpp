@@ -30,44 +30,44 @@
  // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef PACKAGES_STK_STK_LEARNING_KOKKOS_NGPSPACES_H_
-#define PACKAGES_STK_STK_LEARNING_KOKKOS_NGPSPACES_H_
+#ifndef STK_NGP_NGPSPACES_H_
+#define STK_NGP_NGPSPACES_H_
 
 #include <Kokkos_Core.hpp>
 
-#ifdef KOKKOS_HAVE_OPENMP
+#ifdef KOKKOS_ENABLE_OPENMP
 #include <Kokkos_OpenMP.hpp>
 #endif
 
 namespace ngp {
 
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   typedef Kokkos::Cuda     ExecSpace ;
-#elif defined(KOKKOS_HAVE_OPENMP)
+#elif defined(KOKKOS_ENABLE_OPENMP)
   typedef Kokkos::OpenMP   ExecSpace ;
 #else
   typedef Kokkos::Serial   ExecSpace ;
 #endif
 
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   typedef Kokkos::Serial   HostExecSpace ;
-#elif defined(KOKKOS_HAVE_OPENMP)
+#elif defined(KOKKOS_ENABLE_OPENMP)
   typedef Kokkos::OpenMP   HostExecSpace ;
 #else
   typedef Kokkos::Serial   HostExecSpace ;
 #endif
 
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
    typedef Kokkos::CudaSpace    MemSpace;
-#elif defined(KOKKOS_HAVE_OPENMP)
+#elif defined(KOKKOS_ENABLE_OPENMP)
    typedef Kokkos::OpenMP       MemSpace;
 #else
    typedef Kokkos::HostSpace    MemSpace;
 #endif
 
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
 typedef Kokkos::CudaUVMSpace UVMMemSpace;
-#elif defined(KOKKOS_HAVE_OPENMP)
+#elif defined(KOKKOS_ENABLE_OPENMP)
 typedef Kokkos::OpenMP       UVMMemSpace;
 #else
 typedef Kokkos::HostSpace    UVMMemSpace;
@@ -77,4 +77,4 @@ typedef Kokkos::Schedule<Kokkos::Dynamic> ScheduleType;
 
 } // namespace ngp
 
-#endif /* PACKAGES_STK_STK_LEARNING_KOKKOS_NGPSPACES_H_ */
+#endif /* STK_NGP_NGPSPACES_H_ */

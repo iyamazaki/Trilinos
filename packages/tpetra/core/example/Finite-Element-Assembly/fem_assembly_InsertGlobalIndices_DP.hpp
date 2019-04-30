@@ -53,6 +53,7 @@
 #include <Teuchos_CommandLineProcessor.hpp>
 #include <Teuchos_RCP.hpp>
 #include <Teuchos_FancyOStream.hpp>
+#include <Tpetra_Assembly_Helpers.hpp>
 
 #include "fem_assembly_typedefs.hpp"
 #include "fem_assembly_MeshDatabase.hpp"
@@ -62,13 +63,14 @@
 
 namespace TpetraExamples
 {
-using comm_ptr_t = Teuchos::RCP<const Teuchos::Comm<int> >;
 
-int executeInsertGlobalIndicesDP_(const comm_ptr_t& comm, const struct CmdLineOpts& opts);
+int executeInsertGlobalIndicesDP_(const Teuchos::RCP<const Teuchos::Comm<int> >& comm,
+                                  const struct CmdLineOpts& opts);
 
 
 
-int executeInsertGlobalIndicesDP(const comm_ptr_t& comm, const struct CmdLineOpts & opts)
+int executeInsertGlobalIndicesDP(const Teuchos::RCP<const Teuchos::Comm<int> >& comm, 
+                                 const struct CmdLineOpts & opts)
 {
   using Teuchos::RCP;
 
@@ -91,7 +93,8 @@ int executeInsertGlobalIndicesDP(const comm_ptr_t& comm, const struct CmdLineOpt
 
 
 
-int executeInsertGlobalIndicesDP_(const comm_ptr_t& comm, const struct CmdLineOpts& opts)
+int executeInsertGlobalIndicesDP_(const Teuchos::RCP<const Teuchos::Comm<int> >& comm, 
+                                  const struct CmdLineOpts& opts)
 {
   using Teuchos::RCP;
   using Teuchos::TimeMonitor;
@@ -236,7 +239,7 @@ int executeInsertGlobalIndicesDP_(const comm_ptr_t& comm, const struct CmdLineOp
   Teuchos::Array<Scalar> column_scalar_values(4);         // scalar values for each column
 
   // Loop over elements
-  rhs->beginFill();
+  Tpetra::beginFill(*rhs);
   for(size_t element_gidx=0; element_gidx<mesh.getNumOwnedElements(); element_gidx++)
   {
     // Get the contributions for the current element
@@ -277,7 +280,7 @@ int executeInsertGlobalIndicesDP_(const comm_ptr_t& comm, const struct CmdLineOp
   {
     // Global assemble the RHS
     TimeMonitor timer(*TimeMonitor::getNewTimer("5) GlobalAssemble (RHS)"));
-    rhs->endFill();
+    Tpetra::endFill(*rhs);
   }
 
 

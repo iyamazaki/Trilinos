@@ -57,6 +57,21 @@
 #include "Teuchos_DefaultSerialComm.hpp"
 #include "Teuchos_CommHelpers.hpp"
 
+#define TPETRA_GLOBAL_SUCCESS_CHECK(out,comm,success)  \
+  { \
+    int tgscLclSuccess = success ? 1 : 0; \
+    int tgscGblSuccess = 1; \
+    Teuchos::reduceAll<int, int>(*comm, Teuchos::REDUCE_MIN, tgscLclSuccess, Teuchos::outArg (tgscGblSuccess)); \
+    if (tgscGblSuccess == 1) { \
+      out << "Succeeded on all processes!" << endl; \
+    } else { \
+      out << "FAILED on at least one process!" << endl; \
+    } \
+    TEST_EQUALITY_CONST(tgscGblSuccess, 1);  \
+    success = (bool) tgscGblSuccess; \
+  }
+
+
 namespace Tpetra {
   namespace TestingUtilities {
 

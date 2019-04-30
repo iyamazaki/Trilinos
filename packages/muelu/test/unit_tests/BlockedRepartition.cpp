@@ -252,16 +252,7 @@ namespace MueLuTests {
     RCP<RepartitionHeuristicFactory> RepHeuFact = Teuchos::rcp(new RepartitionHeuristicFactory);
     RepHeuFact->SetFactory("A", MueLu::NoFactory::getRCP()); // 2x2 blocked operator
     RepHeuFact->SetParameter("repartition: start level",Teuchos::ParameterEntry(0));
-    int minRowsPerRank=200;
-#if defined(HAVE_MUELU_KOKKOSCORE) && defined(KOKKOS_HAVE_OPENMP)
-    using execution_space = typename Node::device_type::execution_space;
-    if (std::is_same<execution_space, Kokkos::OpenMP>::value)
-    {
-       //Because target value will be multiplied by the # of threads in RepartitionHeuristic
-       minRowsPerRank /= execution_space::concurrency();
-    }
-#endif
-    RepHeuFact->SetParameter("repartition: min rows per proc",Teuchos::ParameterEntry(minRowsPerRank));
+    RepHeuFact->SetParameter("repartition: min rows per proc",Teuchos::ParameterEntry(200));
 
     // define sub block factories for blocked operator "A"
     RCP<SubBlockAFactory> A11Fact = Teuchos::rcp(new SubBlockAFactory());
@@ -374,16 +365,6 @@ namespace MueLuTests {
       return;
     }
     int expectedPartitions=2;
-#if defined(HAVE_MUELU_KOKKOSCORE) && defined(KOKKOS_ENABLE_OPENMP)
-    using execution_space = typename Node::device_type::execution_space;
-    if (std::is_same<execution_space, Kokkos::OpenMP>::value)
-    {
-       int thread_per_mpi_rank = execution_space::concurrency();
-       if (thread_per_mpi_rank > 1)
-          expectedPartitions=1;
-    }
-#endif
-    
     TEST_EQUALITY(nNumProcsReb, expectedPartitions);
 
     //////////////////////////////////////////////////
@@ -744,11 +725,11 @@ namespace MueLuTests {
   TEST_EQUALITY(bOp->getGlobalNumEntries(), 2392);
 
   // coordinates
-  RCP<Xpetra::MultiVector<double,LO,GO,NO> > coord = Xpetra::MultiVectorFactory<double,LO,GO,NO>::Build(bOp->getFullRangeMap(),1);
+  RCP<Xpetra::MultiVector<typename Teuchos::ScalarTraits<Scalar>::magnitudeType,LO,GO,NO> > coord = Xpetra::MultiVectorFactory<typename Teuchos::ScalarTraits<Scalar>::magnitudeType,LO,GO,NO>::Build(bOp->getFullRangeMap(),1);
   int PID = comm->getRank();
-  Teuchos::ArrayRCP<double> coordData = coord->getDataNonConst(0);
+  Teuchos::ArrayRCP<typename Teuchos::ScalarTraits<Scalar>::magnitudeType> coordData = coord->getDataNonConst(0);
   for(size_t i = 0; i < (size_t) coordData.size(); ++i)
-    coordData[i] = PID + (double)i / coordData.size();
+    coordData[i] = PID + (typename Teuchos::ScalarTraits<Scalar>::magnitudeType)i / coordData.size();
 
   // nullspace
   RCP<MultiVector> nullspace = MultiVectorFactory::Build(bOp->getFullRangeMap(),1);

@@ -257,7 +257,7 @@ void testNGPThrowRequireMsg()
 
 TEST(UnitTestingOfThrowMacros, NGP_ThrowRequireMsg)
 {
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   // Unable to test a device-side abort, as this eventually results in a throw
   // inside Kokkos::finalize_all().
   //
@@ -290,11 +290,11 @@ void testNGPThrowRequire()
 
 TEST(UnitTestingOfThrowMacros, NGP_ThrowRequire)
 {
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   // Unable to test a device-side abort, as this eventually results in a throw
   // inside Kokkos::finalize_all().
   //
-  // testNGPThrowRequireMsg();
+  // testNGPThrowRequire();
 #else
 #ifdef NEW_ENOUGH_GCC
   try {
@@ -321,11 +321,11 @@ void testNGPThrowAssertMsg()
 
 TEST(UnitTestingOfThrowMacros, NGP_ThrowAssertMsg_debug)
 {
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   // Unable to test a device-side abort, as this eventually results in a throw
   // inside Kokkos::finalize_all().
   //
-  // testNGPThrowRequireMsg();
+  // testNGPThrowAssertMsg();
 #else
 #ifdef NEW_ENOUGH_GCC
   try {
@@ -353,11 +353,11 @@ void testNGPThrowAssertMsg()
 
 TEST(UnitTestingOfThrowMacros, NGP_ThrowAssertMsg_release)
 {
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   // Unable to test a device-side abort, as this eventually results in a throw
   // inside Kokkos::finalize_all().
   //
-  // testNGPThrowRequireMsg();
+  // testNGPThrowAssertMsg();
 #else
 #ifdef NEW_ENOUGH_GCC
   EXPECT_NO_THROW(testNGPThrowAssertMsg());
@@ -376,11 +376,11 @@ void testNGPThrowErrorMsgIf()
 
 TEST(UnitTestingOfThrowMacros, NGP_ThrowErrorMsgIf)
 {
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   // Unable to test a device-side abort, as this eventually results in a throw
   // inside Kokkos::finalize_all().
   //
-  // testNGPThrowRequireMsg();
+  // testNGPThrowErrorMsgIf();
 #else
 #ifdef NEW_ENOUGH_GCC
   try {
@@ -406,11 +406,11 @@ void testNGPThrowErrorIf()
 
 TEST(UnitTestingOfThrowMacros, NGP_ThrowErrorIf)
 {
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   // Unable to test a device-side abort, as this eventually results in a throw
   // inside Kokkos::finalize_all().
   //
-  // testNGPThrowRequireMsg();
+  // testNGPThrowErrorIf();
 #else
 #ifdef NEW_ENOUGH_GCC
   try {
@@ -434,11 +434,11 @@ void testNGPThrowErrorMsg()
 
 TEST(UnitTestingOfThrowMacros, NGP_ThrowErrorMsg)
 {
-#ifdef KOKKOS_HAVE_CUDA
+#ifdef KOKKOS_ENABLE_CUDA
   // Unable to test a device-side abort, as this eventually results in a throw
   // inside Kokkos::finalize_all().
   //
-  // testNGPThrowRequireMsg();
+  // testNGPThrowErrorMsg();
 #else
 #ifdef NEW_ENOUGH_GCC
   try {

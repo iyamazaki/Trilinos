@@ -144,8 +144,7 @@ public:
     this->input_.computeRitzValuesOnFly = false;
   }
 
-  virtual ~GmresSstep ()
-  {}
+  virtual ~GmresSstep () = default;
 
   virtual void
   getParameters (Teuchos::ParameterList& params,

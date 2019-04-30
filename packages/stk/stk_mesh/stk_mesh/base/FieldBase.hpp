@@ -184,7 +184,19 @@ class FieldBase
 
   unsigned length(const stk::mesh::Part& part) const;
 
-  bool defined_on_any(const stk::mesh::ConstPartVector& parts) const;
+  template<typename PARTVECTOR>
+  bool defined_on_any(const PARTVECTOR& parts) const
+  {
+    bool defined_on_any_part = false;
+    size_t i = 0;
+    while(!defined_on_any_part && i < parts.size()) {
+      defined_on_any_part = defined_on_any_part || defined_on(*parts[i]);
+      ++i;
+    }
+
+    return defined_on_any_part;
+  }
+
   bool defined_on(const stk::mesh::Part& part) const;
 
 private:
@@ -312,6 +324,10 @@ inline bool is_matching_rank(const FieldBase& f, const Bucket& b) {
 
 inline bool is_matching_rank(const FieldBase& f, Entity e) {
   return is_matching_rank(f, f.get_mesh().bucket(e));
+}
+
+inline bool is_matching_rank(const FieldBase& f, EntityRank rank) {
+  return f.entity_rank() == rank;
 }
 
 inline unsigned field_scalars_per_entity(const FieldBase& f, const Bucket& b) {

@@ -129,9 +129,9 @@ MACRO(TRILINOS_SYSTEM_SPECIFIC_CTEST_DRIVER)
     "${THIS_LIST_FILE}"
     )
 
-  # Make the default branch 'develop' (but allow it to be overridden in
+  # Make the default branch 'atdm-nightly' (but allow it to be overridden in
   # *.cmake script)
-  SET_DEFAULT(Trilinos_BRANCH develop)
+  SET_DEFAULT(Trilinos_BRANCH atdm-nightly)
 
   # Set the default CDash Track/Group to "Specialized".  This will not trigger
   # CDash error emails for any failures.  But when the build is clean, the var
@@ -146,6 +146,7 @@ MACRO(TRILINOS_SYSTEM_SPECIFIC_CTEST_DRIVER)
     # "Experimental" builds with the same 'site' and 'buildname' as builds in
     # the "Specialized" and "ATDM" groups.
     SET(CTEST_SITE "$ENV{ATDM_CONFIG_REAL_HOSTNAME}")
+    SET(CTEST_BUILD_NAME "$ENV{JOB_NAME}-exp")
   ELSE()
     # For regular builds ("Specialized" and "ATDM"), set the CDash site name
     # so that it does not change depending on what node on a given machine

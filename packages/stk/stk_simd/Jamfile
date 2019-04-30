@@ -52,8 +52,8 @@ project votd
     <architecture>knl:<define>USE_STK_SIMD_AVX512
     <architecture>cray,<toolset>intel:<define>USE_STK_SIMD_AUTO
     <architecture>cray,<toolset>gcc:<define>USE_STK_SIMD_NONE
+
     <architecture>cray,<toolset>cray:<define>USE_STK_SIMD_NONE
-    <cuda>on:<define>KOKKOS_ENABLE_CUDA_LAMBDA=1
   : usage-requirements
     <include>$(stk_simd-root)
     <define>USE_STK_SIMD_AUTO
@@ -157,6 +157,7 @@ alias stk_simd_headers
 obj stk_simd_test_main 
   :
     $(stk_simd-root)/unit_test_main/SimdUnitTestMain.cpp
+    /sierra/stk_math//stk_math_headers
     /tpl/trilinos-kokkoscore//kokkoscore
     /tpl/gtest//gtest
   :
@@ -166,6 +167,7 @@ exe stk_simd_unit
   :
     [ glob $(stk_simd-root)/unit_tests/*.cpp ]
     stk_simd_test_main
+    /sierra/stk_math//stk_math_headers
     /tpl/trilinos-kokkoscore//kokkoscore
     /tpl/gtest//gtest
   : <tag>@sierra-exec-tag
@@ -190,6 +192,7 @@ exe stk_simd_docs_tests
   :
     [ glob $(stk_simd-root)/../stk_doc_tests/stk_simd/*.cpp ]
     stk_simd_test_main
+    /sierra/stk_math//stk_math_headers
     /tpl/trilinos-kokkoscore//kokkoscore
     /tpl/gtest//gtest
   : <tag>@sierra-exec-tag

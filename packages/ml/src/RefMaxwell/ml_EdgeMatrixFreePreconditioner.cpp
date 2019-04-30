@@ -78,7 +78,7 @@ ML_Epetra::EdgeMatrixFreePreconditioner::~EdgeMatrixFreePreconditioner(){
 
 // ================================================ ====== ==== ==== == =
 // Computes the preconditioner
-int ML_Epetra::EdgeMatrixFreePreconditioner::ComputePreconditioner(const bool CheckFiltering)
+int ML_Epetra::EdgeMatrixFreePreconditioner::ComputePreconditioner(const bool /* CheckFiltering */)
 {
   Teuchos::ParameterList dummy, ListCoarse;
 
@@ -264,17 +264,20 @@ int ML_Epetra::EdgeMatrixFreePreconditioner::BuildProlongator(const Epetra_Multi
 
   if(build_coarse_coords) { 
     if(verbose_ && !Comm_->MyPID()) printf("EMFP: Coarsening coordinates\n");
+
     /* Use the nodal prolongator to generate coarse coordinates at the aggregated nodes */
-    CoarseXcoord_.resize(P->outvec_leng);
-    CoarseYcoord_.resize(P->outvec_leng);
-    if(dim==3) CoarseZcoord_.resize(P->outvec_leng);
+    CoarseXcoord_.resize(P->invec_leng);
+    CoarseYcoord_.resize(P->invec_leng);
+    if(dim==3) CoarseZcoord_.resize(P->invec_leng);
 
     /* Matvec with the *transpose* of P */
-    // Note: sCSR_trans_matvec can never return anytthing other than true (in the current implementation)
-    rv=sCSR_trans_matvec(P,P->invec_leng,xcoord,P->outvec_leng,CoarseXcoord_.getRawPtr());  if(rv!=1) ML_CHK_ERR(-20);
-    rv=sCSR_trans_matvec(P,P->invec_leng,ycoord,P->outvec_leng,CoarseYcoord_.getRawPtr());  if(rv!=1) ML_CHK_ERR(-21);
-    if(dim==3){rv=sCSR_trans_matvec(P,P->invec_leng,zcoord,P->outvec_leng,CoarseZcoord_.getRawPtr());  if(rv!=1) ML_CHK_ERR(-22);}
-    
+    // Note: sCSR_trans_matvec can never return anything other than true (in the current implementation)
+    // Note: The in/out lengths for sCSR_trans_matvec represent the vector lengths, not the in/out lengths for the (untransposed) matrix.
+    //       So they're basically reversed
+    rv=CSR_trans_matvec(P,P->outvec_leng,xcoord,P->invec_leng,CoarseXcoord_.getRawPtr());  if(rv!=1) ML_CHK_ERR(-20);
+    rv=CSR_trans_matvec(P,P->outvec_leng,ycoord,P->invec_leng,CoarseYcoord_.getRawPtr());  if(rv!=1) ML_CHK_ERR(-21);
+    if(dim==3){rv=CSR_trans_matvec(P,P->outvec_leng,zcoord,P->invec_leng,CoarseZcoord_.getRawPtr());  if(rv!=1) ML_CHK_ERR(-22);}
+
     /* Set coordinates on ListCoarse */
     Teuchos::ParameterList & ListCoarse=List_.sublist("edge matrix free: coarse");
     ListCoarse.set("x-coordinates",CoarseXcoord_.getRawPtr());
@@ -448,7 +451,7 @@ int  ML_Epetra::EdgeMatrixFreePreconditioner::FormCoarseMatrix()
 
 // ================================================ ====== ==== ==== == =
 // Print the individual operators in the multigrid hierarchy.
-void ML_Epetra::EdgeMatrixFreePreconditioner::Print(int whichHierarchy)
+void ML_Epetra::EdgeMatrixFreePreconditioner::Print(int /* whichHierarchy */)
 {
   /*ofstream ofs("Pmat.edge.m");
     if(Prolongator_) Prolongator_->Print(ofs);*/
