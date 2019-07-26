@@ -35,11 +35,6 @@
 
 #include "exodusII.h"     // for ex_block, ex_err, etc
 #include "exodusII_int.h" // for EX_FATAL, etc
-#include <inttypes.h>     // for PRId64
-#include <stddef.h>       // for size_t
-#include <stdio.h>
-#include <stdlib.h> // for free, malloc
-#include <string.h> // for NULL, strlen
 
 /*!
  * writes the parameters used to describe an element/face/edge block
@@ -91,7 +86,14 @@ int ex_put_block_params(int exoid, size_t block_count, const struct ex_block *bl
   EX_FUNC_ENTER();
   ex_check_valid_file_id(exoid, __func__);
 
-  blocks_to_define = malloc(block_count * sizeof(int));
+  if (!(blocks_to_define = malloc(block_count * sizeof(int)))) {
+    snprintf(errmsg, MAX_ERR_LENGTH,
+             "ERROR: failed to allocate memory for internal blocks_to_define "
+             "array in file id %d",
+             exoid);
+    ex_err_fn(exoid, __func__, errmsg, EX_MEMFAIL);
+    EX_FUNC_LEAVE(EX_FATAL);
+  }
 
   for (i = 0; i < block_count; i++) {
     switch (blocks[i].type) {

@@ -34,8 +34,6 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
-// Questions? Contact Michael A. Heroux (maherou@sandia.gov)
-//
 // ************************************************************************
 // @HEADER
 
@@ -891,6 +889,67 @@ namespace Tpetra {
   }
 
   template <class LocalOrdinal, class GlobalOrdinal, class Node>
+  CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
+  CrsGraph (const local_graph_type& lclGraph,
+            const Teuchos::RCP<const map_type>& rowMap,
+            const Teuchos::RCP<const map_type>& colMap,
+            const Teuchos::RCP<const map_type>& domainMap,
+            const Teuchos::RCP<const map_type>& rangeMap,
+            const Teuchos::RCP<const import_type>& importer,
+            const Teuchos::RCP<const export_type>& exporter,
+            const Teuchos::RCP<Teuchos::ParameterList>& params) :
+    DistObject<GlobalOrdinal, LocalOrdinal, GlobalOrdinal, node_type> (rowMap),
+    rowMap_ (rowMap),
+    colMap_ (colMap),
+    rangeMap_ (rangeMap.is_null () ? rowMap : rangeMap),
+    domainMap_ (domainMap.is_null () ? rowMap : domainMap),
+    importer_ (importer),
+    exporter_ (exporter),
+    lclGraph_ (lclGraph),
+    nodeNumDiags_ (Teuchos::OrdinalTraits<size_t>::invalid ()),
+    nodeMaxNumRowEntries_ (Teuchos::OrdinalTraits<size_t>::invalid ()),
+    globalNumEntries_ (Teuchos::OrdinalTraits<global_size_t>::invalid ()),
+    globalNumDiags_ (Teuchos::OrdinalTraits<global_size_t>::invalid ()),
+    globalMaxNumRowEntries_ (Teuchos::OrdinalTraits<global_size_t>::invalid ()),
+    pftype_ (StaticProfile),
+    numAllocForAllRows_ (0),
+    storageStatus_ (::Tpetra::Details::STORAGE_1D_PACKED),
+    indicesAreAllocated_ (true),
+    indicesAreLocal_ (true),
+    indicesAreGlobal_ (false),
+    fillComplete_ (false), // not yet, but see below
+    lowerTriangular_ (false),
+    upperTriangular_ (false),
+    indicesAreSorted_ (true),
+    noRedundancies_ (true),
+    haveLocalConstants_ (false),
+    haveGlobalConstants_ (false),
+    sortGhostsAssociatedWithEachProcessor_ (true)
+  {
+    staticAssertions();
+    const char tfecfFuncName[] = "Tpetra::CrsGraph(local_graph_type,"
+      "Map,Map,Map,Map,Import,Export,params): ";
+
+    TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
+      (colMap.is_null (), std::runtime_error,
+       "The input column Map must be nonnull.");
+
+    k_lclInds1D_ = lclGraph_.entries;
+    k_rowPtrs_ = lclGraph_.row_map;
+    const bool callComputeGlobalConstants =
+      params.get () == nullptr ||
+      params->get ("compute global constants", true);
+    const bool computeLocalTriangularConstants =
+      params.get () == nullptr ||
+      params->get ("compute local triangular constants", true);
+    if (callComputeGlobalConstants) {
+      this->computeGlobalConstants (computeLocalTriangularConstants);
+    }
+    fillComplete_ = true;
+    checkInternalState ();
+  }
+
+  template <class LocalOrdinal, class GlobalOrdinal, class Node>
   Teuchos::RCP<const Teuchos::ParameterList>
   CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
   getValidParameters () const
@@ -1024,13 +1083,16 @@ namespace Tpetra {
   }
 #endif // TPETRA_ENABLE_DEPRECATED_CODE
 
+#ifdef TPETRA_ENABLE_DEPRECATED_CODE
   template <class LocalOrdinal, class GlobalOrdinal, class Node>
+  TPETRA_DEPRECATED
   Teuchos::RCP<Node>
   CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
   getNode () const
   {
-    return rowMap_.is_null () ? Teuchos::null : rowMap_->getNode ();
+    return Teuchos::null;
   }
+#endif // TPETRA_ENABLE_DEPRECATED_CODE
 
   template <class LocalOrdinal, class GlobalOrdinal, class Node>
   Teuchos::RCP<const typename CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::map_type>
@@ -1102,7 +1164,7 @@ namespace Tpetra {
 
     const char tfecfFuncName[] = "isStorageOptimized: ";
     TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
-      (isOpt && getProfileType () == DynamicProfile, std::logic_error,
+      (isOpt && getProfileType () != StaticProfile, std::logic_error,
       "The matrix claims to have optimized storage, but getProfileType() "
       "returns DynamicProfile.  This should never happen.  Please report this "
       "bug to the Tpetra developers.");
@@ -2350,23 +2412,22 @@ namespace Tpetra {
                    const Teuchos::ArrayView<const LocalOrdinal>& indices,
                    std::function<void(const size_t, const size_t, const size_t)> fun) const
   {
+#ifdef HAVE_TPETRA_DEBUG
     const char tfecfFuncName[] = "findLocalIndices: ";
-    TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC(
-        this->getProfileType() != StaticProfile,
-        std::runtime_error,
-        "findLocalIndices requires the graph have StaticProfile");
-
+    TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
+      (this->getProfileType() != StaticProfile, std::runtime_error,
+       "findLocalIndices requires that the graph have StaticProfile.");
+#endif // HAVE_TPETRA_DEBUG
     using LO = LocalOrdinal;
-    using Kokkos::View;
-    using Kokkos::MemoryUnmanaged;
-    using inp_view_type = View<const LO*, execution_space, MemoryUnmanaged>;
+    using inp_view_type = Kokkos::View<const LO*, Kokkos::HostSpace,
+      Kokkos::MemoryUnmanaged>;
     inp_view_type inputInds(indices.getRawPtr(), indices.size());
 
     size_t numFound = 0;
     LO lclRow = rowInfo.localRow;
     if (this->isLocallyIndexed())
     {
-      numFound = Details::findCrsIndices(lclRow, k_rowPtrs_,
+      numFound = Details::findCrsIndices(lclRow, k_rowPtrs_, rowInfo.numEntries,
         this->k_lclInds1D_, inputInds, fun);
     }
     else if (this->isGloballyIndexed())
@@ -2375,7 +2436,7 @@ namespace Tpetra {
         return Teuchos::OrdinalTraits<size_t>::invalid();
       const auto& colMap = *(this->colMap_);
       auto map = [&](LO const lclInd){return colMap.getGlobalElement(lclInd);};
-      numFound = Details::findCrsIndices(lclRow, k_rowPtrs_,
+      numFound = Details::findCrsIndices(lclRow, k_rowPtrs_, rowInfo.numEntries,
         this->k_gblInds1D_, inputInds, map, fun);
     }
     return numFound;
@@ -2411,12 +2472,12 @@ namespace Tpetra {
         return invalidCount;
       const auto& colMap = *(this->colMap_);
       auto map = [&](GO const gblInd){return colMap.getLocalElement(gblInd);};
-      numFound = Details::findCrsIndices(lclRow, k_rowPtrs_,
+      numFound = Details::findCrsIndices(lclRow, k_rowPtrs_, rowInfo.numEntries,
         this->k_lclInds1D_, inputInds, map, fun);
     }
     else if (this->isGloballyIndexed())
     {
-      numFound = Details::findCrsIndices(lclRow, k_rowPtrs_,
+      numFound = Details::findCrsIndices(lclRow, k_rowPtrs_, rowInfo.numEntries,
         this->k_gblInds1D_, inputInds, fun);
     }
     return numFound;
@@ -2535,7 +2596,7 @@ namespace Tpetra {
         (this->indicesAreAllocated_ &&
          (this->storageStatus_ == ::Tpetra::Details::STORAGE_1D_PACKED ||
           this->storageStatus_ == ::Tpetra::Details::STORAGE_1D_UNPACKED) &&
-         this->pftype_ == DynamicProfile, std::logic_error,
+         this->pftype_ != StaticProfile, std::logic_error,
          "Graph claims to have allocated indices and 1-D storage "
          "(either packed or unpacked), but also claims to be DynamicProfile.");
       TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
@@ -2642,7 +2703,7 @@ namespace Tpetra {
          "k_rowPtrs_ must have N+1 rows, and "
          "k_rowPtrs_(N) must equal k_lclInds1D_.extent(0)." << suffix);
 
-      if (this->pftype_ == DynamicProfile) {
+      if (this->pftype_ != StaticProfile) {
         TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
           (this->indicesAreAllocated () &&
            this->getNodeNumRows () > 0 &&
@@ -4159,7 +4220,7 @@ namespace Tpetra {
     if (! params.is_null () && ! params->get ("Optimize Storage", true)) {
       requestOptimizedStorage = false;
     }
-    if (this->getProfileType () == DynamicProfile) {
+    if (this->getProfileType () != StaticProfile) {
       // Pack 2-D storage (DynamicProfile) into 1-D packed storage.
       //
       // DynamicProfile means that the graph's column indices are
@@ -4908,7 +4969,7 @@ namespace Tpetra {
         // Make sure that the GPU can see any updates made on host.
         // This code only reads the local graph, so we don't need a
         // fence afterwards.
-        execution_space::fence ();
+        execution_space().fence ();
 
         // mfh 01 May 2018: See GitHub Issue #2658.
         constexpr bool ignoreMapsForTriStruct = true;
@@ -4930,7 +4991,7 @@ namespace Tpetra {
       // Make sure that the GPU can see any updates made on host.
       // This code only reads the local graph, so we don't need a
       // fence afterwards.
-      execution_space::fence ();
+      execution_space().fence ();
 
       auto ptr = this->lclGraph_.row_map;
       const LO lclNumRows = ptr.extent(0) == 0 ?
@@ -5606,9 +5667,9 @@ namespace Tpetra {
         os << *prefix << "Target is StaticProfile; do CRS padding" << endl;
         std::cerr << os.str ();
       }
-      auto padding = computeCrsPaddingNew (srcRowGraph, numSameIDs,
-                                           permuteToLIDs, permuteFromLIDs);
-      this->applyCrsPadding (padding);
+      auto padding =
+        computeCrsPadding (srcRowGraph, numSameIDs, permuteToLIDs, permuteFromLIDs);
+      this->applyCrsPadding(padding);
     }
     else if (debug) {
       std::ostringstream os;
@@ -5709,6 +5770,9 @@ namespace Tpetra {
     using range_policy = Kokkos::RangePolicy<execution_space, Kokkos::IndexType<LocalOrdinal>>;
     using Tpetra::Details::padCrsArrays;
 
+    if (padding.size() == 0)
+      return;
+
     // Assume global indexing we don't have any indices yet
     if (! this->indicesAreAllocated()) {
       allocateIndices(GlobalIndices);
@@ -5721,7 +5785,7 @@ namespace Tpetra {
     Kokkos::deep_copy(row_ptrs_beg, this->k_rowPtrs_);
 
     const size_t N = (row_ptrs_beg.extent(0) == 0 ? 0 : row_ptrs_beg.extent(0) - 1);
-      row_ptrs_type row_ptrs_end("row_ptrs_end", N);
+    row_ptrs_type row_ptrs_end("row_ptrs_end", N);
 
     bool refill_num_row_entries = false;
     if (this->k_numRowEntries_.extent(0) > 0) {
@@ -5760,7 +5824,6 @@ namespace Tpetra {
       this->k_lclInds1D_ = indices;
     }
 
-
     if (refill_num_row_entries) {
       auto num_row_entries = this->k_numRowEntries_;
       Kokkos::parallel_for("Fill num entries", range_policy(0, N),
@@ -5776,137 +5839,163 @@ namespace Tpetra {
   Kokkos::UnorderedMap<LocalOrdinal, size_t, typename Node::device_type>
   CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
   computeCrsPadding (const RowGraph<LocalOrdinal,GlobalOrdinal,Node>& source,
-                     size_t numSameIDs,
-                     const Teuchos::ArrayView<const LocalOrdinal> &permuteToLIDs,
-                     const Teuchos::ArrayView<const LocalOrdinal> &permuteFromLIDs)
+                     const size_t numSameIDs,
+                     const Kokkos::DualView<const local_ordinal_type*, buffer_device_type>& permuteToLIDs,
+                     const Kokkos::DualView<const local_ordinal_type*, buffer_device_type>& permuteFromLIDs) const
   {
     using LO = LocalOrdinal;
-    using GO = GlobalOrdinal;
-    using execution_space = typename device_type::execution_space;
-    const char tfecfFuncName[] = "computeCrsPadding";
-
-    // Resize row pointers and indices to accommodate incoming data
-    execution_space::fence ();  // Make sure device sees changes made by host
-    const map_type& src_row_map = *(source.getRowMap());
-    using padding_type = Kokkos::UnorderedMap<LocalOrdinal, size_t, device_type>;
-    padding_type padding(numSameIDs+permuteFromLIDs.size());
-    for (LO tgtid=0; tgtid<static_cast<LO>(numSameIDs); ++tgtid) {
-      const GO srcgid = src_row_map.getGlobalElement(tgtid);
-      auto how_much_padding = source.getNumEntriesInGlobalRow(srcgid);
-      auto result = padding.insert(tgtid, how_much_padding);
-      TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC(result.failed(), std::runtime_error,
-                                            "unable to insert padding for LID " << tgtid);
-    }
-    for (LO i=0; i<permuteToLIDs.size(); ++i) {
-      const LO tgtid = permuteToLIDs[i];
-      const GO srcgid = src_row_map.getGlobalElement(permuteFromLIDs[i]);
-      auto how_much_padding = source.getNumEntriesInGlobalRow(srcgid);
-      auto result = padding.insert(tgtid, how_much_padding);
-      TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC(result.failed(), std::runtime_error,
-                                            "unable to insert padding for LID " << tgtid);
-    }
-    execution_space::fence ();  // Make sure device sees changes made by host
-    TEUCHOS_TEST_FOR_EXCEPTION(padding.failed_insert(), std::runtime_error,
-      "failed to insert one or more indices in to padding map");
-    return padding;
-  }
-
-  template <class LocalOrdinal, class GlobalOrdinal, class Node>
-  Kokkos::UnorderedMap<LocalOrdinal, size_t, typename Node::device_type>
-  CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
-  computeCrsPaddingNew (const RowGraph<LocalOrdinal,GlobalOrdinal,Node>& source,
-                        const size_t numSameIDs,
-                        const Kokkos::DualView<const local_ordinal_type*,
-                          buffer_device_type>& permuteToLIDs,
-                        const Kokkos::DualView<const local_ordinal_type*,
-                          buffer_device_type>& permuteFromLIDs)
-  {
-    using LO = LocalOrdinal;
-    using GO = GlobalOrdinal;
-    using execution_space = typename device_type::execution_space;
-    const char tfecfFuncName[] = "computeCrsPaddingNew: ";
-
-    execution_space::fence ();
-
-    // Resize row pointers and indices to accommodate incoming data
-    const map_type& src_row_map = * (source.getRowMap ());
     using padding_type = Kokkos::UnorderedMap<LO, size_t, device_type>;
     padding_type padding (numSameIDs + permuteFromLIDs.extent (0));
-    for (LO tgtid = 0; tgtid < static_cast<LO> (numSameIDs); ++tgtid) {
-      const GO srcgid = src_row_map.getGlobalElement (tgtid);
-      auto how_much_padding = source.getNumEntriesInGlobalRow (srcgid);
-      auto result = padding.insert (tgtid, how_much_padding);
-      // FIXME (mfh 09 Apr 2019) Kokkos::UnorderedMap is allowed to
-      // fail even if the user did nothing wrong.  We should actually
-      // have a retry option.  I just copied this code over from
-      // computeCrsPadding.
-      TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
-        (result.failed(), std::runtime_error,
-         "unable to insert padding for LID " << tgtid);
-    }
 
-    auto permuteToLIDs_h = permuteToLIDs.view_host ();
-    auto permuteFromLIDs_h = permuteFromLIDs.view_host ();
+    computeCrsPaddingForSameIDs(padding, source, numSameIDs, false);
+    computeCrsPaddingForPermutedIDs(padding, source, permuteToLIDs, permuteFromLIDs, false);
 
-    for (LO i = 0; i < static_cast<LO> (permuteToLIDs_h.extent (0)); ++i) {
-      const LO tgtid = permuteToLIDs_h[i];
-      const GO srcgid = src_row_map.getGlobalElement (permuteFromLIDs_h[i]);
-      auto how_much_padding = source.getNumEntriesInGlobalRow (srcgid);
-      auto result = padding.insert (tgtid, how_much_padding);
-      // FIXME (mfh 09 Apr 2019) Kokkos::UnorderedMap is allowed to
-      // fail even if the user did nothing wrong.  We should actually
-      // have a retry option.  I just copied this code over from
-      // computeCrsPadding.
-      TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
-        (result.failed(), std::runtime_error,
-         "unable to insert padding for LID " << tgtid);
-    }
-    execution_space::fence ();  // Make sure device sees changes made by host
+    Kokkos::fence ();  // Make sure device sees changes made by host
     TEUCHOS_TEST_FOR_EXCEPTION
       (padding.failed_insert(), std::runtime_error,
        "failed to insert one or more indices in to padding map");
+
     return padding;
   }
 
   template <class LocalOrdinal, class GlobalOrdinal, class Node>
-  Kokkos::UnorderedMap<LocalOrdinal, size_t, typename Node::device_type>
+  void
   CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
-  computeCrsPadding (const Teuchos::ArrayView<const LocalOrdinal> &importLIDs,
-                     const Teuchos::ArrayView<size_t> &numPacketsPerLID)
+  computeCrsPaddingForSameIDs (Kokkos::UnorderedMap<LocalOrdinal, size_t, typename Node::device_type>& padding,
+                               const RowGraph<LocalOrdinal,GlobalOrdinal,Node>& source,
+                               const size_t numSameIDs,
+                               const bool padAll) const
   {
-    using execution_space = typename device_type::execution_space;
-    const char tfecfFuncName[] = "computeCrsPadding";
-    // Creating padding for each new incoming index
-    execution_space::fence ();  // Make sure device sees changes made by host
-    using padding_type = Kokkos::UnorderedMap<LocalOrdinal, size_t, device_type>;
-    padding_type padding(importLIDs.size());
-    auto numEnt = static_cast<size_t>(importLIDs.size());
-    for (size_t i=0; i<numEnt; i++) {
-      auto result = padding.insert(importLIDs[i], numPacketsPerLID[i]);
-      TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC(result.failed(), std::runtime_error,
-                                            "unable to insert padding for LID " << importLIDs[i]);
+    using LO = LocalOrdinal;
+    using GO = GlobalOrdinal;
+    const char tfecfFuncName[] = "computeCrsPaddingForSameIds: ";
+
+    Kokkos::fence ();
+
+    using insert_result =
+      typename Kokkos::UnorderedMap<LocalOrdinal, size_t, typename Node::device_type>::insert_result;
+
+    // Compute extra capacity needed to accommodate incoming data
+    const map_type& src_row_map = * (source.getRowMap ());
+    for (LO tgt_lid = 0; tgt_lid < static_cast<LO> (numSameIDs); ++tgt_lid) {
+      const GO src_gid = src_row_map.getGlobalElement(tgt_lid);
+      auto num_src_entries = source.getNumEntriesInGlobalRow(src_gid);
+
+      if (num_src_entries == 0)
+        continue;
+
+      insert_result result;
+      const GO tgt_gid = rowMap_->getGlobalElement(tgt_lid);
+      if (padAll) {
+        result = padding.insert(tgt_lid, num_src_entries);
+      }
+      else {
+        size_t check_row_length = 0;
+        std::vector<GO> src_row_inds(num_src_entries);
+        Teuchos::ArrayView<GO> src_row_inds_view(src_row_inds.data(), src_row_inds.size());
+        source.getGlobalRowCopy(src_gid, src_row_inds_view, check_row_length);
+
+        auto num_tgt_entries = this->getNumEntriesInGlobalRow(tgt_gid);
+        std::vector<GO> tgt_row_inds(num_tgt_entries);
+        Teuchos::ArrayView<GO> tgt_row_inds_view(tgt_row_inds.data(), tgt_row_inds.size());
+        this->getGlobalRowCopy(tgt_gid, tgt_row_inds_view, check_row_length);
+
+        size_t how_much_padding = 0;
+        for (auto src_row_ind : src_row_inds) {
+          if (std::find(tgt_row_inds.begin(), tgt_row_inds.end(), src_row_ind) == tgt_row_inds.end()) {
+            // The target row does not have space for
+            how_much_padding++;
+          }
+        }
+        result = padding.insert (tgt_lid, how_much_padding);
+      }
+
+      // FIXME (mfh 09 Apr 2019) Kokkos::UnorderedMap is allowed to fail even if
+      // the user did nothing wrong. We should actually have a retry option. I
+      // just copied this code over from computeCrsPadding.
+      TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
+        (result.failed(), std::runtime_error,
+         "unable to insert padding for LID " << tgt_lid);
     }
-    execution_space::fence ();  // Make sure device sees changes made by host
-    TEUCHOS_TEST_FOR_EXCEPTION(padding.failed_insert(), std::runtime_error,
-      "failed to insert one or more indices in to padding map");
-    return padding;
+  }
+
+  template <class LocalOrdinal, class GlobalOrdinal, class Node>
+  void
+  CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
+  computeCrsPaddingForPermutedIDs (Kokkos::UnorderedMap<LocalOrdinal, size_t, typename Node::device_type>& padding,
+                                   const RowGraph<LocalOrdinal,GlobalOrdinal,Node>& source,
+                                   const Kokkos::DualView<const local_ordinal_type*, buffer_device_type>& permuteToLIDs,
+                                   const Kokkos::DualView<const local_ordinal_type*, buffer_device_type>& permuteFromLIDs,
+                                   const bool padAll) const
+  {
+    using LO = LocalOrdinal;
+    using GO = GlobalOrdinal;
+    const char tfecfFuncName[] = "computeCrsPaddingForPermutedIds: ";
+    Kokkos::fence ();
+
+    const map_type& src_row_map = * (source.getRowMap ());
+
+    using insert_result =
+      typename Kokkos::UnorderedMap<LocalOrdinal, size_t, typename Node::device_type>::insert_result;
+    auto permuteToLIDs_h = permuteToLIDs.view_host ();
+    auto permuteFromLIDs_h = permuteFromLIDs.view_host ();
+    for (LO i = 0; i < static_cast<LO> (permuteToLIDs_h.extent (0)); ++i) {
+      const GO src_gid = src_row_map.getGlobalElement(permuteFromLIDs_h[i]);
+      auto num_src_entries = source.getNumEntriesInGlobalRow(src_gid);
+
+      if (num_src_entries == 0)
+        continue;
+
+      insert_result result;
+      const LO tgt_lid = permuteToLIDs_h[i];
+      if (padAll)
+      {
+        result = padding.insert (tgt_lid, num_src_entries);
+      }
+      else {
+        size_t check_row_length = 0;
+        std::vector<GO> src_row_inds(num_src_entries);
+        Teuchos::ArrayView<GO> src_row_inds_view(src_row_inds.data(), src_row_inds.size());
+        source.getGlobalRowCopy(src_gid, src_row_inds_view, check_row_length);
+
+        const GO tgt_gid = rowMap_->getGlobalElement (tgt_lid);
+        auto num_tgt_entries = this->getNumEntriesInGlobalRow(tgt_gid);
+        std::vector<GO> tgt_row_inds(num_tgt_entries);
+        Teuchos::ArrayView<GO> tgt_row_inds_view(tgt_row_inds.data(), tgt_row_inds.size());
+        this->getGlobalRowCopy(tgt_gid, tgt_row_inds_view, check_row_length);
+
+        size_t how_much_padding = 0;
+        for (auto src_row_ind : src_row_inds) {
+          if (std::find(tgt_row_inds.begin(), tgt_row_inds.end(), src_row_ind) == tgt_row_inds.end()) {
+            // The target row does not have space for
+            how_much_padding++;
+          }
+        }
+        result = padding.insert (tgt_lid, how_much_padding);
+      }
+      // FIXME (mfh 09 Apr 2019) Kokkos::UnorderedMap is allowed to
+      // fail even if the user did nothing wrong.  We should actually
+      // have a retry option.  I just copied this code over from
+      // computeCrsPadding.
+      TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
+        (result.failed(), std::runtime_error,
+         "unable to insert padding for LID " << tgt_lid);
+    }
+
   }
 
   template <class LocalOrdinal, class GlobalOrdinal, class Node>
   Kokkos::UnorderedMap<LocalOrdinal, size_t, typename Node::device_type>
   CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
-  computeCrsPaddingNew (const Kokkos::DualView<const local_ordinal_type*,
-                          buffer_device_type>& importLIDs,
-                        Kokkos::DualView<size_t*,
-                          buffer_device_type> numPacketsPerLID) const
+  computeCrsPadding (const Kokkos::DualView<const local_ordinal_type*,
+                     buffer_device_type>& importLIDs,
+                     Kokkos::DualView<size_t*, buffer_device_type> numPacketsPerLID) const
   {
-    using execution_space = typename device_type::execution_space;
-    const char tfecfFuncName[] = "computeCrsPaddingNew: ";
+    const char tfecfFuncName[] = "computeCrsPadding: ";
 
     // Creating padding for each new incoming index
-    execution_space::fence ();  // Make sure device sees changes made by host
-    using padding_type =
-      Kokkos::UnorderedMap<local_ordinal_type, size_t, device_type>;
+    Kokkos::fence ();  // Make sure device sees changes made by host
+    using padding_type = Kokkos::UnorderedMap<local_ordinal_type, size_t, device_type>;
     padding_type padding (importLIDs.extent (0));
     auto numEnt = static_cast<size_t> (importLIDs.extent (0));
 
@@ -5916,9 +6005,12 @@ namespace Tpetra {
     }
     auto numPacketsPerLID_h = numPacketsPerLID.view_host ();
 
+    // without unpacking the import/export buffer, we don't know how many of the
+    // numPacketsPerLID[i] LIDs exist in the target. Below, it is assumed that
+    // none do, and padding is requested for all.
     for (size_t i = 0; i < numEnt; ++i) {
       auto result = padding.insert (importLIDs_h[i], numPacketsPerLID_h[i]);
-      // FIXME (mfh 09 Apr 2019) See note in other computeCrsPaddingNew overload.
+      // FIXME (mfh 09 Apr 2019) See note in other computeCrsPaddingoverload.
       TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
         (result.failed(), std::runtime_error,
          "unable to insert padding for LID " << importLIDs_h[i]);
@@ -6042,7 +6134,6 @@ namespace Tpetra {
         Kokkos::DualView<const int*, buffer_device_type>;
       export_pids_type exportPIDs; // not filling it; needed for syntax
       using LO = local_ordinal_type;
-      using GO = global_ordinal_type;
       using NT = node_type;
       using Tpetra::Details::packCrsGraphNew;
       packCrsGraphNew<LO,GO,NT> (*srcCrsGraphPtr, exportLIDs, exportPIDs,
@@ -6115,7 +6206,7 @@ namespace Tpetra {
 
     // We may be accessing UVM data on host below, so ensure that the
     // device is done accessing it.
-    device_execution_space::fence ();
+    device_execution_space().fence ();
 
     const map_type& rowMap = * (this->getRowMap ());
     const map_type* const colMapPtr = this->colMap_.getRawPtr ();
@@ -6278,7 +6369,7 @@ namespace Tpetra {
 
     // We may have accessed UVM data on host above, so ensure that the
     // device sees these changes.
-    device_execution_space::fence ();
+    device_execution_space().fence ();
 
     TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
       (errCount != 0, std::logic_error, "Packing encountered "
@@ -6339,7 +6430,7 @@ namespace Tpetra {
 
     // We may be accessing UVM data on host below, so ensure that the
     // device is done accessing it.
-    device_execution_space::fence ();
+    device_execution_space().fence ();
 
     const map_type& rowMap = * (this->getRowMap ());
     const map_type* const colMapPtr = this->colMap_.getRawPtr ();
@@ -6438,7 +6529,7 @@ namespace Tpetra {
     // The graph may store its data in UVM memory, so make sure that
     // any device kernels are done modifying the graph's data before
     // reading the data.
-    device_execution_space::fence ();
+    device_execution_space().fence ();
 
     errCount = 0;
     Kokkos::parallel_scan
@@ -6598,8 +6689,8 @@ namespace Tpetra {
     }
 
     if (this->getProfileType () == StaticProfile) {
-      auto padding = computeCrsPaddingNew (importLIDs, numPacketsPerLID);
-      applyCrsPadding (padding);
+      auto padding = computeCrsPadding (importLIDs, numPacketsPerLID);
+      applyCrsPadding(padding);
     }
     // FIXME (mfh 02 Apr 2012) REPLACE combine mode has a perfectly
     // reasonable meaning, whether or not the matrix is fill complete.

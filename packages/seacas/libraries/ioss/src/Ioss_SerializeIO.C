@@ -34,8 +34,9 @@
 #include <Ioss_ParallelUtils.h> // for ParallelUtils
 #include <Ioss_SerializeIO.h>
 #include <Ioss_Utils.h> // for IOSS_ERROR, IOSS_WARNING
-#include <ostream>      // for operator<<, etc
-#include <string>       // for char_traits
+#include <fmt/ostream.h>
+#include <ostream> // for operator<<, etc
+#include <string>  // for char_traits
 
 namespace Ioss {
 
@@ -55,8 +56,8 @@ namespace Ioss {
   std::mutex SerializeIO::m_;
 #endif
 
-  SerializeIO::SerializeIO(const DatabaseIO *database_io, int manual_owner_processor)
-      : m_databaseIO(database_io), m_activeFallThru(true), m_manualOwner(-1)
+  SerializeIO::SerializeIO(const DatabaseIO *database_io)
+      : m_databaseIO(database_io), m_activeFallThru(true)
 
   {
     if (m_databaseIO->using_parallel_io()) {
@@ -75,37 +76,13 @@ namespace Ioss {
       }
     }
 
-    m_manualOwner = (manual_owner_processor == -1 || s_groupFactor == 0)
-                        ? -1
-                        : manual_owner_processor / s_groupFactor;
-
-    if (m_activeFallThru) {
-      if (m_manualOwner != -1 && m_manualOwner != s_owner) {
-        std::ostringstream errmsg;
-        errmsg << "Attempting to replace manual ownership from " << s_owner << " to "
-               << m_manualOwner;
-        IOSS_ERROR(errmsg);
-      }
-    }
-
-    else if (s_groupFactor > 0) {
-      if (m_manualOwner == -1) {
+    if (s_groupFactor > 0) {
 #ifdef SEACAS_HAVE_MPI
-        do {
-          MPI_Barrier(util.communicator());
-        } while (++s_owner != s_groupRank);
+      do {
+	MPI_Barrier(util.communicator());
+      } while (++s_owner != s_groupRank);
 #endif
-        m_databaseIO->openDatabase();
-      }
-      else {
-        if (s_owner != -1 && m_manualOwner != s_owner) {
-          std::ostringstream errmsg;
-          errmsg << "Attempting to replace manual ownership from " << s_owner << " to "
-                 << m_manualOwner;
-          IOSS_ERROR(errmsg);
-        }
-        s_owner = m_manualOwner;
-      }
+      m_databaseIO->openDatabase();
     }
     else {
       s_owner = s_groupRank;
@@ -123,25 +100,16 @@ namespace Ioss {
         ;
       }
       else if (s_groupFactor > 0) {
-        if (m_manualOwner == -1) {
-          m_databaseIO->closeDatabase();
+	m_databaseIO->closeDatabase();
 #ifdef SEACAS_HAVE_MPI
-          s_owner                        = s_groupRank;
-          const Ioss::ParallelUtils util = m_databaseIO->util();
-          do {
-            MPI_Barrier(util.communicator());
-          } while (++s_owner != s_groupSize);
+	s_owner                        = s_groupRank;
+	const Ioss::ParallelUtils util = m_databaseIO->util();
+	do {
+	  MPI_Barrier(util.communicator());
+	} while (++s_owner != s_groupSize);
 #endif
-          s_owner = -1;
-        }
-        else {
-          if (s_owner == s_groupRank) {
-            m_databaseIO->closeDatabase();
-          }
-          s_owner = -1;
-        }
+	s_owner = -1;
       }
-
       else {
         s_owner = -1;
       }
@@ -154,8 +122,8 @@ namespace Ioss {
   {
     IOSS_FUNC_ENTER(m_);
     if (s_rank != -1) {
-      IOSS_WARNING << "Mesh I/O serialization group factor cannot be changed "
-                      "once serialized I/O has begun";
+      fmt::print(IOSS_WARNING, "Mesh I/O serialization group factor cannot be changed "
+                               "once serialized I/O has begun");
     }
     else {
       s_groupFactor = factor;

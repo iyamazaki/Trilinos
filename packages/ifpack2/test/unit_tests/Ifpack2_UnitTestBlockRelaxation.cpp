@@ -55,8 +55,8 @@
 #include <Ifpack2_Version.hpp>
 
 #include <Tpetra_RowMatrix.hpp>
-#include <Tpetra_Experimental_BlockMultiVector.hpp>
-#include <Tpetra_Experimental_BlockCrsMatrix.hpp>
+#include <Tpetra_BlockMultiVector.hpp>
+#include <Tpetra_BlockCrsMatrix.hpp>
 
 #include <Ifpack2_UnitTestHelpers.hpp>
 #include <Ifpack2_BlockRelaxation.hpp>
@@ -92,6 +92,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_3_DECL(Ifpack2BlockRelaxation, Test0, Scalar, LocalOr
   const Teuchos::RCP<const Tpetra::Map<LocalOrdinal,GlobalOrdinal,Node> > rowmap =
     tif_utest::create_tpetra_map<LocalOrdinal,GlobalOrdinal,Node>(num_rows_per_proc);
   Teuchos::RCP<const CRS> crsmatrix = tif_utest::create_test_matrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>(rowmap);
+
   Ifpack2::BlockRelaxation<ROW> prec(crsmatrix);
 
   Teuchos::ParameterList params;
@@ -216,17 +217,12 @@ TEUCHOS_UNIT_TEST_TEMPLATE_3_DECL(Ifpack2BlockRelaxation, Test2, Scalar, LO, GO)
   MV x = *xrcp;
 
   TEST_INEQUALITY(&x, &y);                                               // vector x and y are different
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-  x.template sync<Kokkos::HostSpace> ();
-  y.template sync<Kokkos::HostSpace> ();
-  auto x_lcl_host = x.template getLocalView<Kokkos::HostSpace> ();
-  auto y_lcl_host = x.template getLocalView<Kokkos::HostSpace> ();
-#else
+
   x.sync_host ();
   y.sync_host ();
   auto x_lcl_host = x.getLocalViewHost ();
   auto y_lcl_host = x.getLocalViewHost ();
-#endif
+
   TEST_EQUALITY( x_lcl_host.data (), y_lcl_host.data () ); // vector x and y are pointing to the same memory location (such test only works if num of local elements != 0)
 
   prec.apply(x, y);
@@ -625,8 +621,8 @@ TEUCHOS_UNIT_TEST_TEMPLATE_3_DECL(Ifpack2BlockRelaxation, TestDiagonalBlockCrsMa
   using Teuchos::REDUCE_MIN;
   using Teuchos::reduceAll;
   using std::endl;
-  typedef Tpetra::Experimental::BlockCrsMatrix<Scalar,LO,GO,Node> block_crs_matrix_type;
-  typedef Tpetra::Experimental::BlockMultiVector<Scalar,LO,GO,Node> BMV;
+  typedef Tpetra::BlockCrsMatrix<Scalar,LO,GO,Node> block_crs_matrix_type;
+  typedef Tpetra::BlockMultiVector<Scalar,LO,GO,Node> BMV;
   typedef Tpetra::RowMatrix<Scalar,LO,GO,Node> row_matrix_type;
   typedef Tpetra::CrsGraph<LO,GO,Node> crs_graph_type;
   typedef Tpetra::MultiVector<Scalar,LO,GO,Node> MV;
@@ -731,10 +727,10 @@ TEUCHOS_UNIT_TEST_TEMPLATE_3_DECL(Ifpack2BlockRelaxation, TestLowerTriangularBlo
   using Teuchos::REDUCE_MIN;
   using Teuchos::reduceAll;
   using std::endl;
-  typedef Tpetra::Experimental::BlockCrsMatrix<Scalar,LO,GO,Node> block_crs_matrix_type;
+  typedef Tpetra::BlockCrsMatrix<Scalar,LO,GO,Node> block_crs_matrix_type;
   typedef Tpetra::CrsGraph<LO,GO,Node> crs_graph_type;
   typedef Tpetra::RowMatrix<Scalar,LO,GO,Node> row_matrix_type;
-  typedef Tpetra::Experimental::BlockMultiVector<Scalar,LO,GO,Node> BMV;
+  typedef Tpetra::BlockMultiVector<Scalar,LO,GO,Node> BMV;
   typedef Tpetra::MultiVector<Scalar,LO,GO,Node> MV;
   typedef Ifpack2::BlockRelaxation<row_matrix_type> prec_type;
   int lclSuccess = 1;
@@ -853,9 +849,9 @@ TEUCHOS_UNIT_TEST_TEMPLATE_3_DECL(Ifpack2BlockRelaxation, TestUpperTriangularBlo
   // Matrix is [2*I_5 3*I_5 I_5; 0 2*I_5 3*I_5; 0 0 2*I_5]
   // Solve the linear system A x = ones(15,1)
   // Solution is [0.625*ones(5,1); -0.25*ones(5,1); 0.5*ones(5,1)]
-  typedef Tpetra::Experimental::BlockCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node> block_crs_matrix_type;
+  typedef Tpetra::BlockCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node> block_crs_matrix_type;
   typedef Tpetra::RowMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node> row_matrix_type;
-  typedef Tpetra::Experimental::BlockMultiVector<Scalar,LocalOrdinal,GlobalOrdinal,Node> BMV;
+  typedef Tpetra::BlockMultiVector<Scalar,LocalOrdinal,GlobalOrdinal,Node> BMV;
   typedef Tpetra::MultiVector<Scalar,LocalOrdinal,GlobalOrdinal,Node> MV;
 
   out << "Ifpack2::Version(): " << Ifpack2::Version () << std::endl;

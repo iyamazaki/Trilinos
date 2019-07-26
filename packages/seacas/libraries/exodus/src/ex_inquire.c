@@ -33,9 +33,6 @@
  *
  */
 
-#include <stdlib.h>
-#include <string.h>
-
 #include "exodusII.h"
 #include "exodusII_int.h"
 
@@ -326,7 +323,6 @@ static int ex_inquire_internal(int exoid, int req_info, int64_t *ret_int, float 
         return (EX_FATAL);
       }
       ex_copy_string(ret_char, tmp_title, MAX_LINE_LENGTH + 1);
-      ret_char[MAX_LINE_LENGTH] = '\0';
     }
     break;
 
@@ -930,6 +926,8 @@ static int ex_inquire_internal(int exoid, int req_info, int64_t *ret_int, float 
 }
 
 /*!
+  \ingroup Utilities
+
   A variant of ex_inquire() which queries integer-valued information only. \see
 ex_inquire().
   \param[in] exoid     exodus file ID returned from a previous call to
@@ -965,6 +963,8 @@ int64_t ex_inquire_int(int exoid, int req_info)
 }
 
 /*!
+  \ingroup Utilities
+
 The function ex_inquire() is used to inquire values of certain
 data entities in an exodus file. Memory must be allocated for the
 returned values before this function is invoked.query database. \sa

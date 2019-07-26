@@ -172,7 +172,7 @@ private:
     return  Teuchos::rcp (new MapType( fixture.node_count_global(),
         Teuchos::arrayView(lid_to_gid_row_host.data(),
                            lid_to_gid_row_host.extent(0)),
-        0, comm, node));
+        0, comm));
   }
 
   rcpMapType create_col_map()
@@ -190,13 +190,12 @@ private:
         Teuchos::OrdinalTraits<Tpetra::global_size_t>::invalid(),
         Teuchos::arrayView( lid_to_gid_all_host.data(),
                             lid_to_gid_all_host.extent(0)),
-        0,comm, node) );
+        0,comm) );
   }
 
 public:
 
   const rcpCommType  comm ;
-  const rcpNodeType  node ;
   const FixtureType  fixture ;
 
 private:
@@ -228,14 +227,12 @@ public:
   unsigned               num_sensitivities ;
 
   Problem( const rcpCommType & use_comm
-         , const rcpNodeType & use_node
          , const int use_nodes[]
          , const double grid_bubble[]
          , const bool use_print
          , const unsigned num_sens
          )
     : comm( use_comm )
-    , node( use_node )
     // Decompose by node to avoid parallel communication in assembly
     , fixture( BoxElemPart::DecomposeNode
              , use_comm->getSize() , use_comm->getRank()
@@ -422,13 +419,13 @@ public:
 
         //--------------------------------
 
-        Device::fence();
+        Device().fence();
         wall_clock.reset();
         g_nodal_solution.doImport (g_nodal_solution_no_overlap, import, Tpetra::REPLACE);
 
         // Take minimum import time across newton steps -- resolves strange
         // timings on titan where time after first solve is much larger
-        Device::fence();
+        Device().fence();
         if (perf.newton_iter_count == 0)
           perf.import_time = wall_clock.seconds();
         else
@@ -440,7 +437,7 @@ public:
         //--------------------------------
         // Element contributions to residual and jacobian
 
-        Device::fence();
+        Device().fence();
         wall_clock.reset();
 
         Kokkos::deep_copy( nodal_residual , 0.0 );
@@ -448,7 +445,7 @@ public:
 
         elemcomp.apply();
 
-        Device::fence();
+        Device().fence();
         if (perf.newton_iter_count == 0)
           perf.fill_time = wall_clock.seconds();
         else
@@ -457,12 +454,12 @@ public:
         //--------------------------------
         // Apply boundary conditions
 
-        Device::fence();
+        Device().fence();
         wall_clock.reset();
 
         dirichlet.apply();
 
-        Device::fence();
+        Device().fence();
         if (perf.newton_iter_count == 0)
           perf.bc_time = wall_clock.seconds();
         else
@@ -646,7 +643,7 @@ public:
         g_nodal_solution.doImport (g_nodal_solution_no_overlap, import, Tpetra::REPLACE);
         g_nodal_solution_dp.doImport (g_nodal_solution_no_overlap_dp, import, Tpetra::REPLACE);
 
-        Device::fence();
+        Device().fence();
         wall_clock.reset();
 
         Kokkos::deep_copy( nodal_residual , 0.0 );
@@ -655,7 +652,7 @@ public:
         elemcomp_dp.apply();
         dirichlet_dp.apply();
 
-        Device::fence();
+        Device().fence();
         perf.tangent_fill_time = wall_clock.seconds();
 
         result_struct cgsolve;
@@ -715,7 +712,7 @@ public:
 #endif
       }
 
-      Device::fence();
+      Device().fence();
       perf.newton_total_time = newton_clock.seconds();
     }
 };
@@ -812,7 +809,6 @@ template < class Scalar, class Device , BoxElemPart::ElemOrder ElemOrder,
            class CoeffFunctionType >
 Perf fenl(
   const Teuchos::RCP<const Teuchos::Comm<int> >& comm ,
-  const Teuchos::RCP<  typename ::Kokkos::Compat::KokkosDeviceWrapperNode<Device> >& node,
   const std::string& fenl_xml_file,
   const int use_print ,
   const int use_trials ,
@@ -844,7 +840,7 @@ Perf fenl(
   // Problem setup:
 
   const double geom_bubble[3] = { 1.0 , 1.0 , 1.0 };
-  ProblemType problem( comm , node , use_nodes , geom_bubble , use_print ,
+  ProblemType problem( comm , use_nodes , geom_bubble , use_print ,
                        response_gradient.size() );
 
   //------------------------------------

@@ -34,8 +34,6 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
-// Questions? Contact Michael A. Heroux (maherou@sandia.gov)
-//
 // ************************************************************************
 // @HEADER
 
@@ -526,8 +524,8 @@ namespace Tpetra {
     ///   null, any missing parameters will be filled in with their
     ///   default values.
     CrsMatrix (const Teuchos::RCP<const map_type>& rowMap,
-               size_t maxNumEntriesPerRow,
-               ProfileType pftype = DynamicProfile,
+               const size_t maxNumEntriesPerRow,
+	       const ProfileType pftype = TPETRA_DEFAULT_PROFILE_TYPE,
                const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
 
     /// \brief Constructor specifying (possibly different) number of entries in each row.
@@ -549,7 +547,7 @@ namespace Tpetra {
     ///   default values.
     CrsMatrix (const Teuchos::RCP<const map_type>& rowMap,
                const Teuchos::ArrayView<const size_t>& numEntPerRowToAlloc,
-               const ProfileType pftype = DynamicProfile,
+	       const ProfileType pftype = TPETRA_DEFAULT_PROFILE_TYPE,
                const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
 
 #ifdef TPETRA_ENABLE_DEPRECATED_CODE
@@ -557,7 +555,7 @@ namespace Tpetra {
     TPETRA_DEPRECATED
     CrsMatrix (const Teuchos::RCP<const map_type>& rowMap,
                const Teuchos::ArrayRCP<const size_t>& numEntPerRowToAlloc,
-               const ProfileType pftype = DynamicProfile,
+               const ProfileType pftype = TPETRA_DEFAULT_PROFILE_TYPE,
                const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
 #endif // TPETRA_ENABLE_DEPRECATED_CODE
 
@@ -586,7 +584,7 @@ namespace Tpetra {
     CrsMatrix (const Teuchos::RCP<const map_type>& rowMap,
                const Teuchos::RCP<const map_type>& colMap,
                const size_t maxNumEntPerRow,
-               const ProfileType pftype = DynamicProfile,
+	       const ProfileType pftype = TPETRA_DEFAULT_PROFILE_TYPE,
                const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
 
     /// \brief Constructor specifying column Map and number of entries in each row.
@@ -614,7 +612,7 @@ namespace Tpetra {
     CrsMatrix (const Teuchos::RCP<const map_type>& rowMap,
                const Teuchos::RCP<const map_type>& colMap,
                const Teuchos::ArrayView<const size_t>& numEntPerRowToAlloc,
-               const ProfileType pftype = DynamicProfile,
+	       const ProfileType pftype = TPETRA_DEFAULT_PROFILE_TYPE,
                const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
 
 #ifdef TPETRA_ENABLE_DEPRECATED_CODE
@@ -623,7 +621,7 @@ namespace Tpetra {
     CrsMatrix (const Teuchos::RCP<const map_type>& rowMap,
                const Teuchos::RCP<const map_type>& colMap,
                const Teuchos::ArrayRCP<const size_t>& numEntPerRowToAlloc,
-               const ProfileType pftype = DynamicProfile,
+               const ProfileType pftype = TPETRA_DEFAULT_PROFILE_TYPE,
                const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
 #endif // TPETRA_ENABLE_DEPRECATED_CODE
 
@@ -804,6 +802,16 @@ namespace Tpetra {
                const Teuchos::RCP<const map_type>& rangeMap = Teuchos::null,
                const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
 
+    //! Create a fill-complete CrsMatrix from all the things it needs.
+    CrsMatrix (const local_matrix_type& lclMatrix,
+               const Teuchos::RCP<const map_type>& rowMap,
+               const Teuchos::RCP<const map_type>& colMap,
+               const Teuchos::RCP<const map_type>& domainMap,
+               const Teuchos::RCP<const map_type>& rangeMap,
+               const Teuchos::RCP<const import_type>& importer,
+               const Teuchos::RCP<const export_type>& exporter,
+               const Teuchos::RCP<Teuchos::ParameterList>& params =
+                 Teuchos::null);
 
     /// \brief Copy constructor, with option to do deep or shallow copy.
     // This function in 'Copy' mode is only guaranteed to work correctly for matrices
@@ -867,7 +875,7 @@ namespace Tpetra {
 
         bool staticProfileClone = true;
         staticProfileClone = params->get ("Static profile clone", staticProfileClone);
-        pftype = staticProfileClone ? StaticProfile : DynamicProfile;
+        pftype = staticProfileClone ? StaticProfile : ProfileType(StaticProfile+1) /*DynamicProfile*/;
       }
 
       TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC(
@@ -2513,8 +2521,10 @@ namespace Tpetra {
     //! The communicator over which the matrix is distributed.
     Teuchos::RCP<const Teuchos::Comm<int> > getComm() const override;
 
+#ifdef TPETRA_ENABLE_DEPRECATED_CODE
     //! The Kokkos Node instance.
-    Teuchos::RCP<node_type> getNode () const override;
+    TPETRA_DEPRECATED Teuchos::RCP<node_type> getNode () const override;
+#endif // TPETRA_ENABLE_DEPRECATED_CODE
 
     //! The Map that describes the row distribution in this matrix.
     Teuchos::RCP<const map_type> getRowMap () const override;
@@ -3883,6 +3893,9 @@ namespace Tpetra {
     virtual bool
     checkSizes (const SrcDistObject& source) override;
 
+    void
+    applyCrsPadding(const Kokkos::UnorderedMap<LocalOrdinal, size_t, device_type>& padding);
+
   private:
     void
     copyAndPermuteImpl (const RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& source,
@@ -5033,8 +5046,8 @@ namespace Tpetra {
                    const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null)
   {
     typedef CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node> matrix_type;
-    return Teuchos::rcp (new matrix_type (map, maxNumEntriesPerRow,
-                                          DynamicProfile, params));
+    const ProfileType pftype = TPETRA_DEFAULT_PROFILE_TYPE;
+    return Teuchos::rcp (new matrix_type (map, maxNumEntriesPerRow, pftype, params));
   }
 
   template<class CrsMatrixType>

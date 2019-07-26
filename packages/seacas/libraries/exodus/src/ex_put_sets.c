@@ -35,11 +35,6 @@
 
 #include "exodusII.h"     // for ex_set, ex_err, etc
 #include "exodusII_int.h" // for EX_FATAL, etc
-#include <inttypes.h>     // for PRId64
-#include <stddef.h>       // for size_t
-#include <stdio.h>
-#include <stdlib.h>    // for NULL, free, malloc
-#include <sys/types.h> // for int64_t
 
 /*!
  * writes the set parameters and optionally set data for 1 or more sets
@@ -73,7 +68,14 @@ int ex_put_sets(int exoid, size_t set_count, const struct ex_set *sets)
 
   ex_check_valid_file_id(exoid, __func__);
 
-  sets_to_define = malloc(set_count * sizeof(int));
+  if (!(sets_to_define = malloc(set_count * sizeof(int)))) {
+    snprintf(errmsg, MAX_ERR_LENGTH,
+             "ERROR: failed to allocate memory for internal sets_to_define "
+             "array in file id %d",
+             exoid);
+    ex_err_fn(exoid, __func__, errmsg, EX_MEMFAIL);
+    EX_FUNC_LEAVE(EX_FATAL);
+  }
 
   /* Note that this routine can be called:
      1) just define the sets

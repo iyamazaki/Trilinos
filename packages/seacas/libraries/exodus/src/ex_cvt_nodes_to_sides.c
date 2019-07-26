@@ -35,13 +35,6 @@
 
 #include "exodusII.h"     // for ex_err, ex_block, etc
 #include "exodusII_int.h" // for elem_blk_parm, EX_FATAL, etc
-#include <ctype.h>        // for toupper
-#include <inttypes.h>     // for PRId64
-#include <stddef.h>       // for size_t
-#include <stdio.h>
-#include <stdlib.h>    // for malloc, NULL, free
-#include <string.h>    // for strncmp, strlen
-#include <sys/types.h> // for int64_t
 
 static int64_t get_node(void_int *connect, size_t index, size_t int_size)
 {
@@ -62,7 +55,7 @@ static void put_side(void_int *side_list, size_t index, size_t value, size_t int
 }
 
 /*!
-
+\ingroup Utilities
 The function ex_cvt_nodes_to_sides() is used to convert a side set
 node list to a side set side list. This routine is provided for
 application programs that utilize side sets defined by nodes (as was

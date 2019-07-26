@@ -35,11 +35,9 @@
 
 #include "exodusII.h" // for exoptval, MAX_ERR_LENGTH, etc
 #include "exodusII_int.h"
-#include <stdio.h>  // for fprintf, stderr, fflush
-#include <stdlib.h> // for exit
-#include <string.h> // for strcpy
 
 /*!
+\ingroup Utilities
 \fn{void ex_err_fn(exoid, const char *module_name, const char *message, int err_num)}
 
 The function ex_err_fn(exoid, ) logs an error to stderr. It is intended
@@ -114,6 +112,10 @@ static int  last_err_num;
 #define EX_ERR_NUM last_err_num
 #endif
 
+/*!
+  \ingroup Utilities
+  \undoc
+*/
 void ex_reset_error_status()
 {
 #if !defined(EXODUS_THREADSAFE)
@@ -122,6 +124,10 @@ void ex_reset_error_status()
 #endif
 }
 
+/*!
+  \ingroup Utilities
+  \undoc
+*/
 void ex_err(const char *module_name, const char *message, int err_num)
 {
   EX_FUNC_ENTER_INT();
@@ -177,6 +183,10 @@ void ex_err(const char *module_name, const char *message, int err_num)
   EX_FUNC_VOID();
 }
 
+/*!
+  \ingroup Utilities
+  \undoc
+*/
 void ex_err_fn(int exoid, const char *module_name, const char *message, int err_num)
 {
   EX_FUNC_ENTER_INT();
@@ -266,6 +276,10 @@ void ex_err_fn(int exoid, const char *module_name, const char *message, int err_
   EX_FUNC_VOID();
 }
 
+/*!
+  \ingroup Utilities
+  \undoc
+*/
 void ex_set_err(const char *module_name, const char *message, int err_num)
 {
   EX_FUNC_ENTER_INT();
@@ -279,6 +293,10 @@ void ex_set_err(const char *module_name, const char *message, int err_num)
   EX_FUNC_VOID();
 }
 
+/*!
+  \ingroup Utilities
+  \undoc
+*/
 void ex_get_err(const char **msg, const char **func, int *err_num)
 {
   EX_FUNC_ENTER_INT();
@@ -296,6 +314,10 @@ void ex_get_err(const char **msg, const char **func, int *err_num)
   EX_FUNC_VOID();
 }
 
+/*!
+  \ingroup Utilities
+  \undoc
+*/
 const char *ex_strerror(int err_num)
 {
   switch (err_num) {

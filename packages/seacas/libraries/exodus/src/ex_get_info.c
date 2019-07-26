@@ -35,10 +35,9 @@
 
 #include "exodusII.h"     // for ex_err, etc
 #include "exodusII_int.h" // for EX_FATAL, ex_trim_internal, etc
-#include <stddef.h>       // for size_t
-#include <stdio.h>
 
 /*!
+  \ingroup Utilities
 
 The function ex_get_info() reads information records from the
 database. The records are MAX_LINE_LENGTH-character
