@@ -58,10 +58,11 @@
 
 #include "exodusII.h"     // for ex_err, void_int, etc
 #include "exodusII_int.h" // for EX_FATAL, etc
-#include <stddef.h>       // for size_t
-#include <stdio.h>
-#include <sys/types.h> // for int64_t
 
+/*!
+ * \ingroup ModelDescription
+ * \undoc
+ */
 int ex_get_init_global(int exoid, void_int *num_nodes_g, void_int *num_elems_g,
                        void_int *num_elem_blks_g, void_int *num_node_sets_g,
                        void_int *num_side_sets_g)

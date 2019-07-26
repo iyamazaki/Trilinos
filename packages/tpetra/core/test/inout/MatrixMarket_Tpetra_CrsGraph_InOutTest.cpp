@@ -334,7 +334,7 @@ createSymRealSmall (const Teuchos::RCP<const Tpetra::Map<LocalOrdinalType, Globa
   const GST globalNumElts = rowMap->getGlobalNumElements ();
   const size_t myNumElts = (myRank == 0) ? as<size_t> (globalNumElts) : 0;
   RCP<const map_type> gatherRowMap = computeGatherMap (rowMap, rcpFromRef (out), dbg);
-  graph_type A_gather (gatherRowMap, as<size_t> (0));
+  graph_type A_gather (gatherRowMap, 3);
 
   if (myRank == 0) {
     Array<GO> ind (3);
@@ -401,6 +401,7 @@ testCrsGraph (Teuchos::FancyOStream& out, const GlobalOrdinalType indexBase)
   RCP<const map_type> domainMap = rowMap;
   RCP<const map_type> rangeMap = rowMap;
   typedef Tpetra::MatrixMarket::Reader<crs_matrix_type> reader_type;
+  out << "Instantiating the graph" << endl;
   RCP<crs_graph_type> A =
     reader_type::readSparseGraph (inStr, rowMap, colMap, domainMap, rangeMap,
                              callFillComplete, tolerant, debug);

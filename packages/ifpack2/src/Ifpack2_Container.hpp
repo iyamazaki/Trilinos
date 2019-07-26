@@ -51,7 +51,7 @@
 #include "Teuchos_Describable.hpp"
 #include <Ifpack2_Partitioner.hpp>
 #include <Tpetra_Map.hpp>
-#include <Tpetra_Experimental_BlockCrsMatrix_decl.hpp>
+#include <Tpetra_BlockCrsMatrix.hpp>
 #include <Teuchos_ParameterList.hpp>
 #include <Teuchos_Time.hpp>
 #include <iostream>
@@ -125,7 +125,7 @@ protected:
   typedef Teuchos::ScalarTraits<scalar_type> STS;
   typedef Tpetra::Import<local_ordinal_type, global_ordinal_type, node_type> import_type;
   typedef Partitioner<Tpetra::RowGraph<local_ordinal_type, global_ordinal_type, node_type> > partitioner_type;
-  typedef Tpetra::Experimental::BlockCrsMatrix<scalar_type, local_ordinal_type, global_ordinal_type, node_type> block_crs_matrix_type;
+  typedef Tpetra::BlockCrsMatrix<scalar_type, local_ordinal_type, global_ordinal_type, node_type> block_crs_matrix_type;
   typedef Tpetra::RowMatrix<scalar_type, local_ordinal_type, global_ordinal_type, node_type> row_matrix_type;
 
   static_assert(std::is_same<MatrixType, row_matrix_type>::value,
@@ -344,13 +344,9 @@ public:
   //! Wrapper for apply with MVs, used in unit tests (never called by BlockRelaxation)
   void applyMV (mv_type& X, mv_type& Y) const
   {
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-    HostView XView = X.template getLocalView<Kokkos::HostSpace>();
-    HostView YView = Y.template getLocalView<Kokkos::HostSpace>();
-#else
     HostView XView = X.getLocalViewHost();
     HostView YView = Y.getLocalViewHost();
-#endif
+
     this->apply (XView, YView, 0, X.getStride());
   }
 
@@ -389,15 +385,10 @@ public:
                         mv_type& Y,
                         vector_type& W)
   {
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-    HostView XView = X.template getLocalView<Kokkos::HostSpace>();
-    HostView YView = Y.template getLocalView<Kokkos::HostSpace>();
-    HostView WView = W.template getLocalView<Kokkos::HostSpace>();
-#else
     HostView XView = X.getLocalViewHost();
     HostView YView = Y.getLocalViewHost();
     HostView WView = W.getLocalViewHost();
-#endif
+
     weightedApply (XView, YView, WView, 0, X.getStride());
   }
 
@@ -476,11 +467,7 @@ void Container<MatrixType>::DoJacobi(HostView& X, HostView& Y, int stride) const
     {
       local_ordinal_type LRID = partitions_[partitionIndices_[i]];
       getMatDiag();
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-      HostView diagView = Diag_->template getLocalView<Kokkos::HostSpace>();
-#else
       HostView diagView = Diag_->getLocalViewHost();
-#endif
       impl_scalar_type d = (impl_scalar_type) one / diagView(LRID, 0);
       for(size_t nv = 0; nv < numVecs; nv++)
       {
@@ -588,11 +575,7 @@ void Container<MatrixType>::DoGaussSeidel(HostView& X, HostView& Y, HostView& Y2
       // a singleton calculation is exact, all residuals should be zero.
       local_ordinal_type LRID = partitionIndices_[i];  // by definition, a singleton 1 row in block.
       getMatDiag();
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-      HostView diagView = Diag_->template getLocalView<Kokkos::HostSpace>();
-#else
       HostView diagView = Diag_->getLocalViewHost();
-#endif
       impl_scalar_type d = (impl_scalar_type) one / diagView(LRID, 0);
       for(size_t m = 0; m < numVecs; m++)
       {
@@ -694,11 +677,7 @@ void Container<MatrixType>::DoSGS(HostView& X, HostView& Y, HostView& Y2, int st
     {
       local_ordinal_type LRID  = partitions_[partitionIndices_[i]];
       getMatDiag();
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-      HostView diagView = Diag_->template getLocalView<Kokkos::HostSpace>();
-#else
       HostView diagView = Diag_->getLocalViewHost();
-#endif
       impl_scalar_type d = (impl_scalar_type) one / diagView(LRID, 0);
       for(size_t m = 0; m < numVecs; m++)
       {

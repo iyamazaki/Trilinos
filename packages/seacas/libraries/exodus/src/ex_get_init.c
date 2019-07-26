@@ -57,10 +57,9 @@
 
 #include "exodusII.h" // for ex_init_params, void_int, etc
 #include "exodusII_int.h"
-#include <stdint.h> // for int64_t
-#include <string.h> // for strcpy
 
 /*!
+\ingroup Utilities
 
 The function ex_get_init() reads the initializationinitialization
 parameters from an opened exodus file.
@@ -145,7 +144,7 @@ int ex_get_init(int exoid, char *title, void_int *num_dim, void_int *num_nodes, 
     *n_node_sets = info.num_node_sets;
     *n_side_sets = info.num_side_sets;
   }
-  strcpy(title, info.title);
+  ex_copy_string(title, info.title, MAX_LINE_LENGTH + 1);
 
   EX_FUNC_LEAVE(EX_NOERR);
 }

@@ -35,11 +35,10 @@
 
 #include "exodusII.h"     // for ex_err, etc
 #include "exodusII_int.h" // for EX_FATAL, DIM_NUM_INFO, etc
-#include <stddef.h>       // for size_t
-#include <stdio.h>
-#include <string.h> // for strlen, NULL
 
 /*!
+\ingroup Utilities
+
 The function ex_put_info() writes information records to the
 database. The records are MAX_LINE_LENGTH-character strings.
 

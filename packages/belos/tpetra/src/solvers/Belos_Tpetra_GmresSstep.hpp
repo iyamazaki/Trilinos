@@ -10,6 +10,34 @@
 namespace BelosTpetra {
 namespace Impl {
 
+#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#include "cuda_runtime.h"
+#include "cublas_v2.h"
+
+namespace cuBLAS {
+
+void trsm (int M, int N, double alpha, double *A, int LDA, double *B, int LDB) {
+  cublasHandle_t handle;
+  cublasStatus_t stat = cublasCreate(&handle);
+
+  cublasDtrsm(handle, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_UPPER, CUBLAS_OP_N, CUBLAS_DIAG_NON_UNIT,
+              M, N, &alpha, A, LDA, B, LDB);
+}
+
+void trsm (int M, int N, float alpha, float *A, int LDA, float *B, int LDB) {
+}
+
+void trsm (int M, int N, std::complex<double> alpha, std::complex<double> *A, int LDA, std::complex<double> *B, int LDB) {
+}
+
+
+void trsm (int M, int N, std::complex<float> alpha, std::complex<float> *A, int LDA, std::complex<float> *B, int LDB) {
+}
+
+}
+
+#endif
+
 template<class SC = Tpetra::Operator<>::scalar_type,
          class MV = Tpetra::MultiVector<>,
          class OP = Tpetra::Operator<> >
@@ -33,11 +61,28 @@ public:
   typedef Belos::MultiVecTraits<SC, MV> MVT;
 
   /// \brief Constructor
-  ///
-  /// \param theCacheSizeHint [in] Cache size hint in bytes.  If 0,
-  ///   the implementation will pick a reasonable size, which may be
-  ///   queried by calling cache_size_hint().
-  CholQR () = default;
+  CholQR () :
+    lwork_ (0)
+  {}
+
+  void
+  initializeWorkspace(LO lwork) {
+#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+    lwork_ = lwork;
+    deviceR_ = Teuchos::rcp (new Kokkos::View< SC* , Kokkos::CudaSpace > ("Rview", lwork_));
+#endif
+  }
+
+  LO
+  getLwork() {
+    return lwork_;
+  }
+
+  Teuchos::RCP<Kokkos::View<SC*, Kokkos::CudaSpace>>
+  getWorkspace() {
+    return deviceR_;
+  }
+
 
   /// \brief Compute the QR factorization of the matrix A.
   ///
@@ -50,59 +95,83 @@ public:
   {
     blas_type blas;
     lapack_type lapack;
+    Teuchos::RCP< Teuchos::Time > trsmTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep trsm chol");
+    Teuchos::RCP< Teuchos::Time > gemmTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep gemm chol");
 
     const SC zero = STS::zero ();
     const SC one  = STS::one ();
 
-    LO ncols = A.getNumVectors ();
-    LO nrows = A.getLocalLength ();
-
     // Compute R := A^T * A, using a single BLAS call.
-    MVT::MvTransMv(one, A, A, R);
+    {
+      Teuchos::TimeMonitor LocalTimer (*gemmTimer);
+      MVT::MvTransMv(one, A, A, R);
+    }
 
     // Compute the Cholesky factorization of R in place, so that
-    // A^T * A = R^T * R, where R is ncols by ncols upper
-    // triangular.
+    // A^T * A = R^T * R, where R is ncols by ncols upper triangular.
     int info = 0;
+    LO ncols = A.getNumVectors ();
+    LO LDR = R.stride();
     lapack.POTRF ('U', ncols, R.values (), R.stride(), &info);
     if (info < 0) {
       ncols = -info;
       // FIXME (mfh 17 Sep 2018) Don't throw; report an error code.
       throw std::runtime_error("Cholesky factorization failed");
     }
-    // TODO: replace with a routine to zero out lower-triangular
-    //     : not needed, but done for testing
-    for (int i=0; i<ncols; i++) {
-      for (int j=0; j<i; j++) {
-        R(i, j) = zero;
-      }
-    }
+    //for (int i=0; i<ncols; i++) {
+    //  for (int j=0; j<i; j++) {
+    //    R(i, j) = zero;
+    //  }
+    //}
 
     // Compute A := A * R^{-1}.  We do this in place in A, using
     // BLAS' TRSM with the R factor (form POTRF) stored in the upper
     // triangle of R.
+    const LO nrows = A.getLocalLength ();
+    const LO LDA = LO (A.getStride ());
+#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+    A.sync_device ();
+    A.modify_device ();
+    {
+      Teuchos::TimeMonitor LocalTimer (*trsmTimer);
 
-    // Compute A_cur / R (Matlab notation for A_cur * R^{-1}) in place.
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-    A.template sync<Kokkos::HostSpace> ();
-    A.template modify<Kokkos::HostSpace> ();
-    auto A_lcl = A.template getLocalView<Kokkos::HostSpace> ();
+      auto A_lcl = A.getLocalViewDevice ();
+      SC* const A_lcl_raw = reinterpret_cast<SC*> (A_lcl.data ());
+
+      Kokkos::View< SC* , Kokkos::HostSpace, Kokkos::MemoryUnmanaged > hostR(R.values(), LDR*ncols);
+      if (ncols*LDR > lwork_) {
+        // allocate workspace on GPU
+        this->initializeWorkspace (LDR*ncols);
+      }
+      // do TRSM using a pre-allocated workspace on GPU
+      Kokkos::deep_copy (*deviceR_, hostR);
+      cuBLAS::trsm (nrows, ncols, one, deviceR_->data(), LDR, A_lcl_raw, LDA);
+
+      // just for timing purpose 
+      A.sync_device ();
+    }
 #else
     A.sync_host ();
     A.modify_host ();
-    auto A_lcl = A.getLocalViewHost ();
+    {
+      Teuchos::TimeMonitor LocalTimer (*trsmTimer);
+
+      auto A_lcl = A.getLocalViewHost ();
+      SC* const A_lcl_raw = reinterpret_cast<SC*> (A_lcl.data ());
+
+      blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
+                 Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                 nrows, ncols, one, R.values(), R.stride(),
+                 A_lcl_raw, LDA);
+      A.template sync<typename MV::device_type::memory_space> ();
+    }
 #endif
-    SC* const A_lcl_raw = reinterpret_cast<SC*> (A_lcl.data ());
-    const LO LDA = LO (A.getStride ());
-
-    blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
-               Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-               nrows, ncols, one, R.values(), R.stride(),
-               A_lcl_raw, LDA);
-    A.template sync<typename MV::device_type::memory_space> ();
-
     return (info > 0 ? info : ncols);
   }
+
+private:
+    LO lwork_;
+    Teuchos::RCP<Kokkos::View<SC*, Kokkos::CudaSpace>> deviceR_;
 };
 
 template<class SC = Tpetra::Operator<>::scalar_type,
@@ -248,7 +317,7 @@ protected:
     vec_type R (B.getMap ());
     vec_type MP (B.getMap ());
     MV  Q (B.getMap (), restart+1);
-    MV  W (B.getMap (), restart+1); // for lagged re-normalization
+    //MV  W (B.getMap (), restart+1); // for lagged re-normalization
     vec_type P = * (Q.getVectorNonConst (0));
 
     // Compute initial residual (making sure R = B - Ax)
@@ -321,17 +390,22 @@ protected:
 
     // Main loop
     std::vector<complex_type> prevRitzValues =  output.ritzValues; // save Ritz values
+    double gemmGflops = 0.0;
     Teuchos::RCP< Teuchos::Time > mainTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep iteration");
     Teuchos::RCP< Teuchos::Time > spmvTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep matrix-vector");
     Teuchos::RCP< Teuchos::Time > precTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep preconditioner");
+    Teuchos::RCP< Teuchos::Time > bortTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep BOrt");
+    Teuchos::RCP< Teuchos::Time > tsqrTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep TSQR");
     Teuchos::RCP< Teuchos::Time > orthTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep orthogonalization");
+    Teuchos::RCP< Teuchos::Time > cholTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep Gram Schmidt");
+    Teuchos::RCP< Teuchos::Time > gemmTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep gemm");
     while (output.numIters < input.maxNumIters && ! output.converged) {
       Teuchos::TimeMonitor LocalTimer (*mainTimer);
       if (outPtr != nullptr) {
         *outPtr << "Restart cycle " << output.numRests << "(numIters = " << output.numIters << "):" << endl;
       }
-      Indent indent2 (outPtr);
       /*if (outPtr != nullptr) {
+        Indent indent2 (outPtr);
         *outPtr << output;
       }*/
 
@@ -347,13 +421,19 @@ protected:
 
         // Compute matrix powers
         prevStep = stepSize;
-        if (input.computeRitzValuesOnFly && iter < stepSize_) {
+        if (input.computeRitzValuesOnFly && output.numIters < stepSize_) {
           stepSize = 1;
         } else {
           stepSize = stepSize_;
         }
         //printf( "\n -- matrix-power(%d:%d) --\n",iter+1,iter+stepSize );
         for (step=0; step < stepSize && iter+step < restart; step++) {
+          if (outPtr != nullptr) {
+            *outPtr << "step=" << step
+                    << ", stepSize=" << stepSize
+                    << ", iter+step=" << (iter+step)
+                    << ", restart=" << restart << endl;
+          }
           // AP = A*P
           vec_type P  = * (Q.getVectorNonConst (iter+step));
           vec_type AP = * (Q.getVectorNonConst (iter+step+1));
@@ -393,8 +473,8 @@ protected:
           }
 
           // Save A*Q for lagged re-orthogonalization
-          vec_type Wj = * (W.getVectorNonConst (iter+step));
-          Tpetra::deep_copy (Wj, AP);
+          //vec_type Wj = * (W.getVectorNonConst (iter+step));
+          //Tpetra::deep_copy (Wj, AP);
 
           output.numIters++;
         }
@@ -411,6 +491,7 @@ protected:
             int iterPrev = iter-prevStep;
             if (this->input_.orthoType == "CGS") {
               // dot-product for single-reduce orthogonalization
+              Teuchos::TimeMonitor LocalTimer (*gemmTimer);
               Teuchos::Range1D index_next(iter, iter+step);
               MV Qnext = * (Q.subView(index_next));
 
@@ -422,6 +503,12 @@ protected:
               Teuchos::RCP< dense_matrix_type > c
                 = Teuchos::rcp( new dense_matrix_type( Teuchos::View, C, iter+step+1, step+1, 0, iter ) );
               MVT::MvTransMv(one, *Qi, Qnext, *c);
+
+              // update required flop-count
+              LO k = Qi->getLocalLength();
+              LO m = iter+step+1;
+              LO n = step+1;
+              gemmGflops += (2.0*(m*n*k)/1e9);
             } else {
               // dot-product for re-normalization, and single-reduce orthogonalization
               // vector to be orthogonalized, and the vectors to be lagged-normalized
@@ -508,17 +595,27 @@ protected:
             }
 
             // orthogonalize the new vectors against the previous columns
-            rank = projectAndNormalizeCholQR2 (output.numIters-step-1,
-                                               iter, prevStep, step, Q, C, T, G);
+            {
+              Teuchos::TimeMonitor LocalTimer (*cholTimer);
+              rank = projectAndNormalizeCholQR2 (output.numIters-step-1,
+                                                 iter, prevStep, step, Q, C, T, G);
+            }
           } else {
             // orthogonalize
+            Teuchos::TimeMonitor LocalTimer (*tsqrTimer);
             rank = normalizeCholQR (iter, step, Q, G);
           }
         } else { // Belos block OrthoManager + CholQR
           Teuchos::TimeMonitor LocalTimer (*orthTimer);
 
-          this->projectBelosOrthoManager (iter, step, Q, G);
-          rank = normalizeCholQR (iter, step, Q, G);
+          {
+            Teuchos::TimeMonitor LocalTimer (*bortTimer);
+            this->projectBelosOrthoManager (iter, step, Q, G);
+          }
+          {
+            Teuchos::TimeMonitor LocalTimer (*tsqrTimer);
+            rank = normalizeCholQR (iter, step, Q, G);
+          }
         } // End of orthogonalization
 
         { // convergence check
@@ -709,6 +806,8 @@ protected:
     // Return residual norm as B
     Tpetra::deep_copy (B, P);
 
+    std::cout << Q.getMap ()->getComm ()->getRank () << ": gemmGflops: " << gemmGflops << std::endl;
+
     if (outPtr != nullptr) {
       *outPtr << "At end of solve:" << endl;
       Indent indentInner (outPtr);
@@ -835,7 +934,8 @@ protected:
 
     // Compute the Cholesky factorization of R in place
     int info = 0;
-    lapack.POTRF ('U', stepSize, Rfix.values (), Rfix.stride(), &info);
+    const LO LDR = Rfix.stride();
+    lapack.POTRF ('U', stepSize, Rfix.values (), LDR, &info);
     if (info < 0) {
       // FIXME (mfh 17 Sep 2018) Don't throw; report an error code.
       rank = info;
@@ -848,20 +948,43 @@ protected:
     Teuchos::Range1D index_old(iterPrev, iter-1);
     MV Qold = * (Q.subView(index_old));
 
-    Qold.template sync<Kokkos::HostSpace> ();
-    Qold.template modify<Kokkos::HostSpace> ();
-    auto Q_lcl = Qold.template getLocalView<Kokkos::HostSpace> ();
-    SC* const Q_lcl_raw = reinterpret_cast<SC*> (Q_lcl.data ());
-
     // rescale the previous vector, MVT::MvScale (Qn, one / tnn);
     const LO LDQ = LO (Qold.getStride ());
     const LO ncols = Qold.getNumVectors ();
     const LO nrows = Qold.getLocalLength ();
-    blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
-               Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-               nrows, ncols,
-               one, Rfix.values(), Rfix.stride(),
-                    Q_lcl_raw, LDQ);
+#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+    Qold.sync_device ();
+    Qold.modify_device ();
+    {
+      auto Q_lcl = Qold.getLocalViewDevice ();
+      SC* const Q_lcl_raw = reinterpret_cast<SC*> (Q_lcl.data ());
+
+      Kokkos::View< SC* , Kokkos::HostSpace, Kokkos::MemoryUnmanaged > hostR(Rfix.values(), LDR*ncols);
+      if (ncols*LDR > tsqr_->getLwork ()) {
+        // allocate workspace on GPU
+        tsqr_->initializeWorkspace (LDR*ncols);
+      }
+      // do TRSM using a pre-allocated workspace on GPU
+      Kokkos::deep_copy(*(tsqr_->getWorkspace ()), hostR);
+      cuBLAS::trsm(nrows, ncols, one, tsqr_->getWorkspace ()->data (), LDR, Q_lcl_raw, LDQ);
+
+      // just for timing purpose 
+      Qold.sync_device ();
+    }
+#else
+    Qold.template sync<Kokkos::HostSpace> ();
+    Qold.template modify<Kokkos::HostSpace> ();
+    {
+      auto Q_lcl = Qold.template getLocalView<Kokkos::HostSpace> ();
+      SC* const Q_lcl_raw = reinterpret_cast<SC*> (Q_lcl.data ());
+
+      blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
+                 Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                 nrows, ncols,
+                 one, Rfix.values(), Rfix.stride(),
+                      Q_lcl_raw, LDQ);
+    }
+#endif
 
     // merge two R
     // H(n, n-1) *= tnn;
@@ -913,6 +1036,10 @@ protected:
     int iterPrev = iter-stepSize;
 
     //printf( " projectAndNormalizeCholQR2\n" );
+    Teuchos::RCP< Teuchos::Time >  BOrthTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep Bort chol2");
+    Teuchos::RCP< Teuchos::Time >   TsqrTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep TSQR chol2");
+    Teuchos::RCP< Teuchos::Time >   trsmTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep trsm chol2");
+    Teuchos::RCP< Teuchos::Time > updateTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep gemm chol2");
     if (iter > 0) {
       // extract new coefficients (note: C(:,iter) is used for T(:,iter) and G(:,0))
       for (int i = 0; i < iter+step+1; i++) {
@@ -991,8 +1118,10 @@ protected:
 
       Teuchos::Range1D index_prev(0, iter-1);
       Teuchos::RCP< const MV > Qprev = MVT::CloneView(Q, index_prev);
-
-      MVT::MvTimesMatAddMv(-one, *Qprev, Gnew, one, Qnew);
+      {
+        Teuchos::TimeMonitor LocalTimer (*BOrthTimer);
+        MVT::MvTimesMatAddMv(-one, *Qprev, Gnew, one, Qnew);
+      }
 
       // the scaling factor
       dense_matrix_type Rnew (Teuchos::View, G, step+1, step+1, iter, 0);
@@ -1001,11 +1130,6 @@ protected:
         // H-=R*P+P*R-P*(T+I)*P
         dense_matrix_type Ctmp (iter, step+1, true);
         // P+T*P
-        for (int i = 0; i < iter; i++) {
-          for (int j = 0; j < step+1; j++) {
-            Ctmp(i, j) = Gnew(i, j);
-          }
-        }
         blas.GEMM(Teuchos::NO_TRANS, Teuchos::NO_TRANS,
                   iter, step+1, iter,
                   one, C.values(), C.stride(),
@@ -1038,6 +1162,7 @@ protected:
                   one, Rnew.values(), Rnew.stride());
         #endif
       } else {
+        Teuchos::TimeMonitor LocalTimer (*updateTimer);
         blas.GEMM(Teuchos::TRANS, Teuchos::NO_TRANS,
                   step+1, step+1, iter,
                  -one, Gnew.values(), Gnew.stride(),
@@ -1048,72 +1173,102 @@ protected:
       // -------------------------
       // normalize the new vectors
       // -------------------------
-      {
-        #if 0
-        if (! STS::isComplex) {
-          using real_type = typename STS::magnitudeType;
-          using real_vector_type = Teuchos::SerialDenseVector<LO, real_type>;
+      #if 0
+      if (! STS::isComplex) {
+        using real_type = typename STS::magnitudeType;
+        using real_vector_type = Teuchos::SerialDenseVector<LO, real_type>;
 
-          int ione = 1;
-          int M = step+1;
-          dense_matrix_type X (M, M, true);
-          real_vector_type S (M, true);
-          for (int i=0; i<M; i++) {
-            X(i, i) = Rnew(i, i);
-            for (int j=i+1; j<M; j++) {
-              X(i, j) = Rnew(i, j);
-              X(j, i) = Rnew(i, j);
-            }
+        int ione = 1;
+        int M = step+1;
+        dense_matrix_type X (M, M, true);
+        real_vector_type S (M, true);
+        for (int i=0; i<M; i++) {
+          X(i, i) = Rnew(i, i);
+          for (int j=i+1; j<M; j++) {
+            X(i, j) = Rnew(i, j);
+            X(j, i) = Rnew(i, j);
           }
-          /*for (int i=0; i<M; i++) {
-            for (int j=0; j<M; j++) {
-              printf("%.16e ",X(i, j));
-            }
-            printf("\n");
-          }*/
-          int INFO, LWORK;
-          SC U, VT, TEMP;
-          real_type RWORK;
-          LWORK = -1;
-          lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
-                       &TEMP, LWORK, &RWORK, &INFO);
-          LWORK = Teuchos::as<LO> (STS::real (TEMP));
-          dense_vector_type WORK (LWORK, true);
-          lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
-                       WORK.values (), LWORK, &RWORK, &INFO);
-          std::cout << "cond(G):" << numIters << ", sqrt(" << S(0) << "/" << S(M-1) << ")="
-                    << "sqrt(" << S(0)/S(M-1) << ")="
-                    << std::sqrt(S(0)/S(M-1)) << std::endl;
         }
-        #endif
+        /*for (int i=0; i<M; i++) {
+          for (int j=0; j<M; j++) {
+            printf("%.16e ",X(i, j));
+          }
+          printf("\n");
+        }*/
+        int INFO, LWORK;
+        SC U, VT, TEMP;
+        real_type RWORK;
+        LWORK = -1;
+        lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
+                     &TEMP, LWORK, &RWORK, &INFO);
+        LWORK = Teuchos::as<LO> (STS::real (TEMP));
+        dense_vector_type WORK (LWORK, true);
+        lapack.GESVD('N', 'N', M, M, X.values (), M, S.values (), &U, ione, &VT, ione,
+                     WORK.values (), LWORK, &RWORK, &INFO);
+        std::cout << "cond(G):" << numIters << ", sqrt(" << S(0) << "/" << S(M-1) << ")="
+                  << "sqrt(" << S(0)/S(M-1) << ")="
+                  << std::sqrt(S(0)/S(M-1)) << std::endl;
+      }
+      #endif
 
-        // Compute the Cholesky factorization of R in place
+      // Compute the Cholesky factorization of R in place
+      {
+        Teuchos::TimeMonitor LocalTimer (*TsqrTimer);
+
         int info = 0;
-        lapack.POTRF ('U', step+1, Rnew.values (), Rnew.stride(), &info);
+        const LO LDR = Rnew.stride();
+        lapack.POTRF ('U', step+1, Rnew.values (), LDR, &info);
         if (info < 0) {
           // FIXME (mfh 17 Sep 2018) Don't throw; report an error code.
           throw std::runtime_error("Cholesky factorization failed");
         }
-        for (int i=0; i<step+1; i++) {
-          for (int j=0; j<i; j++) {
-            Rnew(i, j) = zero;
-          }
-        }
+        //for (int i=0; i<step+1; i++) {
+        //  for (int j=0; j<i; j++) {
+        //    Rnew(i, j) = zero;
+        //  }
+        //}
 
         // Compute A_cur / R (Matlab notation for A_cur * R^{-1}) in place.
-        Qnew.template sync<Kokkos::HostSpace> ();
-        Qnew.template modify<Kokkos::HostSpace> ();
-        auto Q_lcl = Qnew.template getLocalView<Kokkos::HostSpace> ();
-        SC* const Q_lcl_raw = reinterpret_cast<SC*> (Q_lcl.data ());
         const LO LDQ = LO (Qnew.getStride ());
-
         LO ncols = Qnew.getNumVectors ();
         LO nrows = Qnew.getLocalLength ();
-        blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
-                   Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-                   nrows, ncols, one, Rnew.values(), Rnew.stride(),
-                   Q_lcl_raw, LDQ);
-        Qnew.template sync<typename MV::device_type::memory_space> ();
+#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+        Qnew.sync_device ();
+        Qnew.modify_device ();
+        {
+          Teuchos::TimeMonitor LocalTimer (*trsmTimer);
+
+          auto Q_lcl = Qnew.getLocalViewDevice ();
+          SC* const Q_lcl_raw = reinterpret_cast<SC*> (Q_lcl.data ());
+
+          Kokkos::View< SC* , Kokkos::HostSpace, Kokkos::MemoryUnmanaged > hostR(Rnew.values(), LDR*ncols);
+          if (ncols*LDR > tsqr_->getLwork ()) {
+            // allocate workspace on GPU
+            tsqr_->initializeWorkspace (LDR*ncols);
+          }
+          // do TRSM using a pre-allocated workspace on GPU
+          Kokkos::deep_copy(*(tsqr_->getWorkspace ()), hostR);
+          cuBLAS::trsm(nrows, ncols, one, tsqr_->getWorkspace()->data(), LDR, Q_lcl_raw, LDQ);
+
+          // just for timing purpose 
+          Qnew.sync_device ();
+        }
+#else
+        Qnew.template sync<Kokkos::HostSpace> ();
+        Qnew.template modify<Kokkos::HostSpace> ();
+        {
+          Teuchos::TimeMonitor LocalTimer (*trsmTimer);
+
+          auto Q_lcl = Qnew.template getLocalView<Kokkos::HostSpace> ();
+          SC* const Q_lcl_raw = reinterpret_cast<SC*> (Q_lcl.data ());
+
+          blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
+                     Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                     nrows, ncols, one, Rnew.values(), LDR,
+                     Q_lcl_raw, LDQ);
+          Qnew.template sync<typename MV::device_type::memory_space> ();
+        }
+#endif
         rank = ncols;
       }
 
