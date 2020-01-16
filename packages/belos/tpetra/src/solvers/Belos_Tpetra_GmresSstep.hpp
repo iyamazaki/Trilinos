@@ -4,7 +4,7 @@
 #include "Belos_Tpetra_Gmres.hpp"
 #include "Belos_Tpetra_UpdateNewton.hpp"
 
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
  #include "cuda_runtime.h"
  #include "cublas_v2.h"
 
@@ -17,7 +17,7 @@
 namespace BelosTpetra {
 namespace Impl {
 
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) //&& defined(__CUDA_ARCH__)
 namespace cuBLAS {
 
 void trsm (cublasHandle_t &handle, int M, int N, double alpha, double *A, int LDA, double *B, int LDB) {
@@ -77,7 +77,7 @@ public:
 
   void
   initializeWorkspace(LO m_work, LO n_work) {
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
     m_work_ = m_work;
     n_work_ = n_work;
     deviceR_ = Teuchos::rcp (new Kokkos::View< SC* , Kokkos::CudaSpace > ("Rview", lwork_));
@@ -104,7 +104,7 @@ public:
     lwork_ (0)
   {}
 
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
   void
   initializeWorkspace(LO lwork) {
     lwork_ = lwork;
@@ -169,7 +169,7 @@ public:
     // triangle of R.
     const LO nrows = A.getLocalLength ();
     const LO LDA = LO (A.getStride ());
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
     A.sync_device ();
     A.modify_device ();
     {
@@ -216,12 +216,12 @@ private:
 #if defined(TWOD_WORK_VIEW)
     LO m_work_;
     LO n_work_;
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
     Teuchos::RCP<Kokkos::View<SC**, Kokkos::CudaSpace>> deviceR_;
 #endif
 #else
     LO lwork_;
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
     Teuchos::RCP<Kokkos::View<SC*, Kokkos::CudaSpace>> deviceR_;
 #endif
 #endif
@@ -435,7 +435,7 @@ protected:
       // reset orthogonalizer
       setOrthogonalizer (oldOrthoType);
     }
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
     // Allocate workspace for CholQR
     if (tsqr_ != Teuchos::null) {
       tsqr_->initializeWorkspace ((restart+1)*(step+1));
@@ -1091,7 +1091,7 @@ protected:
     const LO LDQ = LO (Qold.getStride ());
     const LO ncols = Qold.getNumVectors ();
     const LO nrows = Qold.getLocalLength ();
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
     Qold.sync_device ();
     Qold.modify_device ();
     {
@@ -1380,7 +1380,7 @@ protected:
         const LO LDQ = LO (Qnew.getStride ());
         LO ncols = Qnew.getNumVectors ();
         LO nrows = Qnew.getLocalLength ();
-#if defined(KOKKOS_ENABLE_CUDA) //&& defined(__CUDA_ARCH__)
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS) 
         Qnew.sync_device ();
         Qnew.modify_device ();
         {
