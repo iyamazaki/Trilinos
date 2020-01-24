@@ -58,6 +58,9 @@
 #include <sstream>
 #include "KokkosSparse_gauss_seidel.hpp"
 
+#include "KokkosSparse.hpp"
+#include "KokkosBlas.hpp"
+
 namespace {
   // Validate that a given int is nonnegative.
   class NonnegativeIntValidator : public Teuchos::ParameterEntryValidator {
@@ -173,6 +176,456 @@ namespace {
 } // namespace (anonymous)
 
 namespace Ifpack2 {
+#if 1
+//#define USE_CUSPARSE_SPMV_GSJR
+#if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOS_USE_CUSPARSE) && defined(USE_CUSPARSE_SPMV_GSJR)
+namespace cuSparse {
+
+static void spmv (cusparseHandle_t &handle, cusparseMatDescr_t &descr,
+                  int M, int N, int NNZ,
+                  const float alpha, const float *nzvals, const int *row_map, const int *colind,
+                  const float *X, const float beta, float *B) {}
+
+
+
+static void spmv (cusparseHandle_t &handle, cusparseMatDescr_t &descr,
+                  int M, int N, int NNZ,
+                  const double alpha, const double *nzvals, const int *row_map, const int *colind,
+                  const double *X, const double beta, double *B) {
+
+  cusparseDcsrmv (handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                  M, N,  NNZ,
+                  &alpha,
+                  descr,
+                  nzvals,
+                  (const int*) row_map,
+                  colind,
+                  X,
+                  &beta,
+                  B);
+}
+
+static void spmv (cublasHandle_t &handle, int M, int N, float alpha, float *A, int LDA, float *B, int LDB) {
+}
+
+static void spmv (cublasHandle_t &handle, int M, int N, std::complex<double> alpha, std::complex<double> *A, int LDA, std::complex<double> *B, int LDB) {
+}
+
+
+static void spmv (cublasHandle_t &handle, int M, int N, std::complex<float> alpha, std::complex<float> *A, int LDA, std::complex<float> *B, int LDB) {
+}
+
+}
+#endif
+
+template <class AlphaType, class AMatrix, class XVector, class BetaType, class YVector>
+void spmv_wrapper (const char mode[],
+                   const AlphaType& alpha,
+                         AMatrix& A,
+                         XVector& X,
+                   const BetaType& beta,
+                         YVector& R) {
+    #if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOS_USE_CUSPARSE) && defined(USE_CUSPARSE_SPMV_GSJR)
+    cuSparse::
+    spmv(A.cusparse_handle,
+         A.cusparse_descr,
+         A.numRows(),
+         A.numCols(),
+         A.nnz(),
+         alpha, A.values.data(),
+  (const int*)  A.graph.row_map.data(),
+                A.graph.entries.data(),
+                X.data(),
+          beta, R.data());
+    #else
+    KokkosSparse::
+    spmv(mode,
+         alpha, A,
+                X,
+         beta,  R);
+    #endif
+}
+
+
+template <typename KernelHandle,
+          typename const_nnz_lno_t_,
+          typename lno_row_view_t_,
+          typename lno_nnz_view_t_,
+          typename scalar_nnz_view_t_>
+void gauss_seidel_jacobi_richardson_numeric(KernelHandle *handle,
+                                            const_nnz_lno_t_ num_rows,
+                                            lno_row_view_t_ rowmap_view,
+                                            lno_nnz_view_t_ column_view,
+                                            scalar_nnz_view_t_ values_view,
+                                            const Tpetra::ESweepDirection direction)
+{
+  using crsmat_t = KokkosSparse::CrsMatrix <typename scalar_nnz_view_t_::value_type,
+                                            typename    lno_nnz_view_t_::value_type,
+                                            typename scalar_nnz_view_t_::execution_space>;
+  using graph_t  = typename crsmat_t::StaticCrsGraphType;
+  using values_view_t  = typename crsmat_t::values_type::non_const_type;
+  using row_map_view_t = typename graph_t::row_map_type::non_const_type;
+  using cols_view_t    = typename graph_t::entries_type::non_const_type;
+  using scalar_t_      = typename values_view_t::value_type;
+  using size_t_        = typename row_map_view_t::value_type;
+
+  using STS = Teuchos::ScalarTraits<scalar_t_>;
+  const scalar_t_ one = STS::one ();
+
+  // local A matrix
+  int nrows = num_rows;
+  graph_t graphA (column_view, rowmap_view);
+  crsmat_t crsmatA ("A", nrows, values_view, graphA);
+
+  // copy CrsA to host
+  auto row_map = Kokkos::create_mirror_view (rowmap_view);
+  auto entries = Kokkos::create_mirror_view (column_view);
+  auto values  = Kokkos::create_mirror_view (values_view);
+  Kokkos::deep_copy (row_map, rowmap_view);
+  Kokkos::deep_copy (entries, column_view);
+  Kokkos::deep_copy (values,  values_view);
+
+  // count nz in local L & U matrices
+  int nnzL = 0;
+  int nnzU = 0;
+  if (direction == Tpetra::Forward || direction == Tpetra::Symmetric) {
+    for (int i = 0; i < nrows; i++) {
+      for (size_t_ k = row_map (i); k < row_map (i+1); k++) {
+        if (entries (k) < i) {
+          nnzL ++;
+        }
+      }
+    }
+  }
+  if (direction == Tpetra::Backward || direction == Tpetra::Symmetric) {
+    for (int i = 0; i < nrows; i++) {
+      for (size_t_ k = row_map (i); k < row_map (i+1); k++) {
+        if (entries (k) > i && entries (k) < nrows) {
+          nnzU ++;
+        }
+      }
+    }
+  }
+
+  // allocate memory to store local L, D, & U matrices
+  values_view_t  localD ("tmp", nrows);
+
+  row_map_view_t rowmap_viewL ("row_mapL", nrows+1);
+  cols_view_t    column_viewL ("entriesL", nnzL);
+  values_view_t  values_viewL ("valuesL",  nnzL);
+  auto row_mapL = Kokkos::create_mirror_view (rowmap_viewL);
+  auto entriesL = Kokkos::create_mirror_view (column_viewL);
+  auto valuesL  = Kokkos::create_mirror_view (values_viewL);
+
+  row_map_view_t rowmap_viewU ("row_mapU", nrows+1);
+  cols_view_t    column_viewU ("entriesU", nnzU);
+  values_view_t  values_viewU ("valuesU",  nnzU);
+  auto row_mapU = Kokkos::create_mirror_view (rowmap_viewU);
+  auto entriesU = Kokkos::create_mirror_view (column_viewU);
+  auto valuesU  = Kokkos::create_mirror_view (values_viewU);
+
+  // extract local L, D & U matrices
+  nnzL = 0;
+  nnzU = 0;
+  row_mapL (0) = nnzL;
+  row_mapU (0) = nnzU;
+  #define IFPACK_GS_JR_MERGE_SPMV
+  if (direction == Tpetra::Forward || direction == Tpetra::Symmetric) {
+    // for computing (L+D)^{-1} 
+    for (int i = 0; i < nrows; i++) {
+      for (size_t_ k = row_map (i); k < row_map (i+1); k++) {
+        if (entries (k) < i) {
+          entriesL (nnzL) = entries (k);
+          valuesL (nnzL) = values (k);
+          nnzL ++;
+        } else if (entries (k) == i) {
+          localD (i) = one / values (k);
+        }
+      }
+      row_mapL (i+1) = nnzL;
+    }
+    #if defined(IFPACK_GS_JR_MERGE_SPMV)
+    for (int i = 0; i < nrows; i++) {
+      for (size_t_ k = row_mapL (i); k < row_mapL (i+1); k++) {
+        valuesL (k) *= localD (i);
+      }
+    }
+    #endif
+  }
+  if (direction == Tpetra::Backward || direction == Tpetra::Symmetric) {
+    // for computing (D+U)^{-1} 
+    for (int i = 0; i < nrows; i++) {
+      for (size_t_ k = row_map (i); k < row_map (i+1); k++) {
+        if (entries (k) == i) {
+          localD (i) = one / values (k);
+        } else if (entries (k) > i && entries (k) < nrows) {
+          entriesU (nnzU) = entries (k);
+          valuesU (nnzU) = values (k);
+          nnzU ++;
+        }
+      }
+      row_mapU (i+1) = nnzU;
+    }
+    #if defined(IFPACK_GS_JR_MERGE_SPMV)
+    for (int i = 0; i < nrows; i++) {
+      for (size_t_ k = row_mapU (i); k < row_mapU (i+1); k++) {
+        valuesU (k) *= localD (i);
+      }
+    }
+    #endif
+  }
+
+  // copy them to device
+  Kokkos::deep_copy (rowmap_viewL, row_mapL);
+  Kokkos::deep_copy (column_viewL, entriesL);
+  Kokkos::deep_copy (values_viewL, valuesL);
+
+  Kokkos::deep_copy (rowmap_viewU, row_mapU);
+  Kokkos::deep_copy (column_viewU, entriesU);
+  Kokkos::deep_copy (values_viewU, valuesU);
+
+  graph_t graphL (column_viewL, rowmap_viewL);
+  graph_t graphU (column_viewU, rowmap_viewU);
+  crsmat_t crsmatL ("L", nrows, values_viewL, graphL);
+  crsmat_t crsmatU ("U", nrows, values_viewU, graphU);
+
+  // store them in handle
+  auto *gsHandle = dynamic_cast<typename KernelHandle::TwoStageGaussSeidelHandleType*>(handle->get_gs_handle());
+  gsHandle->setA (crsmatA);
+  gsHandle->setL (crsmatL);
+  gsHandle->setU (crsmatU);
+  gsHandle->setD (localD);
+}
+
+
+template <typename KernelHandle,
+          typename const_nnz_lno_t_,
+          typename lno_row_view_t_,
+          typename lno_nnz_view_t_,
+          typename scalar_nnz_view_t_,
+          typename x_scalar_view_t_,
+          typename y_scalar_view_t_,
+          typename scalar_t_>
+void gauss_seidel_jacobi_richardson_apply(KernelHandle *handle,
+                                          const_nnz_lno_t_ num_rows,
+                                          lno_row_view_t_ row_map,
+                                          lno_nnz_view_t_ entries,
+                                          scalar_nnz_view_t_ values,
+                                          x_scalar_view_t_ localX,  // in/out
+                                          y_scalar_view_t_ localB,  // in
+                                          bool init_zero_x_vector,
+                                          bool update_y_vector,
+                                          scalar_t_ omega,
+                                          const Tpetra::ESweepDirection direction,
+                                          int NumSweeps,
+                                          int NumInnerSweeps)
+{
+
+  using crsmat_t = KokkosSparse::CrsMatrix <typename scalar_nnz_view_t_::value_type,
+                                            typename    lno_nnz_view_t_::value_type,
+                                            typename scalar_nnz_view_t_::execution_space>;
+  using values_view_t  = typename crsmat_t::values_type::non_const_type;
+  using range_type = Kokkos::pair<int, int>;
+
+  using STS = Teuchos::ScalarTraits<scalar_t_>;
+  const scalar_t_ one = STS::one ();
+  const scalar_t_ zero = STS::zero ();
+
+  // load auxiliary matrices from handle
+  auto *gsHandle = dynamic_cast<typename KernelHandle::TwoStageGaussSeidelHandleType*>(handle->get_gs_handle());
+  values_view_t localD = gsHandle->getD ();
+  crsmat_t crsmatA = gsHandle->getA ();
+  crsmat_t crsmatL = gsHandle->getL ();
+  crsmat_t crsmatU = gsHandle->getU ();
+
+  // create auxiliary vectors
+  int nrows = num_rows;
+  int ncols = localX.extent (1);
+  gsHandle->initVectors (nrows, ncols);
+  y_scalar_view_t_ localR = gsHandle->getVectorR ();
+  y_scalar_view_t_ localT = gsHandle->getVectorT ();
+  y_scalar_view_t_ localZ = gsHandle->getVectorZ ();
+
+  // outer Gauss-Seidel iteration
+  if (direction == Tpetra::Symmetric) {
+    NumSweeps *= 2;
+  }
+  for (int sweep = 0; sweep < NumSweeps; ++sweep) {
+    #define IFPACK_GS_JR_EXPLICIT_RESIDUAL
+    #if defined(IFPACK_GS_JR_EXPLICIT_RESIDUAL)
+    // R = B - A*x
+    //Kokkos::deep_copy (localR, localB);
+    KokkosBlas::scal (localR, one, localB);
+    if (sweep > 0 || !init_zero_x_vector) {
+      #if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOS_USE_CUSPARSE) && defined(USE_CUSPARSE_SPMV_GSJR)
+      spmv_wrapper("N", -one, crsmatA,
+                              localX,
+                         one, localR);
+      #else
+      KokkosSparse::
+      spmv("N", -one, crsmatA,
+                      localX,
+                 one, localR);
+      #endif
+    }
+    #else // !defined(IFPACK_GS_JR_EXPLICIT_RESIDUAL)
+    using graph_t  = typename crsmat_t::StaticCrsGraphType;
+    using row_map_view_t = typename graph_t::row_map_type::non_const_type;
+    using size_t_ = typename row_map_view_t::value_type;
+    if (direction == Tpetra::Forward ||
+       (direction == Tpetra::Symmetric && sweep%2 == 0)) {
+      // R = B - U*x
+      for (int i = 0; i < nrows; i++) {
+        for (int j = 0; j < ncols; j++) {
+          localR (i, j) = localB (i, j);
+          for (size_t_ k = row_map (i); k < row_map (i+1); k++) {
+            if (entries (k) > i) {
+              localR (i, j) -= values(k) * localX (entries (k), j);
+            }
+          }
+        }
+      }
+    }
+    else {
+      // R = B - L*x
+      for (int i = 0; i < nrows; i++) {
+        for (int j = 0; j < ncols; j++) {
+          localR (i, j) = localB (i, j);
+          for (size_t_ k = row_map (i); k < row_map (i+1); k++) {
+            if (entries (k) < i || entries (k) >= nrows) {
+              localR (i, j) -= values(k) * localX (entries (k), j);
+            }
+          }
+        }
+      }
+    }
+    #endif
+
+    #if 0 // ===== sparse-triangular solve =====
+    if (direction == Tpetra::Forward || 
+       (direction == Tpetra::Symmetric && sweep%2 == 0)) {
+      // T = (L+D)^{-1} * R
+      for (int i = 0; i < nrows; i++) {
+        for (int j = 0; j < ncols; j++) {
+          scalar_t_ d = zero;
+          localT (i, j) = localR (i, j);
+          for (int k = row_map (i); k < row_map (i+1); k++) {
+            if (entries (k) == i) {
+              d = values(k);
+            } else if (entries (k) < i) {
+              localT (i, j) -= values (k) * localT (entries (k), j);
+            }
+          } 
+          localT (i, j) /= d;
+        }
+      }
+    } else
+    {
+      // T = (D+U)^{-1} * R
+      for (int i = nrows-1; i >= 0; i--) {
+        for (int j = 0; j < ncols; j++) {
+          scalar_t_ d = zero;
+          localT (i, j) = localR (i, j);
+          for (int k = row_map (i); k < row_map (i+1); k++) {
+            if (entries (k) == i) {
+              d = values(k);
+            } else if (entries (k) > i && entries (k) < nrows) {
+              localT (i, j) -= values (k) * localT (entries (k), j);
+            }
+          }
+          localT (i, j) /= d;
+        }
+      }
+    }
+    #else // ====== inner Jacobi-Richardson =====
+    // compute starting vector: T = D^{-1}*R
+    // TODO: need for each column
+    #if defined(IFPACK_GS_JR_EXPLICIT_RESIDUAL) && defined(IFPACK_GS_JR_MERGE_SPMV)
+    if (NumInnerSweeps == 0) {
+      // this is Jacobi-Richardson X_{k+1} := X_{k} + D^{-1}(b-A*X_{k})
+      // copy to localZ (output of JR iteration)
+      KokkosBlas::mult (zero, localZ,
+                        one,  localD, localR);
+    } else {
+      // copy to localT (temporary used in JR iteration)
+      KokkosBlas::mult (zero, localT,
+                        one,  localD, localR);
+    }
+    #else
+    KokkosBlas::mult (zero, localT,
+                      one,  localD, localR);
+    #endif
+    // inner Jacobi-Richardson:
+    for (int ii = 0; ii < NumInnerSweeps; ii++) {
+      // Z = R
+      #if defined(IFPACK_GS_JR_MERGE_SPMV)
+      // R = D^{-1}*R, and L = D^{-1}*L and U = D^{-1}*U
+      //Kokkos::deep_copy (localZ, localT);
+      KokkosBlas::scal (localZ, one, localT);
+      #else
+      //Kokkos::deep_copy (localZ, localR);
+      KokkosBlas::scal (localZ, one, localR);
+      #endif
+      if (direction == Tpetra::Forward ||
+         (direction == Tpetra::Symmetric && sweep%2 == 0)) {
+        // Z = R - L*T
+        #if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOS_USE_CUSPARSE) && defined(USE_CUSPARSE_SPMV_GSJR)
+        spmv_wrapper("N", -one, crsmatL,
+                                localT,
+                           one, localZ);
+        #else
+        KokkosSparse::
+        spmv("N", -one, crsmatL,
+                        localT,
+                   one, localZ);
+        #endif
+      }
+      else {
+        // Z = R - U*T
+        #if defined(KOKKOS_ENABLE_CUDA) && defined(KOKKOS_USE_CUSPARSE) && defined(USE_CUSPARSE_SPMV_GSJR)
+        spmv_wrapper("N", -one, crsmatU,
+                                localT,
+                           one, localZ);
+        #else
+        KokkosSparse::
+        spmv("N", -one, crsmatU,
+                        localT,
+                   one, localZ);
+        #endif
+      }
+      #if defined(IFPACK_GS_JR_MERGE_SPMV)
+      if (ii+1 < NumInnerSweeps) {
+        //Kokkos::deep_copy (localT, localZ);
+        KokkosBlas::scal (localT, one, localZ);
+      }
+      #else
+      // T = D^{-1}*Z
+      // TODO: need for each column?
+      KokkosBlas::mult (zero, localT,
+                        one,  localD, localZ);
+      #endif
+    } // end of inner Jacobi Richardson
+    #endif
+
+    #if defined(IFPACK_GS_JR_EXPLICIT_RESIDUAL)
+     // Y = X + T
+     auto localY = Kokkos::subview (localX, range_type(0, nrows), Kokkos::ALL ());
+     #if defined(IFPACK_GS_JR_MERGE_SPMV)
+     KokkosBlas::axpy (one, localZ, localY);
+     #else
+     KokkosBlas::axpy (one, localT, localY);
+     #endif
+    #else
+    // Y = T
+    for (int i = 0; i < nrows; i++) {
+      for (int j = 0; j < ncols; j++) {
+        localX (i, j) = localT (i, j);
+      }
+    }
+    #endif
+  } // end of outer GS sweep
+}
+#endif
 
 template<class MatrixType>
 void
@@ -243,20 +696,24 @@ Relaxation<MatrixType>::getValidParameters () const
 
     // Set a validator that automatically converts from the valid
     // string options to their enum values.
-    Array<std::string> precTypes (6);
+    Array<std::string> precTypes (8);
     precTypes[0] = "Jacobi";
     precTypes[1] = "Gauss-Seidel";
     precTypes[2] = "Symmetric Gauss-Seidel";
     precTypes[3] = "MT Gauss-Seidel";
     precTypes[4] = "MT Symmetric Gauss-Seidel";
     precTypes[5] = "Richardson";
-    Array<Details::RelaxationType> precTypeEnums (6);
+    precTypes[6] = "Gauss-Seidel, second order";
+    precTypes[7] = "Symmetric Gauss-Seidel, second order";
+    Array<Details::RelaxationType> precTypeEnums (8);
     precTypeEnums[0] = Details::JACOBI;
     precTypeEnums[1] = Details::GS;
     precTypeEnums[2] = Details::SGS;
     precTypeEnums[3] = Details::MTGS;
     precTypeEnums[4] = Details::MTSGS;
     precTypeEnums[5] = Details::RICHARDSON;
+    precTypeEnums[6] = Details::GS2;
+    precTypeEnums[7] = Details::SGS2;
     const std::string defaultPrecType ("Jacobi");
     setStringToIntegralParameter<Details::RelaxationType> ("relaxation: type",
       defaultPrecType, "Relaxation method", precTypes (), precTypeEnums (),
@@ -267,6 +724,12 @@ Relaxation<MatrixType>::getValidParameters () const
       rcp_implicit_cast<PEV> (rcp (new NonnegativeIntValidator));
     pl->set ("relaxation: sweeps", numSweeps, "Number of relaxation sweeps",
              rcp_const_cast<const PEV> (numSweepsValidator));
+
+    const int numInnerSweeps = 1;
+    RCP<PEV> numInnerSweepsValidator =
+      rcp_implicit_cast<PEV> (rcp (new NonnegativeIntValidator));
+    pl->set ("relaxation: inner sweeps", numInnerSweeps, "Number of inner relaxation sweeps",
+             rcp_const_cast<const PEV> (numInnerSweepsValidator));
 
     const scalar_type dampingFactor = STS::one ();
     pl->set ("relaxation: damping factor", dampingFactor);
@@ -332,6 +795,7 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
   const Details::RelaxationType precType =
     getIntegralValue<Details::RelaxationType> (pl, "relaxation: type");
   const int numSweeps = pl.get<int> ("relaxation: sweeps");
+  const int numInnerSweeps = pl.get<int> ("relaxation: inner sweeps");
   const ST dampingFactor = pl.get<ST> ("relaxation: damping factor");
   const bool zeroStartSol = pl.get<bool> ("relaxation: zero starting solution");
   const bool doBackwardGS = pl.get<bool> ("relaxation: backward mode");
@@ -352,6 +816,7 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
   // "Commit" the changes, now that we've validated everything.
   PrecType_              = precType;
   NumSweeps_             = numSweeps;
+  NumInnerSweeps_        = numInnerSweeps;
   DampingFactor_         = dampingFactor;
   ZeroStartingSolution_  = zeroStartSol;
   DoBackwardGS_          = doBackwardGS;
@@ -573,6 +1038,12 @@ apply (const Tpetra::MultiVector<scalar_type, local_ordinal_type, global_ordinal
       case Ifpack2::Details::RICHARDSON:
         ApplyInverseRichardson(*Xcopy,Y);
         break;
+      case Ifpack2::Details::GS2:
+        ApplyInverseMTGS_CrsMatrix(*Xcopy,Y, true);
+        break;
+      case Ifpack2::Details::SGS2:
+        ApplyInverseMTSGS_CrsMatrix(*Xcopy, Y, true);
+        break;
 
       default:
         TEUCHOS_TEST_FOR_EXCEPTION(true, std::logic_error,
@@ -654,7 +1125,8 @@ void Relaxation<MatrixType>::initialize ()
       hasBlockCrsMatrix_ = ! A_bcrs.is_null ();
     }
 
-    if (PrecType_ == Details::MTGS || PrecType_ == Details::MTSGS) {
+    if (PrecType_ == Details::MTGS || PrecType_ == Details::MTSGS ||
+        PrecType_ == Details::GS2  || PrecType_ == Details::SGS2) {
       const crs_matrix_type* crsMat =
         dynamic_cast<const crs_matrix_type*> (A_.get());
       TEUCHOS_TEST_FOR_EXCEPTION
@@ -679,7 +1151,9 @@ void Relaxation<MatrixType>::initialize ()
 
       this->mtKernelHandle_ = Teuchos::rcp (new mt_kernel_handle_type ());
       if (mtKernelHandle_->get_gs_handle () == nullptr) {
-        if(this->clusterSize_ == 1)
+        if (PrecType_ == Details::GS2 || PrecType_ == Details::SGS2)
+          mtKernelHandle_->create_gs2_handle ();
+        else if(this->clusterSize_ == 1)
           mtKernelHandle_->create_gs_handle ();
         else
           mtKernelHandle_->create_gs_handle (KokkosSparse::CLUSTER_DEFAULT, this->clusterSize_);
@@ -1285,8 +1759,10 @@ void Relaxation<MatrixType>::compute ()
       Diagonal_->sync_device ();
     }
 
-    if (PrecType_ == Ifpack2::Details::MTGS ||
-        PrecType_ == Ifpack2::Details::MTSGS) {
+    if (PrecType_ == Ifpack2::Details::MTGS  ||
+        PrecType_ == Ifpack2::Details::MTSGS ||
+        PrecType_ == Ifpack2::Details::GS2   ||
+        PrecType_ == Ifpack2::Details::SGS2) {
       //KokkosKernels GaussSeidel Initialization.
 
       const crs_matrix_type* crsMat =
@@ -1297,20 +1773,28 @@ void Relaxation<MatrixType>::compute ()
          "when the input matrix is a Tpetra::CrsMatrix.");
       local_matrix_type kcsr = crsMat->getLocalMatrix ();
 
-      auto diagView_2d = Diagonal_->getLocalViewDevice ();
-      auto diagView_1d = Kokkos::subview (diagView_2d, Kokkos::ALL (), 0);
-      using KokkosSparse::Experimental::gauss_seidel_numeric;
-      gauss_seidel_numeric<mt_kernel_handle_type,
-                           lno_row_view_t,
-                           lno_nonzero_view_t,
-                           scalar_nonzero_view_t> (mtKernelHandle_.getRawPtr (),
-                                                   A_->getNodeNumRows (),
-                                                   A_->getNodeNumCols (),
-                                                   kcsr.graph.row_map,
-                                                   kcsr.graph.entries,
-                                                   kcsr.values,
-                                                   diagView_1d,
-                                                   is_matrix_structurally_symmetric_);
+      if (PrecType_ == Ifpack2::Details::GS2   ||
+          PrecType_ == Ifpack2::Details::SGS2) {
+        const Tpetra::ESweepDirection direction = (PrecType_ == Ifpack2::Details::SGS2 ? Tpetra::Symmetric : Tpetra::Forward);
+        gauss_seidel_jacobi_richardson_numeric(mtKernelHandle_.getRawPtr(), A_->getNodeNumRows(),
+                                               kcsr.graph.row_map, kcsr.graph.entries, kcsr.values,
+                                               direction);
+      } else {
+        auto diagView_2d = Diagonal_->getLocalViewDevice ();
+        auto diagView_1d = Kokkos::subview (diagView_2d, Kokkos::ALL (), 0);
+        using KokkosSparse::Experimental::gauss_seidel_numeric;
+        gauss_seidel_numeric<mt_kernel_handle_type,
+                             lno_row_view_t,
+                             lno_nonzero_view_t,
+                             scalar_nonzero_view_t> (mtKernelHandle_.getRawPtr (),
+                                                     A_->getNodeNumRows (),
+                                                     A_->getNodeNumCols (),
+                                                     kcsr.graph.row_map,
+                                                     kcsr.graph.entries,
+                                                     kcsr.values,
+                                                     diagView_1d,
+                                                     is_matrix_structurally_symmetric_);
+      }
     }
   } // end TimeMonitor scope
 
@@ -1862,7 +2346,7 @@ void
 Relaxation<MatrixType>::
 MTGaussSeidel (const Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& B,
                Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& X,
-               const Tpetra::ESweepDirection direction) const
+               const Tpetra::ESweepDirection direction, const bool two_stage) const
 {
   using Teuchos::null;
   using Teuchos::RCP;
@@ -2140,7 +2624,14 @@ MTGaussSeidel (const Tpetra::MultiVector<scalar_type,local_ordinal_type,global_o
       X_colMap->doImport (*X_domainMap, *importer, Tpetra::CombineMode::INSERT);
     }
 
-    if (direction == Tpetra::Symmetric) {
+    if (two_stage) {
+      gauss_seidel_jacobi_richardson_apply(mtKernelHandle_.getRawPtr(), A_->getNodeNumRows(),
+                                           kcsr.graph.row_map, kcsr.graph.entries, kcsr.values,
+                                           X_colMap->getLocalViewDevice(),
+                                           B_in->getLocalViewDevice(),
+                                           zero_x_vector, update_y_vector, DampingFactor_, direction, 1, NumInnerSweeps_);
+    }
+    else if (direction == Tpetra::Symmetric) {
       KokkosSparse::Experimental::symmetric_gauss_seidel_apply
       (mtKernelHandle_.getRawPtr(), A_->getNodeNumRows(), A_->getNodeNumCols(),
           kcsr.graph.row_map, kcsr.graph.entries, kcsr.values,
@@ -2199,21 +2690,23 @@ template<class MatrixType>
 void
 Relaxation<MatrixType>::
 ApplyInverseMTSGS_CrsMatrix (const Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& B,
-                             Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& X) const
+                             Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& X,
+                             bool const two_stage) const
 {
   const Tpetra::ESweepDirection direction = Tpetra::Symmetric;
-  this->MTGaussSeidel (B, X, direction);
+  this->MTGaussSeidel (B, X, direction, two_stage);
 }
 
 
 template<class MatrixType>
 void Relaxation<MatrixType>::ApplyInverseMTGS_CrsMatrix (
     const Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& B,
-    Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& X) const {
+    Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& X,
+    const bool two_stage) const {
 
   const Tpetra::ESweepDirection direction =
     DoBackwardGS_ ? Tpetra::Backward : Tpetra::Forward;
-  this->MTGaussSeidel (B, X, direction);
+  this->MTGaussSeidel (B, X, direction, two_stage);
 }
 
 template<class MatrixType>
@@ -2581,6 +3074,10 @@ std::string Relaxation<MatrixType>::description () const
     os << "MT Gauss-Seidel";
   } else if (PrecType_ == Ifpack2::Details::MTSGS) {
     os << "MT Symmetric Gauss-Seidel";
+  } else if (PrecType_ == Ifpack2::Details::GS2) {
+    os << "Gauss-Seidel, second order";
+  } else if (PrecType_ == Ifpack2::Details::SGS2) {
+    os << "Symmetric Gauss-Seidel, second order";
   }
   else {
     os << "INVALID";
@@ -2661,6 +3158,10 @@ describe (Teuchos::FancyOStream &out,
         out << "MT Gauss-Seidel";
       } else if (PrecType_ == Ifpack2::Details::MTSGS) {
         out << "MT Symmetric Gauss-Seidel";
+      } else if (PrecType_ == Ifpack2::Details::GS2) {
+        out << "Gauss-Seidel, second order";
+      } else if (PrecType_ == Ifpack2::Details::SGS2) {
+        out << "Symmetric Gauss-Seidel, second order";
       } else {
         out << "INVALID";
       }

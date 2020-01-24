@@ -245,6 +245,9 @@ namespace KokkosSparse {
           SGS sgs(handle,num_rows, num_cols, row_map, entries, is_graph_symmetric);
           sgs.initialize_symbolic();
         }
+        else if(gsHandle->get_algorithm_type() == GS_TWOSTAGE)
+        {
+        }
         else
         {
           using SGS = typename Impl::PointGaussSeidel
@@ -277,6 +280,9 @@ namespace KokkosSparse {
           SGS sgs(handle, num_rows, num_cols, row_map, entries, values, is_graph_symmetric);
           sgs.initialize_numeric();
         }
+        else if(gsHandle->get_algorithm_type() == GS_TWOSTAGE)
+        {
+        }
         else
         {
           using SGS = typename Impl::PointGaussSeidel
@@ -303,6 +309,9 @@ namespace KokkosSparse {
             <KernelHandle,a_size_view_t_, a_lno_view_t,a_scalar_view_t>;
           SGS sgs(handle, num_rows, num_cols, row_map, entries, values, given_inverse_diagonal, is_graph_symmetric);
           sgs.initialize_numeric();
+        }
+        else if(gsHandle->get_algorithm_type() == GS_TWOSTAGE)
+        {
         }
         else
         {
@@ -346,6 +355,9 @@ namespace KokkosSparse {
                     omega,
                     apply_forward,
                     apply_backward, update_y_vector);
+        }
+        else if(gsHandle->get_algorithm_type() == GS_TWOSTAGE)
+        {
         }
         else
         {

@@ -44,13 +44,16 @@
 #include <Kokkos_MemoryTraits.hpp>
 #include <Kokkos_Core.hpp>
 #include <KokkosKernels_Utils.hpp>
+
+#include <KokkosSparse_CrsMatrix.hpp>
+
 #ifndef _GAUSSSEIDELHANDLE_HPP
 #define _GAUSSSEIDELHANDLE_HPP
 //#define VERBOSE
 
 namespace KokkosSparse{
 
-  enum GSAlgorithm{GS_DEFAULT, GS_PERMUTED, GS_TEAM, GS_CLUSTER};
+  enum GSAlgorithm{GS_DEFAULT, GS_PERMUTED, GS_TEAM, GS_CLUSTER, GS_TWOSTAGE};
   enum ClusteringAlgorithm{CLUSTER_DEFAULT, CLUSTER_BALLOON, CLUSTER_CUTHILL_MCKEE, CLUSTER_DO_NOTHING, NUM_CLUSTERING_ALGORITHMS};
 
   inline const char* getClusterAlgoName(ClusteringAlgorithm ca)
@@ -599,6 +602,96 @@ namespace KokkosSparse{
 
     ClusteringAlgorithm get_clustering_algo() const {return this->cluster_algo;}
   };
+
+#if 1
+  template <class const_size_type, class const_lno_type, class const_scalar_type,
+            class ExecutionSpace,
+            class TemporaryMemorySpace,
+            class PersistentMemorySpace>
+  class TwoStageGaussSeidelHandle
+  : public GaussSeidelHandle<const_size_type, const_lno_type, const_scalar_type, ExecutionSpace, TemporaryMemorySpace, PersistentMemorySpace>
+  {
+  public:
+    using size_type   = typename std::remove_const<const_size_type>::type;
+    using lno_type    = typename std::remove_const<const_lno_type>::type;
+    using scalar_type = typename std::remove_const<const_scalar_type>::type;
+
+    using GSHandle = GaussSeidelHandle<const_size_type, const_lno_type, const_scalar_type, ExecutionSpace, TemporaryMemorySpace, PersistentMemorySpace>;
+    using crsmat_t = KokkosSparse::CrsMatrix <scalar_type, lno_type, ExecutionSpace>;
+    using values_view_t  = typename crsmat_t::values_type::non_const_type;
+
+    using memory_space = typename ExecutionSpace::memory_space;
+    using vector_view_t = Kokkos::View<scalar_type**, Kokkos::LayoutLeft, ExecutionSpace>;
+
+    TwoStageGaussSeidelHandle () :
+    GSHandle (GS_TWOSTAGE),
+    nrows (0),
+    ncols (0)
+    {}
+
+    void setA (crsmat_t A) {
+      int nrows_ = A.numRows ();
+      int ncols_ = 3;
+      initVectors (nrows_, ncols_);
+      this->crsmatA = A;
+    }
+    crsmat_t getA () {
+      return this->crsmatA;
+    }
+
+    void setL (crsmat_t L) {
+      this->crsmatL = L;
+    }
+    crsmat_t getL () {
+      return this->crsmatL;
+    }
+
+    void setU (crsmat_t U) {
+      this->crsmatU = U;
+    }
+    crsmat_t getU () {
+      return this->crsmatU;
+    }
+
+    void setD (values_view_t D_) {
+      this->D = D_;
+    }
+    values_view_t getD () {
+      return this->D;
+    }
+
+    void initVectors (int nrows_, int ncols_) {
+      if (this->nrows != nrows_ || this->ncols != ncols_) {
+        this->localR = vector_view_t ("temp", nrows_, ncols_);
+        this->localT = vector_view_t ("temp", nrows_, ncols_);
+        this->localZ = vector_view_t ("temp", nrows_, ncols_);
+        this->nrows = nrows_;
+        this->ncols = ncols_;
+      }
+    }
+    vector_view_t getVectorR () {
+      return this->localR;
+    }
+    vector_view_t getVectorT () {
+      return this->localT;
+    }
+    vector_view_t getVectorZ () {
+      return this->localZ;
+    }
+
+  private:
+    values_view_t D;
+    crsmat_t crsmatA;
+    crsmat_t crsmatL;
+    crsmat_t crsmatU;
+
+    int nrows;
+    int ncols;
+    vector_view_t localR;
+    vector_view_t localT;
+    vector_view_t localZ;
+  };
+#endif
 }
 
 #endif

@@ -656,8 +656,8 @@ private:
   //! Apply multi-threaded Gauss-Seidel to X, returning the result in Y.
   void ApplyInverseMTGS_CrsMatrix(
           const Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& X,
-                Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& Y) const;
-
+                Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& Y,
+          const bool two_stage = false) const;
 
   //! Apply Gauss-Seidel for a Tpetra::RowMatrix specialization.
   void ApplyInverseGS_RowMatrix(
@@ -684,12 +684,13 @@ private:
   //! Apply symmetric multi-threaded Gauss-Seidel to X, returning the result in Y.
   void ApplyInverseMTSGS_CrsMatrix(
           const Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& X,
-                Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& Y) const;
+                Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& Y,
+          const bool two_stage = false) const;
 
   void MTGaussSeidel (
       const Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& B,
       Tpetra::MultiVector<scalar_type,local_ordinal_type,global_ordinal_type,node_type>& X,
-      const Tpetra::ESweepDirection direction) const;
+      const Tpetra::ESweepDirection direction, const bool two_stage = false) const;
 
   //! Apply symmetric Gauss-Seidel for a Tpetra::RowMatrix specialization.
   void ApplyInverseSGS_RowMatrix(
@@ -762,6 +763,7 @@ private:
 
   //! How many times to apply the relaxation per apply() call.
   int NumSweeps_ = 1;
+  int NumInnerSweeps_ = 1;
   //! Which relaxation method to use.
   Details::RelaxationType PrecType_ = Ifpack2::Details::JACOBI;
   //! Damping factor

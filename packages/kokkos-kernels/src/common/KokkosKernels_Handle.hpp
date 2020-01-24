@@ -178,6 +178,10 @@ public:
       ClusterGaussSeidelHandleType;
 
   typedef typename KokkosSparse::
+    TwoStageGaussSeidelHandle<const_size_type, const_nnz_lno_t, const_nnz_scalar_t, HandleExecSpace, HandleTempMemorySpace, HandlePersistentMemorySpace>
+      TwoStageGaussSeidelHandleType;
+
+  typedef typename KokkosSparse::
     SPGEMMHandle<const_size_type, const_nnz_lno_t, const_nnz_scalar_t, HandleExecSpace, HandleTempMemorySpace, HandlePersistentMemorySpace>
       SPGEMMHandleType;
 
@@ -508,6 +512,11 @@ public:
     this->destroy_gs_handle();
     this->is_owner_of_the_gs_handle = true;
     this->gsHandle = new ClusterGaussSeidelHandleType(clusterAlgo, verts_per_cluster);
+  }
+  void create_gs2_handle() {
+    this->destroy_gs_handle();
+    this->is_owner_of_the_gs_handle = true;
+    this->gsHandle = new TwoStageGaussSeidelHandleType();
   }
   void destroy_gs_handle(){
     if (is_owner_of_the_gs_handle && this->gsHandle != NULL){
