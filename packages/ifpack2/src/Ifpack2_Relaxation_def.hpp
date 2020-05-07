@@ -344,8 +344,6 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
   const Details::RelaxationType precType =
     getIntegralValue<Details::RelaxationType> (pl, "relaxation: type");
   const int numSweeps = pl.get<int> ("relaxation: sweeps");
-  const int numInnerSweeps = pl.get<int> ("relaxation: inner sweeps");
-  const bool innerSpTrsv = pl.get<bool> ("relaxation: inner sparse-triangular solve");
   const ST dampingFactor = pl.get<ST> ("relaxation: damping factor");
   const bool zeroStartSol = pl.get<bool> ("relaxation: zero starting solution");
   const bool doBackwardGS = pl.get<bool> ("relaxation: backward mode");
@@ -362,6 +360,9 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
 
   Teuchos::ArrayRCP<local_ordinal_type> localSmoothingIndices = pl.get<Teuchos::ArrayRCP<local_ordinal_type> >("relaxation: local smoothing indices");
 
+  // for Two-stage Gauss-Seidel
+  const int numInnerSweeps = pl.get<int> ("relaxation: inner sweeps");
+  const bool innerSpTrsv = pl.get<bool> ("relaxation: inner sparse-triangular solve");
 
   // "Commit" the changes, now that we've validated everything.
   PrecType_              = precType;
@@ -2656,6 +2657,12 @@ std::string Relaxation<MatrixType>::description () const
 
   os  << ", " << "sweeps: " << NumSweeps_ << ", "
       << "damping factor: " << DampingFactor_ << ", ";
+
+  if (PrecType_ == Ifpack2::Details::GS2 ||
+      PrecType_ == Ifpack2::Details::SGS2) {
+    os  << "inner sweeps: " << NumInnerSweeps_ << ", ";
+  }
+
   if (DoL1Method_) {
     os << "use l1: " << DoL1Method_ << ", "
        << "l1 eta: " << L1Eta_ << ", ";
