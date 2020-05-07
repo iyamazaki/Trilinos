@@ -61,7 +61,7 @@
 
 #include "KokkosSparse_gauss_seidel_handle.hpp"
 
-#define KOKKOSSPARSE_IMPL_TWOSTAGE_GS_MERGE_SPMV
+#define KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U
 
 namespace KokkosSparse{
   namespace Impl{
@@ -104,6 +104,8 @@ namespace KokkosSparse{
       using input_graph_t  = typename input_crsmat_t::StaticCrsGraphType;
       using single_vector_view_t = Kokkos::View<scalar_t*, Kokkos::LayoutLeft, input_device_t, input_memory_t>;
 
+      using ST = Kokkos::Details::ArithTraits<scalar_t>;
+
     private:
       HandleType *handle;
 
@@ -132,13 +134,11 @@ namespace KokkosSparse{
       struct Tag_countNnzL{};
       struct Tag_countNnzU{};
       // tag for inserting entries
-      struct Tag_entriesL{};
-      struct Tag_entriesU{};
       struct Tag_entriesLU{};
       // tag for inserting values
-      struct Tag_valuesL{};
-      struct Tag_valuesU{};
       struct Tag_valuesLU{};
+      // tag for scaling U values
+      struct Tag_scaleU{};
 
       template <typename output_row_map_view_t, 
                 typename output_entries_view_t, 
@@ -202,29 +202,6 @@ namespace KokkosSparse{
           entries(entries_)
         {}
 
-        // for storing values
-        TwostageGaussSeidel_functor (
-                  bool two_stage_,
-                  const_ordinal_t num_rows_,
-                  input_row_map_view_t  rowmap_view_,
-                  input_entries_view_t  column_view_,
-                  input_values_view_t   values_view_,
-                  output_row_map_view_t row_map_,
-                  output_values_view_t  values_,
-                  output_values_view_t  diags_) :
-          two_stage(two_stage_),
-          diagos_given(false),
-          num_rows(num_rows_),
-          rowmap_view(rowmap_view_),
-          column_view(column_view_),
-          values_view(values_view_),
-          d_invert_view(),
-          row_map(row_map_),
-          entries(),
-          values(values_),
-          diags(diags_)
-        {}
-
         // for storing booth L&U entries
         TwostageGaussSeidel_functor (
                   bool two_stage_,
@@ -282,6 +259,20 @@ namespace KokkosSparse{
           values2(values2_)
         {}
 
+        // for scaling U values (with D extracted)
+        TwostageGaussSeidel_functor (
+                  const_ordinal_t num_rows_,
+                  output_values_view_t  diags_,
+                  output_row_map_view_t row_map_,
+                  output_entries_view_t entries_,
+                  output_values_view_t  values_) :
+          num_rows(num_rows_),
+          row_map(row_map_),
+          entries(entries_),
+          values(values_),
+          diags(diags_)
+        {}
+
 
         // ------------------------------------------------------- //
         // functor for counting nnzL (with parallel_reduce)
@@ -303,55 +294,6 @@ namespace KokkosSparse{
           nnz +=  nnz_i;
         }
 
-        // functor for storing entriesL (with parallel_for)
-        KOKKOS_INLINE_FUNCTION
-        void operator()(const Tag_entriesL&, const ordinal_t i) const
-        {
-          ordinal_t nnz = row_map (i);
-          for (size_type k = rowmap_view (i); k < rowmap_view (i+1); k++) {
-            if (column_view (k) < i) {
-              entries (nnz) = column_view (k);
-              nnz ++;
-            } else if(!two_stage && column_view (k) == i) {
-              entries (nnz) = column_view (k);
-              nnz ++;
-            }
-          }
-        }
-
-        // functor for storing valuesL (with parallel_for)
-        KOKKOS_INLINE_FUNCTION
-        void operator()(const Tag_valuesL&, const ordinal_t i) const
-        {
-          const_scalar_t one = Kokkos::Details::ArithTraits<scalar_t>::one ();
-          ordinal_t nnz = row_map (i);
-          for (size_type k = rowmap_view (i); k < rowmap_view (i+1); k++) {
-            if (column_view (k) < i) {
-              values (nnz) = values_view (k);
-              nnz ++;
-            } else if (column_view (k) == i) {
-              if (two_stage) {
-                if (diagos_given) {
-                  diags (i) = d_invert_view (i);
-                } else {
-                  diags (i) = one / values_view (k);
-                }
-              } else {
-                values (nnz) = values_view (k);
-                nnz ++;
-              }
-            }
-          }
-          #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_MERGE_SPMV)
-          if (two_stage) {
-            for (size_type k = row_map (i); k < nnz; k++) {
-              values (k) *= diags (i);
-            }
-          }
-          #endif
-        }
-
-
         // ------------------------------------------------------- //
         // functor for counting nnzU (with parallel_reduce)
         KOKKOS_INLINE_FUNCTION
@@ -372,52 +314,13 @@ namespace KokkosSparse{
           nnz +=  nnz_i;
         }
 
-        // functor for storing entriesU (with parallel_for)
+        // functor for applying column scale to valuesU (with parallel_for)
         KOKKOS_INLINE_FUNCTION
-        void operator()(const Tag_entriesU&, const ordinal_t i) const
+        void operator()(const Tag_scaleU&, const ordinal_t i) const
         {
-          ordinal_t nnz = row_map (i);
-          for (size_type k = rowmap_view (i); k < rowmap_view (i+1); k++) {
-            if (column_view (k) > i && column_view (k) < num_rows) {
-              entries (nnz) = column_view (k);
-              nnz ++;
-            } else if(!two_stage && column_view (k) == i) {
-              entries (nnz) = column_view (k);
-              nnz ++;
-            }
+          for (size_type k = row_map (i); k < row_map (i+1); k++) {
+            values (k) *= diags (entries(k));
           }
-        }
-
-        // functor for storing valuesU (with parallel_for)
-        KOKKOS_INLINE_FUNCTION
-        void operator()(const Tag_valuesU&, const ordinal_t i) const
-        {
-          const_scalar_t one = Kokkos::Details::ArithTraits<scalar_t>::one ();
-          ordinal_t nnz = row_map (i);
-          for (size_type k = rowmap_view (i); k < rowmap_view (i+1); k++) {
-            if (column_view (k) == i) {
-              if (two_stage) {
-                if (diagos_given) {
-                  diags (i) = d_invert_view (i);
-                } else {
-                  diags (i) = one / values_view (k);
-                }
-              } else {
-                values (nnz) = values_view (k);
-                nnz ++;
-              }
-            } else if (column_view (k) > i && column_view (k) < num_rows) {
-              values (nnz) = values_view (k);
-              nnz ++;
-            }
-          }
-          #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_MERGE_SPMV)
-          if (two_stage) {
-            for (size_type k = row_map (i); k < nnz; k++) {
-              values (k) *= diags (i);
-            }
-          }
-          #endif
         }
 
         // ------------------------------------------------------- //
@@ -485,27 +388,28 @@ namespace KokkosSparse{
             nnzU = row_map2 (i);
             if (diagos_given) {
               values2 (nnzU) = one / diags (i);
-              values (nnzL) = one / diags (i);
+              values  (nnzL) = one / diags (i);
             } else {
               values2 (nnzU) = diags (i);
-              values (nnzL) = diags (i);
+              values  (nnzL) = diags (i);
             }
           }
-          #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_MERGE_SPMV)
           if (two_stage) {
             if (!diagos_given) {
               // when diag is provided, it is already provided as inverse
               diags (i) = one / diags (i);
             }
-            // compute inv(D)*L
+            // compute inv(D)*L (apply row-scaling to valueL)
             for (size_type k = row_map (i); k < row_map (i+1); k++) {
               values (k) *= diags (i);
             }
+            #if !defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
+            // compute inv(D)*U (apply row-scaling to valueU)
             for (size_type k = row_map2 (i); k < row_map2 (i+1); k++) {
               values2 (k) *= diags (i);
             }
+            #endif
           }
-          #endif
         }
       };
     // --------------------------------------------------------- //
@@ -708,6 +612,15 @@ namespace KokkosSparse{
                                             rowmap_view, column_view, values_view, d_invert_view,
                                             rowmap_viewL, column_viewL, values_viewL, viewD,
                                             rowmap_viewU, column_viewU, values_viewU));
+        #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
+        if (gsHandle->isTwoStage ()) {
+          using scale_policy = Kokkos::RangePolicy <Tag_scaleU, execution_space>;
+          using GS_ColumnScaleFunctor_t = TwostageGaussSeidel_functor<const_row_map_view_t, entries_view_t, values_view_t>;
+          Kokkos::parallel_for ("scaleU", scale_policy (0, num_rows),
+                                GS_ColumnScaleFunctor_t (num_rows, viewD,
+                                                         rowmap_viewU, column_viewU, values_viewU));
+        }
+        #endif
 #ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
         Kokkos::fence();
         tic = timer.seconds ();
@@ -742,7 +655,7 @@ namespace KokkosSparse{
                   y_value_array_type localB, // in
                   bool init_zero_x_vector = false,
                   int numIter = 1,
-                  scalar_t omega = Kokkos::Details::ArithTraits<scalar_t>::one(),
+                  scalar_t omega = ST::one(),
                   bool apply_forward = true,
                   bool apply_backward = true,
                   bool update_y_vector = true)
@@ -811,10 +724,16 @@ namespace KokkosSparse{
                                        localX,
                                  one,  localR);
           }
-          if (!two_stage) { // ===== sparse-triangular solve =====
+          //if (sweep == 0) {
+          //  auto localY = Kokkos::subview (localX, range_type(nrows, localX.extent(0)), Kokkos::ALL ());
+          //  Kokkos::deep_copy (localY, zero);
+          //}
+          if (!two_stage) {
+            // ===== sparse-triangular solve =====
+            // TODO: omega is not supported here (hence, omega = one)
             if (direction == GS_FORWARD ||
                (direction == GS_SYMMETRIC && sweep%2 == 0)) {
-              // Z = (L+D)^{-1} * R
+              // Z = (omega * L + D)^{-1} * R
               // NOTE: need to go over RHSs
               using namespace KokkosSparse::Experimental;
               for (int j = 0; j < nrhs; j++) {
@@ -826,7 +745,7 @@ namespace KokkosSparse{
               }
             } else {
               using namespace KokkosSparse::Experimental;
-              // Z = (U+D)^{-1} * R
+              // Z = (omega * U + D)^{-1} * R
               // NOTE: need to go over RHSs
               for (int j = 0; j < nrhs; j++) {
                 auto localRj = Kokkos::subview (localR, Kokkos::ALL (), range_type (j, j+1));
@@ -836,69 +755,95 @@ namespace KokkosSparse{
                 sptrsv_solve (handle->get_gs_sptrsvU_handle(), crsmatU.graph.row_map, crsmatU.graph.entries, crsmatU.values, Rj, Zj);
               }
             }
-          } else { // ====== inner Jacobi-Richardson =====
+
+            // update solution
+            // Y = X + omega * T
+            auto localY = Kokkos::subview (localX, range_type(0, nrows), Kokkos::ALL ());
+            KokkosBlas::axpy (one, localZ, localY);
+          } else {
+            // ====== inner Jacobi-Richardson =====
             // compute starting vector: Z = D^{-1}*R (Z is correction, i.e., output of JR)
-            #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_MERGE_SPMV)
             if (NumInnerSweeps == 0) {
               // this is Jacobi-Richardson X_{k+1} := X_{k} + D^{-1}(b-A*X_{k})
               // copy to localZ (output of JR iteration)
-              KokkosBlas::mult (zero, localZ,
-                                one,  localD, localR);
+              #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
+              if (direction == GS_BACKWARD ||
+                        (direction == GS_SYMMETRIC && sweep%2 == 1)) {
+                // column-scale: (U*D^{-1})*Y = B
+                // copy R to Z
+                KokkosBlas::scal (localZ, one, localR);
+              } else
+              #endif
+              {
+                // row-scale: (D^{-1}*L)*Y = D^{-1}*B
+                // compute Z := D^{-1}*R
+                KokkosBlas::mult (zero, localZ,
+                                  one,  localD, localR);
+              }
             } else {
-              // copy to localT (workspace used to save D^{-1}*R for JR iteration)
-              KokkosBlas::mult (zero, localT,
-                                one,  localD, localR);
-              // initialize Jacobi-Richardson (using R as workspace for JR iteration)
-              KokkosBlas::scal (localR, one, localT);
+              #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
+              if (direction == GS_BACKWARD ||
+                 (direction == GS_SYMMETRIC && sweep%2 == 1)) {
+                // to keep symmetry of SGS, we apply "column-scaling" to U
+                // hence solving (U*D^{-1})*Y = B and x = D^{-1}*Y,
+                // and the column-scaling is applied after the inner sweeps.
+                // So, here, we just copy R to T
+                KokkosBlas::scal (localT, one, localR);
+              } else
+              #endif
+              {
+                // copy to localT (workspace used to save D^{-1}*R for JR iteration)
+                KokkosBlas::mult (zero, localT,
+                                  one,  localD, localR);
+                // initialize Jacobi-Richardson (using R as workspace for JR iteration)
+                KokkosBlas::scal (localR, one, localT);
+              }
             }
-            #else
-            KokkosBlas::mult (zero, localT,
-                              one,  localD, localR);
-            #endif
+
             // inner Jacobi-Richardson:
             for (int ii = 0; ii < NumInnerSweeps; ii++) {
-              #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_MERGE_SPMV)
               // T = D^{-1}*R, and L = D^{-1}*L and U = D^{-1}*U
               // copy T into Z
               KokkosBlas::scal (localZ, one, localT);
-              #else
-              // Z = R
-              KokkosBlas::scal (localZ, one, localR);
-              #endif
               if (direction == GS_FORWARD ||
                  (direction == GS_SYMMETRIC && sweep%2 == 0)) {
                 // Z = Z - L*R
                 KokkosSparse::
-                spmv("N", scalar_t(-one), crsmatL,
-                                          localR,
-                                    one, localZ);
+                spmv("N", scalar_t(-omega), crsmatL,
+                                            localR,
+                                      one,  localZ);
               }
               else {
                 // Z = R - U*T
                 KokkosSparse::
-                spmv("N", scalar_t(-one), crsmatU,
-                                          localR,
-                                    one, localZ);
+                spmv("N", scalar_t(-omega), crsmatU,
+                                             localR,
+                                       one,  localZ);
               }
-              #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_MERGE_SPMV)
               if (ii+1 < NumInnerSweeps) {
                 // reinitialize (R to be Z)
                 KokkosBlas::scal (localR, one, localZ);
               }
-              #else
-              // T = D^{-1}*Z
-              KokkosBlas::mult (zero, localT,
-                                one,  localD, localZ);
-              #endif
             } // end of inner Jacobi Richardson
+
+            // update solution
+            auto localY = Kokkos::subview (localX, range_type(0, nrows), Kokkos::ALL ());
+            #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
+            if (direction == GS_BACKWARD ||
+               (direction == GS_SYMMETRIC && sweep%2 == 1))
+            {
+              // apply column-scaling: R := D^{-1}*Z
+              KokkosBlas::mult (zero, localR,
+                                one,  localD, localZ);
+              // Y := X + omega * R
+              KokkosBlas::axpy (omega, localR, localY);
+            } else
+            #endif
+            {
+              // Y := X + omega * T
+              KokkosBlas::axpy (omega, localZ, localY);
+            }
           }
-          // Y = X + T
-          auto localY = Kokkos::subview (localX, range_type(0, nrows), Kokkos::ALL ());
-          #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_MERGE_SPMV)
-          KokkosBlas::axpy (one, localZ, localY);
-          #else
-          KokkosBlas::axpy (one, localT, localY);
-          #endif
         } // end of outer GS sweep
       }
     };
