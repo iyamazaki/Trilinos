@@ -608,6 +608,13 @@ public:
       }
     }
   }
+  // ---------------------------------------- //
+  // Specify to use either Compact or Classical form of recurrence
+  void set_gs_twostage_compact_form (bool compact_form) {
+    auto gs2 = get_twostage_gs_handle();
+    gs2->setCompactForm (compact_form);
+  }
+
 
   void create_gs_handle(KokkosSparse::ClusteringAlgorithm clusterAlgo, nnz_lno_t verts_per_cluster) {
     this->destroy_gs_handle();

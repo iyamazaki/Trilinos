@@ -276,9 +276,12 @@ Relaxation<MatrixType>::getValidParameters () const
       rcp_implicit_cast<PEV> (rcp (new NonnegativeIntValidator));
     pl->set ("relaxation: inner sweeps", numInnerSweeps, "Number of inner relaxation sweeps",
              rcp_const_cast<const PEV> (numInnerSweepsValidator));
-    // specify if using sptrsv instead of inner-iterations
+    // specify if using sptrsv instead of inner-iterations for two-stage GS
     const bool innerSpTrsv = false;
     pl->set ("relaxation: inner sparse-triangular solve", innerSpTrsv);
+    // specify if using compact form of recurrence for two-stage GS
+    const bool compactForm = false;
+    pl->set ("relaxation: compact form", compactForm);
 
     const scalar_type dampingFactor = STS::one ();
     pl->set ("relaxation: damping factor", dampingFactor);
@@ -363,12 +366,14 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
   // for Two-stage Gauss-Seidel
   const int numInnerSweeps = pl.get<int> ("relaxation: inner sweeps");
   const bool innerSpTrsv = pl.get<bool> ("relaxation: inner sparse-triangular solve");
+  const bool compactForm = pl.get<bool> ("relaxation: compact form");
 
   // "Commit" the changes, now that we've validated everything.
   PrecType_              = precType;
   NumSweeps_             = numSweeps;
   NumInnerSweeps_        = numInnerSweeps;
   InnerSpTrsv_           = innerSpTrsv;
+  CompactForm_           = compactForm;
   DampingFactor_         = dampingFactor;
   ZeroStartingSolution_  = zeroStartSol;
   DoBackwardGS_          = doBackwardGS;
@@ -711,6 +716,7 @@ void Relaxation<MatrixType>::initialize ()
         // set parameters for two-stage GS
         mtKernelHandle_->set_gs_set_num_inner_sweeps (NumInnerSweeps_);
         mtKernelHandle_->set_gs_twostage (!InnerSpTrsv_, A_->getNodeNumRows ());
+        mtKernelHandle_->set_gs_twostage_compact_form (CompactForm_);
       }
 
       using KokkosSparse::Experimental::gauss_seidel_symbolic;
