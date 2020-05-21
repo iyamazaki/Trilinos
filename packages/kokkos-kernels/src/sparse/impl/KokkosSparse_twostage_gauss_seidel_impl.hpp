@@ -169,6 +169,7 @@ namespace KokkosSparse{
         output_row_map_view_t  row_map_a;
         output_entries_view_t  entries_a;
         output_values_view_t   values_a;
+        output_values_view_t   diags_a;
         // output (complement of L+D)
         output_row_map_view_t  row_map_a2;
         output_entries_view_t  entries_a2;
@@ -267,6 +268,7 @@ namespace KokkosSparse{
                   output_values_view_t  values2_,
                   output_row_map_view_t row_map_a_,
                   output_values_view_t  values_a_,
+                  output_values_view_t  diags_a_,
                   output_row_map_view_t row_map_a2_,
                   output_values_view_t  values_a2_) :
           two_stage(two_stage_),
@@ -293,6 +295,7 @@ namespace KokkosSparse{
           row_map_a(row_map_a_),
           entries_a(),
           values_a(values_a_),
+          diags_a(diags_a_),
           // output complement of L
           row_map_a2(row_map_a2_),
           entries_a2(),
@@ -475,6 +478,9 @@ namespace KokkosSparse{
               } else {
                 // as original
                 diags (i) = values_view (k);
+              }
+              if (compact_form) {
+                diags_a (i) = values_view (k);
               }
             } else {
               if (column_view (k) < num_rows) {
@@ -724,6 +730,9 @@ namespace KokkosSparse{
           // store them in handle
           gsHandle->setLa (crsmatLa);
           gsHandle->setUa (crsmatUa);
+
+          values_view_t viewDa (Kokkos::ViewAllocateWithoutInitializing("diags"), num_rows);
+          gsHandle->setDa (viewDa);
         }
 
         if (!(gsHandle->isTwoStage ())) {
@@ -757,6 +766,7 @@ namespace KokkosSparse{
 
         // load local D from handle
         auto viewD = gsHandle->getD ();
+        auto viewDa = gsHandle->getDa ();
 
         // load local L from handle
         auto crsmatL = gsHandle->getL ();
@@ -788,7 +798,7 @@ namespace KokkosSparse{
                                             rowmap_view, column_view, values_view, d_invert_view,
                                             rowmap_viewL, values_viewL, viewD,
                                             rowmap_viewU, values_viewU,
-                                            rowmap_viewLa, values_viewLa,
+                                            rowmap_viewLa, values_viewLa, viewDa,
                                             rowmap_viewUa, values_viewUa));
         #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
         if (gsHandle->isTwoStage ()) {
@@ -867,6 +877,7 @@ namespace KokkosSparse{
         auto localD = gsHandle->getD ();
         auto crsmatL = gsHandle->getL (); // lower-part of diagonal block
         auto crsmatU = gsHandle->getU (); // upper-part of diagonal block
+        auto localDa = gsHandle->getDa ();
         auto crsmatLa = gsHandle->getLa (); // complement of L+D (used only for compact form)
         auto crsmatUa = gsHandle->getUa (); // complement of U+D (used only for compact form)
 
@@ -917,7 +928,15 @@ namespace KokkosSparse{
                                            localX,
                                      one,  localR);
               }
-            } else {
+              if (omega != one) {
+                // R = B - (U + (1-1/omega)D)*x
+                scalar_t omega2 = (one/omega - one);
+                auto localY = Kokkos::subview (localX, range_type(0, nrows), Kokkos::ALL ());
+                KokkosBlas::mult (zero, localZ,
+                                  one,  localDa, localY);
+                KokkosBlas::axpy (omega2, localZ, localR);
+              }
+            } else { // not compact_form
               // R = B - A*x
               KokkosSparse::
               spmv ("N", scalar_t(-one), crsmatA,
@@ -931,7 +950,8 @@ namespace KokkosSparse{
           //}
           if (!two_stage) {
             // ===== sparse-triangular solve =====
-            // TODO: omega is not supported here (hence, omega = one)
+            // TODO: omega is not supported here (because omega*L + D is extracted in initialize_numeric, but omega is passed into apply)
+            //       hence, omega = one
             if (forward_sweep) {
               // Z = (omega * L + D)^{-1} * R
               // NOTE: need to go over RHSs

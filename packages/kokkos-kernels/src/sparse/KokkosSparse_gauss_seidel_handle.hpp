@@ -691,7 +691,7 @@ namespace KokkosSparse{
     }
 
     // Workspaces
-    // > diagonal
+    // > diagonal (inverse)
     void setD (values_view_t D_) {
       this->D = D_;
     }
@@ -726,6 +726,13 @@ namespace KokkosSparse{
     crsmat_t getUa () {
       return this->crsmatUa;
     }
+    // > diagonal (not-inverse)
+    void setDa (values_view_t Da_) {
+      this->Da = Da_;
+    }
+    values_view_t getDa () {
+      return this->Da;
+    }
 
     void initVectors (int nrows_, int nrhs_) {
       if (this->nrows != nrows_ || this->nrhs != nrhs_) {
@@ -757,6 +764,7 @@ namespace KokkosSparse{
     crsmat_t crsmatU;
     // > complements for compact form of recurrence
     //   where La = A - U and Ua = A - U
+    values_view_t Da;
     crsmat_t crsmatLa;
     crsmat_t crsmatUa;
 
