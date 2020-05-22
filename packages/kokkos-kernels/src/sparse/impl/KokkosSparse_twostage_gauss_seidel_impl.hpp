@@ -61,6 +61,7 @@
 
 #include "KokkosSparse_gauss_seidel_handle.hpp"
 
+//#define KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
 #define KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U
 
 namespace KokkosSparse{
@@ -103,8 +104,10 @@ namespace KokkosSparse{
                                                        input_size_t>;
       using input_graph_t  = typename input_crsmat_t::StaticCrsGraphType;
       using single_vector_view_t = Kokkos::View<scalar_t*, Kokkos::LayoutLeft, input_device_t, input_memory_t>;
+      using internal_vector_view_t = typename TwoStageGaussSeidelHandleType::vector_view_t;
 
       using ST = Kokkos::Details::ArithTraits<scalar_t>;
+      using mag_t = typename ST::mag_type;
 
     private:
       HandleType *handle;
@@ -140,6 +143,8 @@ namespace KokkosSparse{
       struct Tag_valuesLU{};
       // tag for scaling U values
       struct Tag_scaleU{};
+      // tag for computing residual norm
+      struct Tag_normR{};
 
       template <typename output_row_map_view_t, 
                 typename output_entries_view_t, 
@@ -174,6 +179,10 @@ namespace KokkosSparse{
         output_row_map_view_t  row_map_a2;
         output_entries_view_t  entries_a2;
         output_values_view_t   values_a2;
+        // for computing residual norm with
+        bool forward_sweep;
+        internal_vector_view_t localX;
+        internal_vector_view_t localB;
 
         // ------------------------------------------------------- //
         // Constructors
@@ -316,6 +325,34 @@ namespace KokkosSparse{
           diags(diags_)
         {}
 
+        // for computing residual norm
+        TwostageGaussSeidel_functor (
+                  bool forward_sweep_,
+                  const_ordinal_t num_rows_,
+                  input_row_map_view_t   rowmap_view_,
+                  input_entries_view_t   column_view_,
+                  input_values_view_t    values_view_,
+                  output_values_view_t   diags_,
+                  internal_vector_view_t localX_,
+                  internal_vector_view_t localB_) :
+          two_stage(false),
+          compact_form(false),
+          diagos_given(false),
+          num_rows(num_rows_),
+          // input Crs
+          rowmap_view(rowmap_view_),
+          column_view(column_view_),
+          values_view(values_view_),
+          d_invert_view(),
+          row_map(),
+          entries(),
+          values(),
+          diags(diags_),
+          // input vectors
+          forward_sweep(forward_sweep_),
+          localX(localX_),
+          localB(localB_)
+        {}
 
         // ------------------------------------------------------- //
         // functor for counting nnzL (with parallel_reduce)
@@ -530,6 +567,34 @@ namespace KokkosSparse{
             }
             #endif
           }
+        }
+
+        // ------------------------------------------------------- //
+        // functor for computing residual norm (with parallel_reduce)
+        KOKKOS_INLINE_FUNCTION
+        void operator()(const Tag_normR&, const ordinal_t i, mag_t &normR) const
+        {
+          scalar_t normRi = localB (i, 0);
+          if (forward_sweep) {
+            // compute R(i) = B(i) - (L+D)(i,:)*X
+            for (size_type k = rowmap_view (i); k < rowmap_view (i+1); k++) {
+              if (column_view (k) <= i) {
+                normRi -= values_view (k) * localX (column_view (k), 0);
+              }
+            }
+          } else {
+            // compute R(i) = B(i) - (D+U)(i,:)*X
+            for (size_type k = rowmap_view (i); k < rowmap_view (i+1); k++) {
+              if (column_view (k) >= i && column_view (k) < num_rows) {
+                #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
+                normRi -= values_view (k) * diags(column_view (k)) * localX (column_view (k), 0);
+                #else
+                normRi -= values_view (k) * localX (column_view (k), 0);
+                #endif
+              }
+            }
+          }
+          normR += ST::abs (normRi * normRi);
         }
       };
     // --------------------------------------------------------- //
@@ -892,9 +957,8 @@ namespace KokkosSparse{
 #endif
 
         // load auxiliary vectors
-        int nrows = num_rows;
         int nrhs = localX.extent (1);
-        gsHandle->initVectors (nrows, nrhs);
+        gsHandle->initVectors (num_rows, nrhs);
         auto localR = gsHandle->getVectorR ();
         auto localT = gsHandle->getVectorT ();
         auto localZ = gsHandle->getVectorZ ();
@@ -931,7 +995,7 @@ namespace KokkosSparse{
               if (omega != one) {
                 // R = B - (U + (1-1/omega)D)*x
                 scalar_t omega2 = (one/omega - one);
-                auto localY = Kokkos::subview (localX, range_type(0, nrows), Kokkos::ALL ());
+                auto localY = Kokkos::subview (localX, range_type(0, num_rows), Kokkos::ALL ());
                 KokkosBlas::mult (zero, localZ,
                                   one,  localDa, localY);
                 KokkosBlas::axpy (omega2, localZ, localR);
@@ -945,7 +1009,7 @@ namespace KokkosSparse{
             }
           }
           //if (sweep == 0) {
-          //  auto localY = Kokkos::subview (localX, range_type(nrows, localX.extent(0)), Kokkos::ALL ());
+          //  auto localY = Kokkos::subview (localX, range_type(num_rows, localX.extent(0)), Kokkos::ALL ());
           //  Kokkos::deep_copy (localY, zero);
           //}
           if (!two_stage) {
@@ -959,8 +1023,8 @@ namespace KokkosSparse{
               for (int j = 0; j < nrhs; j++) {
                 auto localRj = Kokkos::subview (localR, Kokkos::ALL (), range_type (j, j+1));
                 auto localZj = Kokkos::subview (localZ, Kokkos::ALL (), range_type (j, j+1));
-                single_vector_view_t Rj (localRj.data (), nrows);
-                single_vector_view_t Zj (localZj.data (), nrows);
+                single_vector_view_t Rj (localRj.data (), num_rows);
+                single_vector_view_t Zj (localZj.data (), num_rows);
                 sptrsv_solve (handle->get_gs_sptrsvL_handle(), crsmatL.graph.row_map, crsmatL.graph.entries, crsmatL.values, Rj, Zj);
               }
             } else {
@@ -970,14 +1034,14 @@ namespace KokkosSparse{
               for (int j = 0; j < nrhs; j++) {
                 auto localRj = Kokkos::subview (localR, Kokkos::ALL (), range_type (j, j+1));
                 auto localZj = Kokkos::subview (localZ, Kokkos::ALL (), range_type (j, j+1));
-                single_vector_view_t Rj (localRj.data (), nrows);
-                single_vector_view_t Zj (localZj.data (), nrows);
+                single_vector_view_t Rj (localRj.data (), num_rows);
+                single_vector_view_t Zj (localZj.data (), num_rows);
                 sptrsv_solve (handle->get_gs_sptrsvU_handle(), crsmatU.graph.row_map, crsmatU.graph.entries, crsmatU.values, Rj, Zj);
               }
             }
 
             // update solution (no omega)
-            auto localY = Kokkos::subview (localX, range_type(0, nrows), Kokkos::ALL ());
+            auto localY = Kokkos::subview (localX, range_type(0, num_rows), Kokkos::ALL ());
             if (compact_form) {
               // Y = omega * Z
               KokkosBlas::scal (localY, one, localZ);
@@ -987,6 +1051,29 @@ namespace KokkosSparse{
             }
           } else {
             // ====== inner Jacobi-Richardson =====
+#ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
+            //compute initial residual norm
+            // > compute RHS for the inner loop, R = B - A*x
+            internal_vector_view_t tempR ("tempR", num_rows, 1);
+            KokkosBlas::scal (tempR, one, localB);
+            KokkosSparse::
+            spmv ("N", scalar_t(-one), crsmatA,
+                                       localX,
+                                 one,  tempR);
+            // > initial vector for the inner loop is zero
+            Kokkos::deep_copy (localZ, zero);
+            using Norm_Functor_t = TwostageGaussSeidel_functor<row_map_view_t, entries_view_t, values_view_t>;
+            using range_policy = Kokkos::RangePolicy <Tag_normR, execution_space>;
+            {
+              mag_t normR = zero;
+              Kokkos::parallel_reduce ("normR", range_policy (0, num_rows),
+                                       Norm_Functor_t (forward_sweep, num_rows,
+                                                       rowmap_view, column_view, values_view,
+                                                       localD, localZ, tempR),
+                                       normR);
+              std::cout << "norm" << 0 << " " << sqrt(normR) << std::endl;
+            }
+#endif
             // compute starting vector: Z = D^{-1}*R (Z is correction, i.e., output of JR)
             if (NumInnerSweeps == 0) {
               // this is Jacobi-Richardson X_{k+1} := X_{k} + D^{-1}(b-A*X_{k})
@@ -1022,7 +1109,18 @@ namespace KokkosSparse{
                 KokkosBlas::scal (localR, one, localT);
               }
             }
-
+#ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
+            {
+              // compute residual norm of the starting vector (D^{-1}R)
+              mag_t normR = zero;
+              Kokkos::parallel_reduce ("normR", range_policy (0, num_rows),
+                                       Norm_Functor_t (forward_sweep, num_rows,
+                                                       rowmap_view, column_view, values_view,
+                                                       localD, localT, tempR),
+                                       normR);
+              std::cout << "norm" << 1 << " " << sqrt(normR) << std::endl;
+            }
+#endif
             // inner Jacobi-Richardson:
             for (int ii = 0; ii < NumInnerSweeps; ii++) {
               // T = D^{-1}*R, and L = D^{-1}*L and U = D^{-1}*U
@@ -1046,10 +1144,22 @@ namespace KokkosSparse{
                 // reinitialize (R to be Z)
                 KokkosBlas::scal (localR, one, localZ);
               }
+#ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
+              {
+                // compute residual norm of the starting vector (D^{-1}R)
+                mag_t normR = zero;
+                Kokkos::parallel_reduce ("normR", range_policy (0, num_rows),
+                                         Norm_Functor_t (forward_sweep, num_rows,
+                                                         rowmap_view, column_view, values_view,
+                                                         localD, localZ, tempR),
+                                         normR);
+                std::cout << "norm" << 2+ii << " " << sqrt(normR) << std::endl;
+              }
+#endif
             } // end of inner Jacobi Richardson
 
             // update solution
-            auto localY = Kokkos::subview (localX, range_type(0, nrows), Kokkos::ALL ());
+            auto localY = Kokkos::subview (localX, range_type(0, num_rows), Kokkos::ALL ());
             #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
             if (!forward_sweep) 
             {
