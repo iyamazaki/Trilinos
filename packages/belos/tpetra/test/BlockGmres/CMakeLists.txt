@@ -34,6 +34,11 @@ TRIBITS_ADD_EXECUTABLE_AND_TEST(
   )
 ENDIF()
 
+TRIBITS_ADD_EXECUTABLE(
+   TeuchosStarterExTpetra
+   SOURCES TeuchosStarterExTpetra.cpp
+   COMM serial mpi
+)
 
 TRIBITS_ADD_EXECUTABLE_AND_TEST(
   Tpetra_BlockFGMRES_hb_test
