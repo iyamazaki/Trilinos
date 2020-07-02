@@ -5,11 +5,26 @@
 #include "Teuchos_ParameterList.hpp"
 #include "Teuchos_TimeMonitor.hpp"
 
+#ifdef EPETRA_MPI
+  #include "Epetra_MpiComm.h"
+#else
+  #include "Epetra_SerialComm.h"
+#endif
+
+int main(){
+
+#ifdef EPETRA_MPI
+  // Initialize MPI
+  MPI_Init(&argc,&argv);
+  Epetra_MpiComm Comm(MPI_COMM_WORLD);
+  MyPID = Comm.MyPID();
+#else
+  Epetra_SerialComm Comm;
+#endif
+
 typedef double ScalarType;
 typedef Teuchos::ScalarTraits<ScalarType> SCT;
 typedef typename SCT::magnitudeType MagnitudeType;
-
-int main(){
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
@@ -17,8 +32,8 @@ int main(){
    Teuchos::BLAS<int,ScalarType> blas;
 
    int i, j, k, lda, ldq, ldv, ldr, ldt;
-   int m = 2500, n = 410;
-   double norma, norma2;
+   int m = 250, n = 50;
+   double norma, norma2, tmp;
    MagnitudeType orth, repres, nrmA;
 
    lda = m, ldq = m, ldv = m, ldr = n, ldt = n;
@@ -33,9 +48,9 @@ int main(){
    if (A == Teuchos::null) {
      A = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(m,n) );
    }  
-   if (R == Teuchos::null) {
-     R = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n) );
-   }  
+//   if (R == Teuchos::null) {
+//     R = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n) );
+//   }  
    if (Q == Teuchos::null) {
      Q = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(m,n) );
    }
@@ -66,13 +81,12 @@ int main(){
    norma2 = blas.DOT( m-1, &(*V)(1,0), 1, &(*V)(1,0), 1);
    norma = sqrt( (*V)(0,0) * (*V)(0,0) + norma2 );
 
-   (*R)(0,0) = ( (*V)(0,0) > 0 ) ? ( (*A)(0,0) + norma ) : ( (*A)(0,0) - norma ) ;
-   (*T)(0,0) = ( 2.0e+00 ) / ( (1.0e+00) + norma2 / ( (*R)(0,0) * (*R)(0,0) ) ); 
+   tmp = ( (*V)(0,0) > 0 ) ? ( (*A)(0,0) + norma ) : ( (*A)(0,0) - norma ) ;
+   (*T)(0,0) = ( 2.0e+00 ) / ( (1.0e+00) + norma2 / ( tmp * tmp ) ); 
 
-   blas.SCAL( m-1, ( 1.0e+00 / (*R)(0,0) ), &(*V)(1,0), 1 );
+   blas.SCAL( m-1, ( 1.0e+00 / tmp ), &(*V)(1,0), 1 );
 
-   (*R)(0,0) = ( (*V)(0,0) > 0 ) ? ( - norma ) : ( + norma );
-   (*V)(0,0) = 1.0e+00; 
+   (*V)(0,0) = ( (*V)(0,0) > 0 ) ? ( - norma ) : ( + norma );
 
    (*Q)(0,0) = 1.0e+00 - (*T)(0,0);
    for( i=1; i<m; i++ ){ (*Q)(i,0) = - ( (*V)(i,0) ) * ( (*T)(0,0) ); }
@@ -84,20 +98,16 @@ int main(){
 
    for( j=1; j<n; j++){
 
-      blas.GEMV( Teuchos::TRANS, m, j, 1.0e+00, &(*V)(0,0), ldv, &(*V)(0,j), 1, 0.0e+00, &(*R)(0,j), 1 );
-      blas.TRMV( Teuchos::UPPER_TRI, Teuchos::TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*R)(0,j), 1 );
+      blas.GEMV( Teuchos::TRANS, m, j, 1.0e+00, &(*V)(0,0), ldv, &(*V)(0,j), 1, 0.0e+00, &(*V)(0,j), 1 );
+      blas.TRMV( Teuchos::UPPER_TRI, Teuchos::TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*V)(0,j), 1 );
       blas.GEMV( Teuchos::NO_TRANS, m, j, -1.0e+00, &(*V)(0,0), ldv, &(*R)(0,j), 1, 1.0e+00, &(*V)(0,j), 1 );
-      for( i=0; i<j; i++ ){ (*R)(i,j) = (*V)(i,j); }
 
-      (*R)(j,j) = (*V)(j,j);
       norma2 =  blas.DOT( m-(j+1), &(*V)(j+1,j), 1, &(*V)(j+1,j), 1);
       norma = sqrt( (*V)(j,j) * (*V)(j,j) + norma2 );
-      (*R)(j,j) = ( (*V)(j,j) > 0 ) ? ( (*V)(j,j) + norma ) : ( (*V)(j,j) - norma );
-      (*T)(j,j) = (2.0e+00) / ( (1.0e+00) + norma2 / ( (*R)(j,j) * (*R)(j,j) ) );
-      blas.SCAL( m-(j+1), ( 1.0e+00 / (*R)(j,j) ), &(*V)(j+1,j), 1 );
-      (*R)(j,j) = ( (*V)(j,j) > 0 ) ? ( - norma ) : ( + norma );
-      for( i=0; i<j; i++ ){ (*V)(i,j) = +0.0e+00; }
-      (*V)(j,j) = 1.0e+00; 
+      tmp = ( (*V)(j,j) > 0 ) ? ( (*V)(j,j) + norma ) : ( (*V)(j,j) - norma );
+      (*T)(j,j) = (2.0e+00) / ( (1.0e+00) + norma2 / ( tmp * tmp ) );
+      blas.SCAL( m-(j+1), ( 1.0e+00 / tmp ), &(*V)(j+1,j), 1 );
+      (*V)(j,j) = ( (*V)(j,j) > 0 ) ? ( - norma ) : ( + norma );
  
       (*Q)(j,j) = 1.0e+00 - (*T)(j,j);
       for( i=j+1; i<m; i++ ){ (*Q)(i,j) = - ( (*V)(i,j) ) * ( (*T)(j,j) ); }
@@ -107,7 +117,9 @@ int main(){
       blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*T)(0,j), 1 );
       blas.GEMV( Teuchos::NO_TRANS, m, j, -1.0e+00, &(*V)(0,0), ldv, &(*T)(0,j), 1, 1.0e+00, &(*Q)(0,j), 1 );
 
-      blas.GEMV( Teuchos::TRANS, m, j, 1.0e+00, &(*V)(0,0), ldv, &(*V)(0,j), 1, 0.0e+00, &(*T)(0,j), 1 );
+      for( i=0; i<j; i++){ (*T)(i,j) = (*V)(j,i); }
+      blas.GEMV( Teuchos::TRANS, m-(j+1), j, 1.0e+00, &(*V)(j+1,0), ldv, &(*V)(j+1,j), 1, 1.0e+00, &(*T)(0,j), 1 );
+//      blas.GEMV( Teuchos::TRANS, m, j, 1.0e+00, &(*V)(0,0), ldv, &(*V)(0,j), 1, 0.0e+00, &(*T)(0,j), 1 );
       blas.SCAL( j, -(*T)(j,j), &(*T)(0,j), 1 );
       blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*T)(0,j), 1 );
 
@@ -121,7 +133,7 @@ int main(){
 
    // Representativity check
    for( i = 0; i < n; i++ ){ blas.COPY( m, &(*Q)(0,i), 1, &(*repres_check)(0,i), 1); }
-   blas.TRMM( Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, m, n, 1.0e+00, &(*R)(0,0), ldr, &(*repres_check)(0,0), m );
+   blas.TRMM( Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, m, n, 1.0e+00, &(*V)(0,0), ldv, &(*repres_check)(0,0), m );
    for( k=0; k<n; k++ ){ for( i=0; i<m; i++ ){  (*repres_check)(i,k) = (*A)(i,k) - (*repres_check)(i,k); } }
    repres = repres_check->normFrobenius();
 

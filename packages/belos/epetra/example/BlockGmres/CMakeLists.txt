@@ -6,11 +6,17 @@ ASSERT_DEFINED(${PACKAGE_NAME}_ENABLE_EpetraExt)
 IF (${PACKAGE_NAME}_ENABLE_Triutils AND ${PACKAGE_NAME}_ENABLE_EpetraExt)
 
   TRIBITS_ADD_EXECUTABLE(
+    BlockGmres_BielichCopyCGS2 
+    SOURCES BlockGmres_BielichCopyCGS2.cpp
+    COMM serial mpi
+    )
+
+  TRIBITS_ADD_EXECUTABLE(
     TeuchosStarterEx
     SOURCES TeuchosStarterEx.cpp
     COMM serial mpi
     )
-    
+
   TRIBITS_ADD_EXECUTABLE(
     BlockGmres_Epetra_File_Ex
     SOURCES BlockGmresEpetraExFile.cpp
