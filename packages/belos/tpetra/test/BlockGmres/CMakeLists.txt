@@ -35,6 +35,12 @@ TRIBITS_ADD_EXECUTABLE_AND_TEST(
 ENDIF()
 
 TRIBITS_ADD_EXECUTABLE(
+   Example5
+   SOURCES Example5.cpp
+   COMM serial mpi
+)
+
+TRIBITS_ADD_EXECUTABLE(
    TeuchosStarterExTpetra
    SOURCES TeuchosStarterExTpetra.cpp
    COMM serial mpi

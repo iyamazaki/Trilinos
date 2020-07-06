@@ -122,23 +122,24 @@ int main(int argc, char *argv[]) {
 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > A; 
    if (A == Teuchos::null) {
-     A = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(mloc,n) );
+     A = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(m,n) );
    }  
 
    // Checks as Serial Dense Matrices
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > orth_check; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > repres_check;
 
-   repres_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(mloc,n,true) );
+   repres_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(m,n,true) );
    orth_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) );
 
    // Copy MultiVec AA into A
    {
    AA->sync_host();
    auto aa = AA->getLocalViewHost();
-   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*A)(i,j) = aa(i,j); }}
+   for(i=0;i<m;i++){for(j=0;j<n;j++){ (*A)(i,j) = aa(i,j); }}
    }
    nrmA = A->normFrobenius();
+
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
@@ -147,65 +148,30 @@ int main(int argc, char *argv[]) {
    } else { startingp = ( m - ( pool_size - (my_rank) ) * mloc ); }
    endingp = startingp + mloc - 1;  
 //   printf("**%2d**, ",my_rank);
-//   for(i=0;i<mloc;i++){ printf("%2d, ", ( startingp + i ) ); } printf("\n");
- 
+//   for(i=0;i<mloc;i++){ printf("%2d, ", ( startingp + i ) ); } printf("\n"); 
 //   Teuchos::ArrayRCP< const double > testing(mloc);
 //   jj = 1;
 //   testing = AA->getData(jj);
 
-//   This is me offsetting by j on a multivec
-//   j = 3;
-//   if (startingp >= j) { // full
-//       local_m = mloc;
-//       offset = 0;
-//   } else if (startingp+mloc < j) { // empty
-//       local_m = 0;
-//       offset = mloc-1;
-//   } else { // part
-//       local_m = (startingp+mloc)-j;
-//       offset = j-startingp;
-//   }   
-//   RCP<const Tpetra::Map<LO,GO,Node> >  submap;
-//   submap = Tpetra::createContigMapWithNode<LO,GO,Node>(Teuchos::Range1D::INVALID, local_m, comm);
+   j = 3;
+   if (startingp >= j) { // full
+       local_m = mloc;
+       offset = 0;
+   } else if (startingp+mloc < j) { // empty
+       local_m = 0;
+       offset = mloc-1;
+   } else { // part
+       local_m = (startingp+mloc)-j;
+       offset = j-startingp;
+   }   
+   RCP<const Tpetra::Map<LO,GO,Node> >  submap;
+   submap = Tpetra::createContigMapWithNode<LO,GO,Node>(Teuchos::Range1D::INVALID, local_m, comm);
 //   Teuchos::Range1D index(0,2);
 //   RCP<MV> A1 = MVT::CloneCopy( *AA, index );
 //   RCP<MV> A2 = A1->offsetViewNonConst(submap, offset);
  
 //   MVT::MvPrint( *AA, std::cout );
 //   MVT::MvPrint( *A2, std::cout );
-
-   // This is me trying to broadcast part of A
-   const Tpetra::Details::DefaultTypes::global_ordinal_type indexBase = 0;
-   const Tpetra::global_size_t numGlobalIndices = m;
-   j = 3;
-   if (startingp == 0) {       // full
-       local_m = mloc;
-       offset = 0;
-   } else if (startingp > j) { // empty
-       local_m = 0;
-       offset = mloc-1;
-   } else {                    // part
-       local_m = startingp;
-       offset = startingp+j;
-   }  
-   RCP<const Tpetra::Map<LO,GO,Node> >  submapj;
-   submapj = Tpetra::createContigMapWithNode<LO,GO,Node>(Teuchos::Range1D::INVALID, local_m, comm);
-
-   RCP<const map_type> globalMap = rcp(new map_type (numGlobalIndices, indexBase, comm, Tpetra::GloballyDistributed));
-   typedef Tpetra::Export<> export_type;
-   export_type exporter (submapj, globalMap);
-
-   Teuchos::Range1D index(0,0);
-   RCP<MV> A1 = MVT::CloneCopy( *AA, index );
-
-   RCP<MV> B;
-   B = rcp( new MV(map,1) );
-   MVT::MvInit( *B );         
-   B->doExport (*A1, exporter, Tpetra::INSERT);
-
-//   if( my_rank == 2 ) MVT::MvPrint( *B, std::cout );
-  MVT::MvPrint( *AA, std::cout ); 
-  MVT::MvPrint( *B, std::cout ); 
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
@@ -215,37 +181,35 @@ int main(int argc, char *argv[]) {
 
    Teuchos::Range1D index_prev(0,0);
 
+//   MV a_j = *(AA->subViewNonConst(index_prev));
+//   MV q_j = *(QQ->subViewNonConst(index_prev));
    RCP<MV> a_j = MVT::CloneViewNonConst( *AA, index_prev );
    RCP<MV> q_j = MVT::CloneViewNonConst( *QQ, index_prev );
+//   RCP<MV> a_j = MVT::Clone( *AA, 1 );
+//   RCP<MV> q_j = MVT::Clone( *AA, 1 );
+
+   MVT::SetBlock( *AA, index_prev, *a_j );
+   MVT::SetBlock( *QQ, index_prev, *q_j );
 
    MVT::MvDot( *a_j, *a_j, dot );
-
+   printf("%3.2e, \n",dot[0]);
    {
    AA->sync_host();
    auto aa = AA->getLocalViewHost();
-   tmp = aa(0,0);
-printf("%3.2e\n",aa(0,0)); 
+   tmp = aa(0,0); 
    }
-
-
 /*
-   typedef Tpetra::Export<> export_type;
-
    if( startingp <= j && endingp >= j ){
-
       {
 //      AA->sync_host();
       auto aa = AA->getLocalViewHost();
       tmp = aa(0,0); 
       }
-
-    //  export_type exporter(, map);
-
    } else { 
       tmp = 0.0e+00;
    }
-*/   
-
+//   reduce(tmp);
+*/
 
    norma = sqrt( dot[0] );
    norma2 = dot[0] - tmp * tmp;
@@ -333,30 +297,23 @@ printf("%3.2e\n",aa(0,0));
    }
 */
    {
-//   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ printf("%+3.2e, ", qq(i,j) ); } printf("\n"); }
-
    QQ->sync_host();
    auto qq = QQ->getLocalViewHost();
    // Orthogonality Check
    orth_check->putScalar();
-//   blas.SYRK( Teuchos::UPPER_TRI, Teuchos::TRANS, n, mloc, 1.0e+00, &(qq)(0,0), mloc, 0.0e+00, &(*orth_check)(0,0), n);
-   MVT::MvTransMv( (+1.0e+00), *QQ, *QQ, *orth_check );
-   if( my_rank == 0 ) for( i=0; i<n; i++ ){ (*orth_check)(i,i) =  1.0e+00 - (*orth_check)(i,i); }
+   blas.SYRK( Teuchos::UPPER_TRI, Teuchos::TRANS, n, m, 1.0e+00, &(qq)(0,0), m, 0.0e+00, &(*orth_check)(0,0), n);
+   for( i=0; i<n; i++ ){ (*orth_check)(i,i) =  1.0e+00 - (*orth_check)(i,i); }
    orth = orth_check->normFrobenius();
-
-
    // Representativity check
-   for( i = 0; i < n; i++ ){ blas.COPY( mloc, &(qq)(0,i), 1, &(*repres_check)(0,i), 1); }
-   blas.TRMM( Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, mloc, n, 1.0e+00, &(*RR)(0,0), n, &(*repres_check)(0,0), mloc );
-   for( k=0; k<n; k++ ){ for( i=0; i<mloc; i++ ){  (*repres_check)(i,k) = (*A)(i,k) - (*repres_check)(i,k); } } 
+   for( i = 0; i < n; i++ ){ blas.COPY( m, &(qq)(0,i), 1, &(*repres_check)(0,i), 1); }
+   blas.TRMM( Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, m, n, 1.0e+00, &(*RR)(0,0), n, &(*repres_check)(0,0), m );
+   for( k=0; k<n; k++ ){ for( i=0; i<m; i++ ){  (*repres_check)(i,k) = (*A)(i,k) - (*repres_check)(i,k); } }
    repres = repres_check->normFrobenius();
    } 
 
-   if( my_rank == 0 ){
-      printf("m = %3d, n = %3d,  ",m,n);
-      printf("|| I - Q'Q || = %3.3e, ", orth);
-      printf("|| A - QR || / ||A|| = %3.3e \n", repres/nrmA);
-   }
+   printf("m = %3d, n = %3d,  ",m,n);
+   printf("|| I - Q'Q || = %3.3e, ", orth);
+   printf("|| A - QR || / ||A|| = %3.3e \n", repres/nrmA);
 
    }
    return 0;
