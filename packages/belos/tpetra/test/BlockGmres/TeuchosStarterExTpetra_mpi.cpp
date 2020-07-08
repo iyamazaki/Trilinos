@@ -53,6 +53,7 @@ int main(int argc, char *argv[]) {
    Tpetra::ScopeGuard tpetraScope(&argc,&argv);
    {
    Teuchos::RCP<const Teuchos::Comm<int> > comm = Tpetra::getDefaultComm();
+   Teuchos::BLAS<int,ScalarType> blas;
 
    const int my_rank = comm->getRank();
    const int pool_size = comm->getSize();
@@ -62,16 +63,12 @@ int main(int argc, char *argv[]) {
       std::cout << "Total number of processes: " << pool_size << std::endl;
    }
 
-   Teuchos::BLAS<int,ScalarType> blas;
-
    int i, j, k, ldr, ldt;
-   int seed, numrhs = 867, m = -1, n = -1;
+   int seed, numrhs = 20, m = -1, n = -1;
    int endingp, startingp;
    double norma, norma2; 
    size_t mloc, offset, local_m;
    MagnitudeType orth, repres, nrmA;
-
-   seed = my_rank*m*m; srand(seed);
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
@@ -89,21 +86,20 @@ int main(int argc, char *argv[]) {
    Tpetra::Utils::readHBMatrix(filename,comm,Amat);
    RCP<const Tpetra::Map<> > map = Amat->getDomainMap();
 
-   RCP<MV> A;
-   RCP<MV> Q;
-   A = rcp( new MV(map,numrhs) );
-   Q = rcp( new MV(map,numrhs) );
+   RCP<MV> A = rcp( new MV(map,numrhs) );
+   RCP<MV> Q = rcp( new MV(map,numrhs) );
 
-   MVT::MvRandom( *A ); 
-   MVT::MvInit( *Q ); 
-
+   mloc = A->getLocalLength();
    m = MVT::GetGlobalLength(*A);
    n = MVT::GetNumberVecs(*A);
-   mloc = A->getLocalLength();
    const Tpetra::global_size_t numGlobalIndices = m;
    ldr = n, ldt = n;
+   seed = my_rank*m*m; srand(seed);
 
-
+   MVT::MvRandom( *A ); 
+   MVT::MvInit( *Q );
+ 
+   Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > AA; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > T; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > R; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > work; 
@@ -117,13 +113,6 @@ int main(int argc, char *argv[]) {
    if (work == Teuchos::null) {
      work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType> );
    }  
-
-   std::vector<double> dot(n);
-
-   ////////////////////////////////////////////////////////////////
-   ////////////////////////////////////////////////////////////////
-
-   Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > AA; 
    if (AA == Teuchos::null) {
      AA = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(mloc,n) );
    }  
@@ -134,6 +123,8 @@ int main(int argc, char *argv[]) {
 
    repres_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(mloc,n,true) );
    orth_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) );
+
+   std::vector<double> dot(n);
 
    // Copy MultiVec A into AA
    {
@@ -251,7 +242,7 @@ int main(int argc, char *argv[]) {
          Broadcast->doImport (*TopA_j, importer, Tpetra::INSERT);
          {
          auto b = Broadcast->getLocalViewHost();
-         for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);              // One broadcast
+         for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);                        // One broadcast
          auto a = A->getLocalViewHost();
          if( startingp < j ){ 
             if( endingp < j ){
@@ -262,7 +253,7 @@ int main(int argc, char *argv[]) {
          }
          }
   
-         MVT::MvDot( *a_j, *a_j, dot );               // Two AllReduce
+         MVT::MvDot( *a_j, *a_j, dot );                                // Two AllReduce
          norma2 = dot[0] - (*R)(j,j) * (*R)(j,j);
          norma = sqrt( dot[0] );
          (*R)(j,j) = ( (*R)(j,j) > 0 ) ? ( (*R)(j,j) + norma ) : ( (*R)(j,j) - norma );
@@ -294,7 +285,7 @@ int main(int argc, char *argv[]) {
          }
          for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
          MVT::MvTransMv( (+1.0e+00), *A_j, *q_j, *work );              // Three AllReduce
-         blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 ); // SerialDense Ops
+         blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 ); 
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *q_j );    
  
          // Step 4
@@ -309,6 +300,7 @@ int main(int argc, char *argv[]) {
    }
 
    {
+
    // Orthogonality Check
    orth_check->putScalar();
    MVT::MvTransMv( (+1.0e+00), *Q, *Q, *orth_check );
@@ -321,26 +313,19 @@ int main(int argc, char *argv[]) {
    blas.TRMM( Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, mloc, n, 1.0e+00, &(*R)(0,0), n, &(*repres_check)(0,0), mloc );
    for( k=0; k<n; k++ ){ for( i=0; i<mloc; i++ ){  (*repres_check)(i,k) = (*AA)(i,k) - (*repres_check)(i,k); } } 
    repres = repres_check->normFrobenius();
+
    } 
 
-//   if( my_rank == 0 ){
+   if( my_rank == 0 ){
       printf("m = %3d, n = %3d,  ",m,n);
       printf("|| I - Q'Q || = %3.3e, ", orth);
       printf("|| A - QR || / ||A|| = %3.3e \n", repres/nrmA);
-//   }
-
-
-//   {
-//      auto a = AA->getLocalViewHost();
-//      printf("**%3d**\n",my_rank);
-//      for(i=0;i<mloc;i++){for(j=0;j<n;j++){ printf("%+3.2e, ", (a)(i,j) ); } printf("\n"); }
-//   }
-//      MVT::MvPrint( *AA, std::cout ); 
+   }
 
    }
 
-
    return 0;
+
 }
 
 
