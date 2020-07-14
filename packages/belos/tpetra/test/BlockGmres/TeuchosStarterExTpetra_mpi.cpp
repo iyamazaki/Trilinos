@@ -4,6 +4,8 @@
 #include "Teuchos_ScalarTraits.hpp"
 #include "Teuchos_ParameterList.hpp"
 #include "Teuchos_TimeMonitor.hpp"
+#include "BelosConfigDefs.hpp"
+#include "BelosOutputManager.hpp"
 
 //#include <Teuchos_CommandLineProcessor.hpp>
 //#include <Teuchos_ParameterList.hpp>
@@ -16,12 +18,14 @@
 #include <Tpetra_MatrixIO.hpp>
 #include "BelosMultiVecTraits.hpp"
 #include "BelosTpetraAdapter.hpp"
+#include <MatrixMarket_Tpetra.hpp>
 
 // I've added
 #include <vector>
 #include <Tpetra_Vector.hpp>
 #include <Tpetra_Version.hpp>
 #include <Teuchos_CommHelpers.hpp>
+//#include <Teuchos_Time.hpp>
 //#include<Kokkos_Core.hpp>
 //#include<KokkosBlas.hpp>
 //#include<Kokkos_Random.hpp>
@@ -64,7 +68,7 @@ int main(int argc, char *argv[]) {
    }
 
    int i, j, k, ldr, ldt;
-   int seed, numrhs = 20, m = -1, n = -1;
+   int seed, numrhs = 90, m = -1, n = -1;
    int endingp, startingp;
    double norma, norma2; 
    size_t mloc, offset, local_m;
@@ -80,11 +84,21 @@ int main(int argc, char *argv[]) {
 //   std::string filename("bcsstk14.hb");
 //   std::string filename("shift.hb");
 //   std::string filename("test.hb");
-   std::string filename("test1.hb");
+//   std::string filename("test1.hb");
+//   std::string filename("a0nsdsil.hb");
 
-   RCP<CrsMatrix<ScalarType> > Amat;
-   Tpetra::Utils::readHBMatrix(filename,comm,Amat);
-   RCP<const Tpetra::Map<> > map = Amat->getDomainMap();
+//   RCP<CrsMatrix<ScalarType> > Amat;
+//   Tpetra::Utils::readHBMatrix(filename,comm,Amat);
+//   RCP<const Tpetra::Map<> > map = Amat->getDomainMap();
+
+///   RCP<CrsMatrix<ST> > A;
+   //Tpetra::Utils::readHBMatrix(filename,comm,A);
+//   A = Tpetra::MatrixMarket::Reader<CrsMatrix<ST> >::readSparseFile(filename,comm);
+//   RCP<const Tpetra::Map<> > map = A->getDomainMap();
+
+   m = 100000;
+   RCP<const map_type> map = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+
 
    RCP<MV> A = rcp( new MV(map,numrhs) );
    RCP<MV> Q = rcp( new MV(map,numrhs) );
@@ -138,14 +152,27 @@ int main(int argc, char *argv[]) {
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
 
+   // Set up printers for output: 
+   Teuchos::RCP<std::ostream> outputStream = Teuchos::rcp(&std::cout,false);
+   Teuchos::RCP<Belos::OutputManager<double> > printer_ = Teuchos::rcp( new Belos::OutputManager<double>(Belos::TimingDetails,outputStream) );
+   std::string Label ="QR factor time ";
+   //(You can create multiple labels to time different kernels, if you like )
+
+   //Initialize timer: (Do once per label, I think)
+#ifdef BELOS_TEUCHOS_TIME_MONITOR
+   Teuchos::RCP<Teuchos::Time> timerIRSolve_ = Teuchos::TimeMonitor::getNewCounter(Label);
+#endif
+
+   { //scope guard for timer
+#ifdef BELOS_TEUCHOS_TIME_MONITOR
+   Teuchos::TimeMonitor slvtimer(*timerIRSolve_);
+#endif
+
    // Getting starting point and ending point for each process
    if( my_rank < m - pool_size*mloc ){ startingp = ( m - ( pool_size - my_rank ) * mloc + 1 ); 
    } else { startingp = ( m - ( pool_size - (my_rank) ) * mloc ); }
    endingp = startingp + mloc - 1;  
 
-   ////////////////////////////////////////////////////////////////
-   ////////////////////////////////////////////////////////////////
- 
    for( j=0; j<n; j++){
 
       if( j == 0 ){
@@ -193,7 +220,6 @@ int main(int argc, char *argv[]) {
 
          MVT::Assign( *a_j, *q_j); 
          MVT::MvScale( *q_j, -(*T)(0,0) );
-
          if( my_rank == 0 ){
             {
             auto q = Q->getLocalViewHost();
@@ -299,6 +325,10 @@ int main(int argc, char *argv[]) {
 
    }
 
+   } //end timer scope guard (i.e. Stop timing.)
+   //Print final timing details:
+   Teuchos::TimeMonitor::summarize( printer_->stream(Belos::TimingDetails) );
+   
    {
 
    // Orthogonality Check
