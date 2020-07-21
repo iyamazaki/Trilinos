@@ -68,7 +68,7 @@ int main(int argc, char *argv[]) {
    }
 
    int i, j, k, ldr, ldt;
-   int seed, numrhs = 90, m = -1, n = -1;
+   int seed, numrhs = 50, m = -1, n = -1;
    int endingp, startingp;
    double norma, norma2; 
    size_t mloc, offset, local_m;
@@ -96,16 +96,27 @@ int main(int argc, char *argv[]) {
 //   A = Tpetra::MatrixMarket::Reader<CrsMatrix<ST> >::readSparseFile(filename,comm);
 //   RCP<const Tpetra::Map<> > map = A->getDomainMap();
 
-   m = 100000;
-   RCP<const map_type> map = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+   m = 20000; n = 50;
+   for( i = 1; i < argc; i++ ) {
+      if( strcmp( argv[i], "-m" ) == 0 ) {
+         m = atoi(argv[i+1]);
+         i++;
+      }
+      if( strcmp( argv[i], "-n" ) == 0 ) {
+         n = atoi(argv[i+1]);
+         i++;
+      }
+   }
 
+   numrhs = n;
+
+   RCP<const map_type> map = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
 
    RCP<MV> A = rcp( new MV(map,numrhs) );
    RCP<MV> Q = rcp( new MV(map,numrhs) );
 
    mloc = A->getLocalLength();
    m = MVT::GetGlobalLength(*A);
-   n = MVT::GetNumberVecs(*A);
    const Tpetra::global_size_t numGlobalIndices = m;
    ldr = n, ldt = n;
    seed = my_rank*m*m; srand(seed);
@@ -140,7 +151,7 @@ int main(int argc, char *argv[]) {
 
    std::vector<double> dot(n);
 
-   // Copy MultiVec A into AA
+   // Copy MultiVec A into SerialDense AA
    {
    A->sync_host();
    auto a = A->getLocalViewHost();
@@ -233,12 +244,12 @@ int main(int argc, char *argv[]) {
 
          Teuchos::Range1D index_prev1(0,j-1);
          Teuchos::Range1D index_prev2(j,j);
-         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) );
+         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) ); // Not sure if I should be doing this within an algorithm. I would prefer to use T_j as the workspace needed..
 
          RCP<MV> A_j = MVT::CloneViewNonConst( *A, index_prev1 );
          RCP<MV> a_j = MVT::CloneViewNonConst( *A, index_prev2 );
          RCP<MV> q_j = MVT::CloneViewNonConst( *Q, index_prev2 );
- 
+
          // Step 1:
          MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );              // One AllReduce
          blas.TRMV( Teuchos::UPPER_TRI, Teuchos::TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 );
