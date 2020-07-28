@@ -197,20 +197,6 @@ int main(int argc, char *argv[]) {
          MVT::SetBlock( *Q, index_prev, *q_j );
          MVT::MvDot( *a_j, *a_j, dot );
 
-         if (startingp == 0) {       // full
-            local_m = ( mloc > j ) ? ( j ) : ( mloc );
-            offset = 0;
-         } else if (startingp > j) { // empty
-            local_m = 0;
-            offset = 0;
-         } else {                    // part
-            if( endingp > j ){
-               local_m = j - startingp;
-            } else { 
-               local_m = mloc;
-            }
-            offset = 0;
-         }  
          RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
          import_type importer(globalMap, submapj);
@@ -256,20 +242,6 @@ int main(int argc, char *argv[]) {
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *a_j );      
 
          // Step 2:
-         if (startingp == 0) {       // full
-            local_m = ( mloc > j ) ? ( j ) : ( mloc );
-            offset = 0;
-         } else if (startingp > j) { // empty
-            local_m = 0;
-            offset = 0;
-         } else {                    // part
-            if( endingp > j ){
-               local_m = j - startingp;
-            } else { 
-               local_m = mloc;
-            }
-            offset = 0;
-         }  
          RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
          import_type importer (globalMap, submapj);
