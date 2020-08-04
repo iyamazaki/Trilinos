@@ -21,13 +21,13 @@
 #include <MatrixMarket_Tpetra.hpp>
 
 // I've added
-//#include <Teuchos_Time.hpp>
 #include <vector>
 #include <Tpetra_Vector.hpp>
 #include <Tpetra_Version.hpp>
 #include <Teuchos_CommHelpers.hpp>
-#include<Kokkos_Core.hpp>
-#include<KokkosBlas.hpp>
+//#include <Teuchos_Time.hpp>
+//#include<Kokkos_Core.hpp>
+//#include<KokkosBlas.hpp>
 //#include<Kokkos_Random.hpp>
 
 typedef double ScalarType;
@@ -112,28 +112,34 @@ int main(int argc, char *argv[]) {
 
    RCP<const map_type> map = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
 
+   RCP<MV> A = rcp( new MV(map,numrhs) );
    RCP<MV> Q = rcp( new MV(map,numrhs) );
 
-   mloc = Q->getLocalLength();
-   m = MVT::GetGlobalLength(*Q);
+   mloc = A->getLocalLength();
+   m = MVT::GetGlobalLength(*A);
    const Tpetra::global_size_t numGlobalIndices = m;
    ldr = n, ldt = n;
    seed = my_rank*m*m; srand(seed);
 
-   MVT::MvRandom( *Q ); 
+   MVT::MvRandom( *A ); 
+   MVT::MvInit( *Q );
  
-   Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > A; 
+   Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > AA; 
+   Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > T; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > R; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > work; 
 
+   if (T == Teuchos::null) {
+     T = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n) );
+   }  
    if (R == Teuchos::null) {
      R = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n) );
    }
    if (work == Teuchos::null) {
      work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType> );
    }  
-   if (A == Teuchos::null) {
-     A = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(mloc,n) );
+   if (AA == Teuchos::null) {
+     AA = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(mloc,n) );
    }  
 
    // Checks as Serial Dense Matrices
@@ -145,15 +151,14 @@ int main(int argc, char *argv[]) {
 
    std::vector<double> dot(n);
 
-   // Copy MultiVec A into SerialDense AA for checks
+   // Copy MultiVec A into SerialDense AA
    {
-   Q->sync_host();
-   auto q = Q->getLocalViewHost();
-   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*A)(i,j) = q(i,j); }}
+   A->sync_host();
+   auto a = A->getLocalViewHost();
+   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*AA)(i,j) = a(i,j); }}
    }
-   nrmA = A->normFrobenius();  // This may be wrong, i.e. only taking the norm on 1 process
+   nrmA = AA->normFrobenius(); // This may be wrong, i.e. only taking the norm on 1 process
                                // Not sure if mpi process is built in here
-
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
@@ -161,7 +166,7 @@ int main(int argc, char *argv[]) {
    // Set up printers for output: 
    Teuchos::RCP<std::ostream> outputStream = Teuchos::rcp(&std::cout,false);
    Teuchos::RCP<Belos::OutputManager<double> > printer_ = Teuchos::rcp( new Belos::OutputManager<double>(Belos::TimingDetails,outputStream) );
-   std::string Label ="QR factor time CGS2";
+   std::string Label ="QR factor time ";
    //(You can create multiple labels to time different kernels, if you like )
 
    //Initialize timer: (Do once per label, I think)
@@ -183,35 +188,121 @@ int main(int argc, char *argv[]) {
 
       if( j == 0 ){
 
-         Teuchos::Range1D index_prev2(j,j);
-         RCP<MV> q_j = MVT::CloneViewNonConst( *Q, index_prev2 );
+         Teuchos::Range1D index_prev(0,0);
 
-         MVT::MvDot( *q_j, *q_j, dot ); 
-         (*R)(0,0) = sqrt( dot[0] );                 
-         MVT::MvScale( *q_j, 1/(*R)(0,0) );
-         
+         RCP<MV> a_j = MVT::CloneViewNonConst( *A, index_prev );
+         RCP<MV> q_j = MVT::CloneViewNonConst( *Q, index_prev );
+
+         MVT::SetBlock( *A, index_prev, *a_j );
+         MVT::SetBlock( *Q, index_prev, *q_j );
+         MVT::MvDot( *a_j, *a_j, dot );
+
+         RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
+         RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+         import_type importer(globalMap, submapj);
+         RCP<MV> TopA_j = MVT::CloneCopy( *A, index_prev );
+         RCP<MV> Broadcast = rcp( new MV(submapj,1) );
+         Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
+         {
+         auto b = Broadcast->getLocalViewHost();
+         (*R)(0,0) = b(0,0);
+         }
+
+         norma = sqrt( dot[0] );
+         norma2 = dot[0] - (*R)(0,0) * (*R)(0,0);
+         (*T)(0,0) = ( (*R)(0,0) > 0 ) ? ( (*R)(0,0) + norma ) : ( (*R)(0,0) - norma );
+         MVT::MvScale( *a_j, 1.0e+00 / (*T)(0,0) );
+         (*T)(0,0) = ( 2.0e+00 ) / ( (1.0e+00) + norma2 / ( (*T)(0,0) * (*T)(0,0) ) ); 
+         (*R)(0,0) = ( (*R)(0,0) > 0 ) ? ( - norma ) : ( + norma );
+
+         MVT::Assign( *a_j, *q_j); 
+         MVT::MvScale( *q_j, -(*T)(0,0) );
+         if( my_rank == 0 ){
+            {
+            auto q = Q->getLocalViewHost();
+            q(0,0) = 1.0e+00 - (*T)(0,0);
+            auto a = A->getLocalViewHost();
+            a(0,0) = 1.0e+00; 
+            }
+         }
 
       } else {
 
          Teuchos::Range1D index_prev1(0,j-1);
          Teuchos::Range1D index_prev2(j,j);
-         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) ); 
+         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) ); // Not sure if I should be doing this within an algorithm. I would prefer to use T_j as the workspace needed..
 
-         RCP<MV> Q_j = MVT::CloneViewNonConst( *Q, index_prev1 );
+         RCP<MV> A_j = MVT::CloneViewNonConst( *A, index_prev1 );
+         RCP<MV> a_j = MVT::CloneViewNonConst( *A, index_prev2 );
          RCP<MV> q_j = MVT::CloneViewNonConst( *Q, index_prev2 );
 
          // Step 1:
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );              // One AllReduce
-         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work, (+1.0e+00), *q_j );  
-         for(i=0;i<j;i++) (*R)(i,j) = (*work)(i,0);
+         MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );              // One AllReduce
+         blas.TRMV( Teuchos::UPPER_TRI, Teuchos::TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 );
+         MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *a_j );      
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );              // Two AllReduce
-         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work, (+1.0e+00), *q_j );  
-         for(i=0;i<j;i++) (*R)(i,j) += (*work)(i,0);
+         // Step 2:
+         RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
+         RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+         import_type importer (globalMap, submapj);
+         RCP<MV> TopA_j = MVT::CloneCopy( *A, index_prev2 );
+         RCP<MV> Broadcast;
+         Broadcast = rcp( new MV(submapj,1) );
+         Broadcast->doImport (*TopA_j, importer, Tpetra::INSERT);
+         {
+         auto b = Broadcast->getLocalViewHost();
+         for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);                        // One broadcast
+         auto a = A->getLocalViewHost();
+         if( startingp < j ){ 
+            if( endingp < j ){
+               for(i=0;i<mloc;i++){ a(i,j) = 0.0e+00; }
+            } else {
+               for(i=0;i<j-startingp;i++){ a(i,j) = 0.0e+00; }
+            }
+         }
+         }
+  
+         MVT::MvDot( *a_j, *a_j, dot );                                // Two AllReduce
+         norma2 = dot[0] - (*R)(j,j) * (*R)(j,j);
+         norma = sqrt( dot[0] );
+         (*R)(j,j) = ( (*R)(j,j) > 0 ) ? ( (*R)(j,j) + norma ) : ( (*R)(j,j) - norma );
+         (*T)(j,j) = (2.0e+00) / ( (1.0e+00) + norma2 / ( (*R)(j,j) * (*R)(j,j) ) );
+         MVT::MvScale( *a_j, ( 1 / (*R)(j,j) ) );
+         (*R)(j,j) = ( (*R)(j,j) > 0 ) ? ( - norma ) : ( + norma );
+         {
+         if( startingp <= j && endingp >= j ){
+            auto a = A->getLocalViewHost();
+            k = j - startingp;
+            a(k,j) = 1.0e+00; 
+         }
+         }
 
-         MVT::MvDot( *q_j, *q_j, dot );                                // Three AllReduce
-         (*R)(j,j) = sqrt( dot[0] );
-         MVT::MvScale( *q_j, ( 1 / (*R)(j,j) ) );
+         // Step 3
+         MVT::Assign( *a_j, *q_j); 
+         MVT::MvScale( *q_j, -(*T)(j,j) );
+         {
+         auto q = Q->getLocalViewHost();
+         if( startingp <= j ){ 
+            if( endingp >= j ){
+               for(i=0;i<j-startingp;i++){ q(i,j) = 0.0e+00; }
+               k = j - startingp;
+               q(k,j) = 1.0e+00 - (*T)(j,j);
+            } else { 
+               for(i=0;i<mloc;i++){ q(i,j) = 0.0e+00; }
+            }
+         }
+         }
+         for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
+         MVT::MvTransMv( (+1.0e+00), *A_j, *q_j, *work );              // Three AllReduce
+         blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 ); 
+         MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *q_j );    
+ 
+         // Step 4
+         for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
+         MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );               // Four AllReduce
+         for(i=0;i<j;i++) (*T)(i,j) = (*work)(i,0);
+         blas.SCAL( j, -(*T)(j,j), &(*T)(0,j), 1 );
+         blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*T)(0,j), 1 );
 
       }
 
@@ -233,7 +324,7 @@ int main(int argc, char *argv[]) {
    auto q = Q->getLocalViewHost();
    for(i=0;i<n;i++){ blas.COPY( mloc, &(q)(0,i), 1, &(*repres_check)(0,i), 1); }
    blas.TRMM( Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, mloc, n, 1.0e+00, &(*R)(0,0), n, &(*repres_check)(0,0), mloc );
-   for( k=0; k<n; k++ ){ for( i=0; i<mloc; i++ ){  (*repres_check)(i,k) = (*A)(i,k) - (*repres_check)(i,k); } } 
+   for( k=0; k<n; k++ ){ for( i=0; i<mloc; i++ ){  (*repres_check)(i,k) = (*AA)(i,k) - (*repres_check)(i,k); } } 
    repres = repres_check->normFrobenius();
 
    } 
