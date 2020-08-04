@@ -21,13 +21,13 @@
 #include <MatrixMarket_Tpetra.hpp>
 
 // I've added
+//#include <Teuchos_Time.hpp>
 #include <vector>
 #include <Tpetra_Vector.hpp>
 #include <Tpetra_Version.hpp>
 #include <Teuchos_CommHelpers.hpp>
-//#include <Teuchos_Time.hpp>
-//#include<Kokkos_Core.hpp>
-//#include<KokkosBlas.hpp>
+#include<Kokkos_Core.hpp>
+#include<KokkosBlas.hpp>
 //#include<Kokkos_Random.hpp>
 
 typedef double ScalarType;
@@ -157,8 +157,11 @@ int main(int argc, char *argv[]) {
    auto a = A->getLocalViewHost();
    for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*AA)(i,j) = a(i,j); }}
    }
-   nrmA = AA->normFrobenius(); // This may be wrong, i.e. only taking the norm on 1 process
-                               // Not sure if mpi process is built in here
+//   nrmA = AA->normFrobenius(); // This may be wrong, i.e. only taking the norm on 1 process
+                                 // Not sure if mpi process is built in here
+   MVT::MvNorm(*A,dot,Belos::TwoNorm);
+   for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
+   nrmA = sqrt(dot[0]); 
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
