@@ -202,7 +202,7 @@ int main(int argc, char *argv[]) {
 
          MVT::SetBlock( *A, index_prev, *a_j );
          MVT::SetBlock( *Q, index_prev, *q_j );
-         MVT::MvDot( *a_j, *a_j, dot );
+
 
          RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
@@ -215,6 +215,7 @@ int main(int argc, char *argv[]) {
          (*R)(0,0) = b(0,0);
          }
 
+         MVT::MvDot( *a_j, *a_j, dot );
          norma = sqrt( dot[0] );
          norma2 = dot[0] - (*R)(0,0) * (*R)(0,0);
          (*T)(0,0) = ( (*R)(0,0) > 0 ) ? ( (*R)(0,0) + norma ) : ( (*R)(0,0) - norma );
@@ -284,9 +285,13 @@ int main(int argc, char *argv[]) {
          RCP<MV> A_jj = MVT::CloneCopy( *A, index_prev2 );
          RCP<MV> a_jj = A_jj->offsetViewNonConst(submapjj, offset); 
 
+//MVT::MvPrint(*a_jj,std::cout);
+//MVT::MvPrint(*a_j,std::cout);
+
          MVT::MvDot( *a_jj, *a_jj, dot );                                // Two AllReduce
          norma2 = dot[0];
          norma = sqrt( dot[0]  + (*R)(j,j) * (*R)(j,j) );
+
          (*R)(j,j) = ( (*R)(j,j) > 0 ) ? ( (*R)(j,j) + norma ) : ( (*R)(j,j) - norma );
          (*T)(j,j) = (2.0e+00) / ( (1.0e+00) + norma2 / ( (*R)(j,j) * (*R)(j,j) ) );
          MVT::MvScale( *a_j, ( 1 / (*R)(j,j) ) );
@@ -350,11 +355,14 @@ int main(int argc, char *argv[]) {
    repres = repres_check->normFrobenius();
 
 
-//   MVT::MvTimesMatAddMv( +1.0e+00, *Q, *R, 0.0e+00, *repres_check1 );
-//   MVT::MvAddMv( +1.0e+00, *A, -1.0e+00, *repres_check1, *repres_check2 );
+//   MVT::MvTimesMatAddMv( 1.0e+00, *Q, *R, 0.0e+00, *repres_check1 );
+//   MVT::MvAddMv( -1.0e+00, *A, +1.0e+00, *repres_check1, *repres_check2 );
 //   MVT::MvNorm(*repres_check2,dot,Belos::TwoNorm);
-//   for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
+
+//   for(i=0;i<n;i++){ printf("%3.2e, ",dot[i]); dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
 //   repres = sqrt(dot[0]); 
+
+//   MVT::MvPrint( *repres_check2, std::cout );
 
    } 
 
