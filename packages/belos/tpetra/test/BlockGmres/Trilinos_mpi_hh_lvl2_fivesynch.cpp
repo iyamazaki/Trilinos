@@ -230,12 +230,10 @@ int main(int argc, char *argv[]) {
 
          Teuchos::Range1D index_prev1(0,j-1);
          Teuchos::Range1D index_prev2(j,j);
-         Teuchos::Range1D index_prev3(j+1,j);
          work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) ); // Not sure if I should be doing this within an algorithm. I would prefer to use T_j as the workspace needed..
 
          RCP<MV> A_j  = MVT::CloneViewNonConst( *A, index_prev1 );
          RCP<MV> a_j  = MVT::CloneViewNonConst( *A, index_prev2 );
-         RCP<MV> a_jj = MVT::CloneViewNonConst( *A, index_prev3 );
          RCP<MV> q_j  = MVT::CloneViewNonConst( *Q, index_prev2 );
 
          // Step 1:
@@ -263,7 +261,22 @@ int main(int argc, char *argv[]) {
             }
          }
          }
-  
+
+         if (startingp >= j+1) { // full
+             local_m = mloc;
+             offset = 0;
+         } else if (startingp+mloc < j+1) { // empty
+             local_m = 0;
+             offset = mloc-1;
+         } else { // part
+             local_m = (startingp+mloc)-j-1;
+             offset = j+1-startingp;
+         }   
+         RCP<const Tpetra::Map<LO,GO,Node> >  submapjj;
+         submapjj = Tpetra::createContigMapWithNode<LO,GO,Node>(Teuchos::Range1D::INVALID, local_m, comm);
+         RCP<MV> A_jj = MVT::CloneCopy( *A, index_prev2 );
+         RCP<MV> a_jj = A_jj->offsetViewNonConst(submapjj, offset); 
+
          MVT::MvDot( *a_jj, *a_jj, dot );                                // Two AllReduce
          norma2 = dot[0];
          norma = sqrt( dot[0]  + (*R)(j,j) * (*R)(j,j) );
