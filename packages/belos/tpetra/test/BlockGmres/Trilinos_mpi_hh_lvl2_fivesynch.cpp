@@ -114,6 +114,8 @@ int main(int argc, char *argv[]) {
 
    RCP<MV> A = rcp( new MV(map,numrhs) );
    RCP<MV> Q = rcp( new MV(map,numrhs) );
+   RCP<MV> repres_check1 = rcp( new MV(map,numrhs) );
+   RCP<MV> repres_check2 = rcp( new MV(map,numrhs) );
 
    mloc = A->getLocalLength();
    m = MVT::GetGlobalLength(*A);
@@ -133,7 +135,7 @@ int main(int argc, char *argv[]) {
      T = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n) );
    }  
    if (R == Teuchos::null) {
-     R = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n) );
+     R = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) );
    }
    if (work == Teuchos::null) {
      work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType> );
@@ -141,6 +143,7 @@ int main(int argc, char *argv[]) {
    if (AA == Teuchos::null) {
      AA = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(mloc,n) );
    }  
+   for(i=0;i<n;i++){for(j=0;j<n;j++){ (*R)(i,j) = 0.0e+00; }}
 
    // Checks as Serial Dense Matrices
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > orth_check; 
@@ -155,7 +158,8 @@ int main(int argc, char *argv[]) {
    {
    A->sync_host();
    auto a = A->getLocalViewHost();
-   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*AA)(i,j) = a(i,j); }}
+   for(i=0;i<n;i++){ blas.COPY( mloc, &(a)(0,i), 1, &(*AA)(0,i), 1); }
+//   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*AA)(i,j) = a(i,j); }}
    }
 //   nrmA = AA->normFrobenius(); // This may be wrong, i.e. only taking the norm on 1 process
                                  // Not sure if mpi process is built in here
@@ -345,9 +349,17 @@ int main(int argc, char *argv[]) {
    for( k=0; k<n; k++ ){ for( i=0; i<mloc; i++ ){  (*repres_check)(i,k) = (*AA)(i,k) - (*repres_check)(i,k); } } 
    repres = repres_check->normFrobenius();
 
+
+//   MVT::MvTimesMatAddMv( +1.0e+00, *Q, *R, 0.0e+00, *repres_check1 );
+//   MVT::MvAddMv( +1.0e+00, *A, -1.0e+00, *repres_check1, *repres_check2 );
+//   MVT::MvNorm(*repres_check2,dot,Belos::TwoNorm);
+//   for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
+//   repres = sqrt(dot[0]); 
+
    } 
 
-   if( my_rank == 0 ){
+   if( my_rank == 0 ){    
+//      for(i=0;i<n;i++){for(j=0;j<n;j++){ printf("%+3.2e, ",(*R)(i,j)); } printf("\n");}
       printf("m = %3d, n = %3d,  ",m,n);
       printf("|| I - Q'Q || = %3.3e, ", orth);
       printf("|| A - QR || / ||A|| = %3.3e \n", repres/nrmA);
