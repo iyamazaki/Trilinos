@@ -111,9 +111,9 @@ int main(int argc, char *argv[]) {
 
    // Define the needed matrices.
    RCP<MV> A             = rcp( new MV(map,numrhs) );
-   RCP<MV> Acpy          = rcp( new MV(map,numrhs) );
    RCP<MV> Q             = rcp( new MV(map,numrhs) );
-   RCP<MV> repres_check  = rcp( new MV(map,numrhs) );
+   if( Testing ) RCP<MV> Acpy          = rcp( new MV(map,numrhs) );
+   if( Testing ) RCP<MV> repres_check  = rcp( new MV(map,numrhs) );
 
    // Get local/global size and lengths
    mloc = A->getLocalLength();
@@ -123,8 +123,8 @@ int main(int argc, char *argv[]) {
 
    // initialize
    MVT::MvRandom( *A ); 
-   MVT::Assign( *A, *Acpy ); 
    MVT::MvInit( *Q );
+   if( Testing ) MVT::Assign( *A, *Acpy ); 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > T; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > R; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > work; 
@@ -139,14 +139,16 @@ int main(int argc, char *argv[]) {
      work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType> );
    }  
 
-   Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > orth_check; 
-   orth_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) );
+   if( Testing ) Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > orth_check; 
+   if( Testing ) orth_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) );
    std::vector<double> dot(n);
 
    // Compute the Norm of A
-   MVT::MvNorm(*A,dot,Belos::TwoNorm);
-   for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
-   nrmA = sqrt(dot[0]); 
+   if( Testing ){
+      MVT::MvNorm(*A,dot,Belos::TwoNorm);
+      for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
+      nrmA = sqrt(dot[0]); 
+   }
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
