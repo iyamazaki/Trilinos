@@ -57,13 +57,13 @@ int main(int argc, char *argv[]) {
    const Tpetra::Details::DefaultTypes::global_ordinal_type indexBase = 0;
 
    int i, j, k, ldr, ldt;
-   int testing, seed, numrhs, m, n;
+   int Testing, seed, numrhs, m, n;
    int endingp, startingp;
    double norma, norma2; 
    size_t mloc, offset, local_m;
    MagnitudeType orth, repres, nrmA;
 
-   m = 20000; n = 50; testing = 0;
+   m = 20000; n = 50; Testing = 0;
    for( i = 1; i < argc; i++ ) {
       if( strcmp( argv[i], "-m" ) == 0 ) {
          m = atoi(argv[i+1]);
@@ -74,7 +74,7 @@ int main(int argc, char *argv[]) {
          i++;
       }
       if( strcmp( argv[i], "-testing" ) == 0 ) {
-         testing = atoi(argv[i+1]);
+         Testing = atoi(argv[i+1]);
          i++;
       }
    }
@@ -109,11 +109,10 @@ int main(int argc, char *argv[]) {
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
 
-   // Define the needed matrices.
-   RCP<MV> A             = rcp( new MV(map,numrhs) );
-   RCP<MV> Q             = rcp( new MV(map,numrhs) );
-   if( Testing ) RCP<MV> Acpy          = rcp( new MV(map,numrhs) );
-   if( Testing ) RCP<MV> repres_check  = rcp( new MV(map,numrhs) );
+   // Define the needed matrices. A gets overwritten with V
+   RCP<MV> A    = rcp( new MV(map,numrhs) );
+   RCP<MV> Q    = rcp( new MV(map,numrhs) );
+   RCP<MV> Acpy = rcp( new MV(map,numrhs) );
 
    // Get local/global size and lengths
    mloc = A->getLocalLength();
@@ -138,9 +137,6 @@ int main(int argc, char *argv[]) {
    if (work == Teuchos::null) {
      work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType> );
    }  
-
-   if( Testing ) Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > orth_check; 
-   if( Testing ) orth_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) );
    std::vector<double> dot(n);
 
    // Compute the Norm of A
@@ -345,7 +341,10 @@ int main(int argc, char *argv[]) {
    // Print final timing details:
    Teuchos::TimeMonitor::summarize( printer_->stream(Belos::TimingDetails) );
 
-   if( Testing ){   
+   if( Testing ){  
+      RCP<MV> repres_check  = rcp( new MV(map,numrhs) );
+      Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > orth_check; 
+      orth_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) ); 
       // Orthogonality Check
       orth_check->putScalar();
       MVT::MvTransMv( (+1.0e+00), *Q, *Q, *orth_check );
