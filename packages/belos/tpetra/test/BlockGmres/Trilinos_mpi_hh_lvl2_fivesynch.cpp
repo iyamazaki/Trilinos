@@ -112,8 +112,9 @@ int main(int argc, char *argv[]) {
 
    RCP<const map_type> map = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
 
-   RCP<MV> A = rcp( new MV(map,numrhs) );
-   RCP<MV> Q = rcp( new MV(map,numrhs) );
+   RCP<MV> A    = rcp( new MV(map,numrhs) );
+   RCP<MV> Acpy = rcp( new MV(map,numrhs) );
+   RCP<MV> Q    = rcp( new MV(map,numrhs) );
    RCP<MV> repres_check1 = rcp( new MV(map,numrhs) );
    RCP<MV> repres_check2 = rcp( new MV(map,numrhs) );
 
@@ -124,6 +125,7 @@ int main(int argc, char *argv[]) {
    seed = my_rank*m*m; srand(seed);
 
    MVT::MvRandom( *A ); 
+   MVT::Assign( *A, *Acpy ); 
    MVT::MvInit( *Q );
  
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > AA; 
@@ -154,15 +156,15 @@ int main(int argc, char *argv[]) {
 
    std::vector<double> dot(n);
 
-   // Copy MultiVec A into SerialDense AA
+   // Copy MultiVec A into SerialDense AA - not sure if I need any longer.
    {
    A->sync_host();
    auto a = A->getLocalViewHost();
-   for(i=0;i<n;i++){ blas.COPY( mloc, &(a)(0,i), 1, &(*AA)(0,i), 1); }
-//   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*AA)(i,j) = a(i,j); }}
+//   for(i=0;i<n;i++){ blas.COPY( mloc, &(a)(0,i), 1, &(*AA)(0,i), 1); }
+   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*AA)(i,j) = a(i,j); }}
    }
-//   nrmA = AA->normFrobenius(); // This may be wrong, i.e. only taking the norm on 1 process
-                                 // Not sure if mpi process is built in here
+
+   // Compute the Norm of A
    MVT::MvNorm(*A,dot,Belos::TwoNorm);
    for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
    nrmA = sqrt(dot[0]); 
@@ -203,6 +205,7 @@ int main(int argc, char *argv[]) {
          MVT::SetBlock( *A, index_prev, *a_j );
          MVT::SetBlock( *Q, index_prev, *q_j );
 
+         MVT::MvDot( *a_j, *a_j, dot );
 
          RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
@@ -215,7 +218,6 @@ int main(int argc, char *argv[]) {
          (*R)(0,0) = b(0,0);
          }
 
-         MVT::MvDot( *a_j, *a_j, dot );
          norma = sqrt( dot[0] );
          norma2 = dot[0] - (*R)(0,0) * (*R)(0,0);
          (*T)(0,0) = ( (*R)(0,0) > 0 ) ? ( (*R)(0,0) + norma ) : ( (*R)(0,0) - norma );
@@ -348,19 +350,19 @@ int main(int argc, char *argv[]) {
    orth = orth_check->normFrobenius();
 
    // Representativity check
-   auto q = Q->getLocalViewHost();
-   for(i=0;i<n;i++){ blas.COPY( mloc, &(q)(0,i), 1, &(*repres_check)(0,i), 1); }
-   blas.TRMM( Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, mloc, n, 1.0e+00, &(*R)(0,0), n, &(*repres_check)(0,0), mloc );
-   for( k=0; k<n; k++ ){ for( i=0; i<mloc; i++ ){  (*repres_check)(i,k) = (*AA)(i,k) - (*repres_check)(i,k); } } 
-   repres = repres_check->normFrobenius();
+//   auto q = Q->getLocalViewHost();
+//   for(i=0;i<n;i++){ blas.COPY( mloc, &(q)(0,i), 1, &(*repres_check)(0,i), 1); }
+//   blas.TRMM( Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, mloc, n, 1.0e+00, &(*R)(0,0), n, &(*repres_check)(0,0), mloc );
+//   for( k=0; k<n; k++ ){ for( i=0; i<mloc; i++ ){  (*repres_check)(i,k) = (*AA)(i,k) - (*repres_check)(i,k); } } 
+//   repres = repres_check->normFrobenius();
 
 
-//   MVT::MvTimesMatAddMv( 1.0e+00, *Q, *R, 0.0e+00, *repres_check1 );
-//   MVT::MvAddMv( -1.0e+00, *A, +1.0e+00, *repres_check1, *repres_check2 );
-//   MVT::MvNorm(*repres_check2,dot,Belos::TwoNorm);
+   MVT::MvTimesMatAddMv( (1.0e+00), *Q, *R, (0.0e+00), *repres_check1 );
+   MVT::MvAddMv( (1.0e+00), *Acpy, (-1.0e+00), *repres_check1, *repres_check2 );
+   MVT::MvNorm(*repres_check2,dot,Belos::TwoNorm);
 
-//   for(i=0;i<n;i++){ printf("%3.2e, ",dot[i]); dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
-//   repres = sqrt(dot[0]); 
+   for(i=0;i<n;i++){ printf("%3.2e, ",dot[i]); dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
+   repres = sqrt(dot[0]); 
 
 //   MVT::MvPrint( *repres_check2, std::cout );
 
