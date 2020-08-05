@@ -158,10 +158,10 @@ int main(int argc, char *argv[]) {
 
    // Copy MultiVec A into SerialDense AA - not sure if I need any longer.
    {
-   A->sync_host();
-   auto a = A->getLocalViewHost();
+//   A->sync_host();
+//   auto a = A->getLocalViewHost();
 //   for(i=0;i<n;i++){ blas.COPY( mloc, &(a)(0,i), 1, &(*AA)(0,i), 1); }
-   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*AA)(i,j) = a(i,j); }}
+//   for(i=0;i<mloc;i++){for(j=0;j<n;j++){ (*AA)(i,j) = a(i,j); }}
    }
 
    // Compute the Norm of A
@@ -287,9 +287,6 @@ int main(int argc, char *argv[]) {
          RCP<MV> A_jj = MVT::CloneCopy( *A, index_prev2 );
          RCP<MV> a_jj = A_jj->offsetViewNonConst(submapjj, offset); 
 
-//MVT::MvPrint(*a_jj,std::cout);
-//MVT::MvPrint(*a_j,std::cout);
-
          MVT::MvDot( *a_jj, *a_jj, dot );                                // Two AllReduce
          norma2 = dot[0];
          norma = sqrt( dot[0]  + (*R)(j,j) * (*R)(j,j) );
@@ -360,11 +357,8 @@ int main(int argc, char *argv[]) {
    MVT::MvTimesMatAddMv( (1.0e+00), *Q, *R, (0.0e+00), *repres_check1 );
    MVT::MvAddMv( (1.0e+00), *Acpy, (-1.0e+00), *repres_check1, *repres_check2 );
    MVT::MvNorm(*repres_check2,dot,Belos::TwoNorm);
-
-   for(i=0;i<n;i++){ printf("%3.2e, ",dot[i]); dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
+   for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
    repres = sqrt(dot[0]); 
-
-//   MVT::MvPrint( *repres_check2, std::cout );
 
    } 
 
