@@ -41,6 +41,12 @@ TRIBITS_ADD_EXECUTABLE(
 )
 
 TRIBITS_ADD_EXECUTABLE(
+   Trilinos_mpi_hh_lvl2_foursynch
+   SOURCES Trilinos_mpi_hh_lvl2_foursynch.cpp
+   COMM serial mpi
+)
+
+TRIBITS_ADD_EXECUTABLE(
    Trilinos_mpi_cgs2_threesynch
    SOURCES Trilinos_mpi_cgs2_threesynch.cpp
    COMM serial mpi
