@@ -146,6 +146,8 @@ int main(int argc, char *argv[]) {
       nrmA = sqrt(dot[0]); 
    }
 
+   RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
 
@@ -153,10 +155,12 @@ int main(int argc, char *argv[]) {
    Teuchos::RCP<std::ostream> outputStream = Teuchos::rcp(&std::cout,false);
    Teuchos::RCP<Belos::OutputManager<double> > printer_ = Teuchos::rcp( new Belos::OutputManager<double>(Belos::TimingDetails,outputStream) );
    std::string Label ="QR factor time ";
+   std::string Label_import ="do_import time ";
 
    //Initialize timer: (Do once per label, I think)
 #ifdef BELOS_TEUCHOS_TIME_MONITOR
    Teuchos::RCP<Teuchos::Time> timerIRSolve_ = Teuchos::TimeMonitor::getNewCounter(Label);
+   Teuchos::RCP<Teuchos::Time> timerIRSolve_import_ = Teuchos::TimeMonitor::getNewCounter(Label_import);
 #endif
 
    { //scope guard for timer
@@ -191,7 +195,6 @@ int main(int argc, char *argv[]) {
 
 
          RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
-         RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
          import_type importer(globalMap, submapj);
          RCP<MV> TopA_j = MVT::CloneCopy( *A, index_prev );
          RCP<MV> Broadcast = rcp( new MV(submapj,1) );
@@ -252,8 +255,11 @@ int main(int argc, char *argv[]) {
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *a_j );      
 
          // Step 2: Broadcast R_{1:j,j}, construct v_j and \tau_j
+         { //scope guard for timer
+         #ifdef BELOS_TEUCHOS_TIME_MONITOR
+            Teuchos::TimeMonitor slvtimer(*timerIRSolve_import_);
+         #endif
          RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
-         RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
          import_type importer (globalMap, submapj);
          RCP<MV> TopA_j = MVT::CloneCopy( *A, index_prev2 );
          RCP<MV> Broadcast;
@@ -273,6 +279,7 @@ int main(int argc, char *argv[]) {
             }
          }
          }
+         } //end scope guard for timer
 
          // Using offset view to point at the j+1^st entry in a_j
          if (startingp > j) {             // full
@@ -315,6 +322,10 @@ int main(int argc, char *argv[]) {
 
          // Finishing constructing q_j
          {
+         #ifdef BELOS_TEUCHOS_TIME_MONITOR
+            Teuchos::TimeMonitor slvtimer(*timerIRSolve_import_);
+         #endif
+         {
          RCP<const map_type> topblockmap = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          import_type importer (globalMap, topblockmap);
          RCP<MV> TopA_block = MVT::CloneCopy( *A, index_prev1 );
@@ -324,6 +335,7 @@ int main(int argc, char *argv[]) {
          for(i=0;i<j;i++){ (*work)(i,0) = (*work)(i,0) - b(j,i); }
          for(i=0;i<j;i++){ (*work)(i,0) = - (*work)(i,0) * (*T)(j,j); }
          for(i=0;i<j;i++){ (*work)(i,0) = (*work)(i,0) + b(j,i) * ( 1.0e+00 - (*T)(j,j) ); }
+         }
          }
 
          MVT::Assign( *a_j, *q_j); 
@@ -351,6 +363,7 @@ int main(int argc, char *argv[]) {
 
    // Print final timing details:
    Teuchos::TimeMonitor::summarize( printer_->stream(Belos::TimingDetails) );
+//   Teuchos::TimeMonitor::summarize( printer_->stream(Belos::TimingDetails) );
 
    if( Testing ){  
       RCP<MV> repres_check  = rcp( new MV(map,numrhs) );

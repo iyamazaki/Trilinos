@@ -153,10 +153,12 @@ int main(int argc, char *argv[]) {
    Teuchos::RCP<std::ostream> outputStream = Teuchos::rcp(&std::cout,false);
    Teuchos::RCP<Belos::OutputManager<double> > printer_ = Teuchos::rcp( new Belos::OutputManager<double>(Belos::TimingDetails,outputStream) );
    std::string Label ="QR factor time ";
+   std::string Label_import ="do_import factor time ";
 
    //Initialize timer: (Do once per label, I think)
 #ifdef BELOS_TEUCHOS_TIME_MONITOR
    Teuchos::RCP<Teuchos::Time> timerIRSolve_ = Teuchos::TimeMonitor::getNewCounter(Label);
+   Teuchos::RCP<Teuchos::Time> timerIRSolve_import_ = Teuchos::TimeMonitor::getNewCounter(Label_import);
 #endif
 
    { //scope guard for timer
@@ -190,6 +192,11 @@ int main(int argc, char *argv[]) {
          MVT::SetBlock( *Q, index_prev, *q_j );
 
 
+         { //scope guard for timer
+
+         #ifdef BELOS_TEUCHOS_TIME_MONITOR
+            Teuchos::TimeMonitor slvtimer(*timerIRSolve_import_);
+         #endif
          RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
          import_type importer(globalMap, submapj);
@@ -199,6 +206,7 @@ int main(int argc, char *argv[]) {
          {
          auto b = Broadcast->getLocalViewHost();
          (*R)(0,0) = b(0,0);
+         }
          }
 
          if (my_rank == 0) {   
@@ -252,6 +260,10 @@ int main(int argc, char *argv[]) {
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *a_j );      
 
          // Step 2: Broadcast R_{1:j,j}, construct v_j and \tau_j
+         { //scope guard for timer
+         #ifdef BELOS_TEUCHOS_TIME_MONITOR
+            Teuchos::TimeMonitor slvtimer(*timerIRSolve_import_);
+         #endif
          RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
          import_type importer (globalMap, submapj);
@@ -271,6 +283,7 @@ int main(int argc, char *argv[]) {
             } else {
                for(i=0;i<j-startingp;i++){ a(i,j) = 0.0e+00; } 
             }
+         }
          }
          }
 
