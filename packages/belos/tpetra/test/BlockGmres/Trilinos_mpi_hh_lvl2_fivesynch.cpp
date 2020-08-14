@@ -175,7 +175,6 @@ int main(int argc, char *argv[]) {
    } else { 
       startingp = ( m - ( pool_size - (my_rank) ) * mloc ); 
    } endingp = startingp + mloc - 1;  
-//   printf("\nsp=%3d, ep=%3d, rank=%3d\n",startingp,endingp,my_rank);
 
    // Begin the orthogonalization process
    for( j=0; j<n; j++){
