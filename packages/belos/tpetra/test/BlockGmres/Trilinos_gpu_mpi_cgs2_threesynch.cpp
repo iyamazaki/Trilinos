@@ -77,6 +77,11 @@ int main(int argc, char *argv[]) {
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
 
+   if (my_rank == 0) {
+      std::cout << "Total number of processes: " << pool_size << std::endl;
+      std::cout << "Execution space: " << MV::execution_space::name () << std::endl;
+      std::cout << "Memory space   : " << MV::execution_space::memory_space::name () << std::endl;
+   }
 
    m = 20000; n = 50; Testing = 0;
    for( i = 1; i < argc; i++ ) {
