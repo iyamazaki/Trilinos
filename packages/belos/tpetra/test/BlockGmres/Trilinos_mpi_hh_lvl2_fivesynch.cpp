@@ -207,20 +207,15 @@ int main(int argc, char *argv[]) {
          {
          auto b = Broadcast->getLocalViewHost();
          (*R)(0,0) = b(0,0);
+         if( my_rank == 0 ){
+            {
+            auto a = A->getLocalViewHost();
+            a(0,0) = 0.0e+00; 
+            }
+         }
          }
 
-         if (my_rank == 0) {   
-             local_m = mloc-1;
-             offset = 1;
-         } else {             
-             local_m = mloc;
-             offset = 0;
-         }   
-         submapjj = Tpetra::createContigMapWithNode<LO,GO,Node>(Teuchos::Range1D::INVALID, local_m, comm);
-         A_jj = MVT::CloneCopy( *A, index_prev );
-         a_jj = A_jj->offsetViewNonConst(submapjj, offset); 
-
-         MVT::MvDot( *a_jj, *a_jj, dot );
+         MVT::MvDot( *a_j, *a_j, dot );
          norma = sqrt( dot[0] + (*R)(0,0) * (*R)(0,0) );
          norma2 = dot[0];
          (*T)(0,0) = ( (*R)(0,0) > 0 ) ? ( (*R)(0,0) + norma ) : ( (*R)(0,0) - norma );
@@ -271,29 +266,15 @@ int main(int argc, char *argv[]) {
             if( endingp < j ){
                for(i=0;i<mloc;i++){ a(i,j) = 0.0e+00; }
             } else {
-               for(i=0;i<j-startingp;i++){ a(i,j) = 0.0e+00; } 
+               for(i=0;i<j-startingp+1;i++){ a(i,j) = 0.0e+00; } 
             }
          }
          }
 
-         // Using offset view to point at the j+1^st entry in a_j
-         if (startingp > j) {             // full
-             local_m = mloc;
-             offset = 0;
-         } else if (startingp+mloc < j+1) { // empty
-             local_m = 0;
-             offset = mloc;
-         } else {                         // part
-             local_m = (startingp+mloc)-(j+1);
-             offset = (j+1)-startingp;
-         }   
-         submapjj = Tpetra::createContigMapWithNode<LO,GO,Node>(Teuchos::Range1D::INVALID, local_m, comm);
-         A_jj = MVT::CloneCopy( *A, index_prev2 );
-         a_jj = A_jj->offsetViewNonConst(submapjj, offset); 
-
-         MVT::MvDot( *a_jj, *a_jj, dot );                                // Two AllReduce
+         MVT::MvDot( *a_j, *a_j, dot );                                // Two AllReduce
          norma2 = dot[0];
          norma = sqrt( dot[0]  + (*R)(j,j) * (*R)(j,j) );
+
          (*R)(j,j) = ( (*R)(j,j) > 0 ) ? ( (*R)(j,j) + norma ) : ( (*R)(j,j) - norma );
          (*T)(j,j) = (2.0e+00) / ( (1.0e+00) + norma2 / ( (*R)(j,j) * (*R)(j,j) ) );
          MVT::MvScale( *a_j, ( 1 / (*R)(j,j) ) );
@@ -310,8 +291,8 @@ int main(int argc, char *argv[]) {
          MVT::Assign( *a_j, *q_j); 
          MVT::MvScale( *q_j, -(*T)(j,j) );
          {
-         auto q = Q->getLocalViewHost();
          if( startingp <= j ){ 
+            auto q = Q->getLocalViewHost();
             if( endingp >= j ){
                for(i=0;i<j-startingp;i++){ q(i,j) = 0.0e+00; }
                k = j-startingp;
