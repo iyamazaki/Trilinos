@@ -116,6 +116,8 @@ int main(int argc, char *argv[]) {
    RCP<MV> Acpy = rcp( new MV(map,numrhs) );
 
    RCP<const map_type> submapj;
+   submapj = rcp(new map_type (n, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
+   import_type importer(globalMap, submapj);
    RCP<const Tpetra::Map<LO,GO,Node> >  submapjj;
    RCP<MV> A_j;
    RCP<MV> a_j;
@@ -124,6 +126,7 @@ int main(int argc, char *argv[]) {
    RCP<MV> a_jj;
    RCP<MV> TopA_j;
    RCP<MV> Broadcast;
+   Broadcast = rcp( new MV(submapj,1) );
 
    // Get local/global size and lengths
    mloc = A->getLocalLength();
@@ -199,10 +202,7 @@ int main(int argc, char *argv[]) {
          MVT::SetBlock( *A, index_prev, *a_j );
          MVT::SetBlock( *Q, index_prev, *q_j );
 
-         submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
-         import_type importer(globalMap, submapj);
          TopA_j = MVT::CloneCopy( *A, index_prev );
-         Broadcast = rcp( new MV(submapj,1) );
          Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
          {
          auto b = Broadcast->getLocalViewHost();
@@ -259,11 +259,8 @@ int main(int argc, char *argv[]) {
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *a_j );      
 
          // Step 2: Broadcast R_{1:j,j}, construct v_j and \tau_j
-         submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
-         import_type importer (globalMap, submapj);
          TopA_j = MVT::CloneCopy( *A, index_prev2 );
-         Broadcast = rcp( new MV(submapj,1) );
-         Broadcast->doImport (*TopA_j, importer, Tpetra::INSERT);
+         Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
          {
          auto b = Broadcast->getLocalViewHost();
          for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);                          // One broadcast
