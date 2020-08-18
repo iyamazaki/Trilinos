@@ -81,6 +81,7 @@ int main(int argc, char *argv[]) {
    seed = my_rank*m*m; srand(seed);
    numrhs = n;
    RCP<const map_type> map = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+   RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
@@ -113,6 +114,16 @@ int main(int argc, char *argv[]) {
    RCP<MV> A    = rcp( new MV(map,numrhs) );
    RCP<MV> Q    = rcp( new MV(map,numrhs) );
    RCP<MV> Acpy = rcp( new MV(map,numrhs) );
+
+   RCP<const map_type> submapj;
+   RCP<const Tpetra::Map<LO,GO,Node> >  submapjj;
+   RCP<MV> A_j;
+   RCP<MV> a_j;
+   RCP<MV> q_j;
+   RCP<MV> A_jj;
+   RCP<MV> a_jj;
+   RCP<MV> TopA_j;
+   RCP<MV> Broadcast;
 
    // Get local/global size and lengths
    mloc = A->getLocalLength();
@@ -153,12 +164,10 @@ int main(int argc, char *argv[]) {
    Teuchos::RCP<std::ostream> outputStream = Teuchos::rcp(&std::cout,false);
    Teuchos::RCP<Belos::OutputManager<double> > printer_ = Teuchos::rcp( new Belos::OutputManager<double>(Belos::TimingDetails,outputStream) );
    std::string Label ="QR factor time ";
-   std::string Label_import ="do_import factor time ";
 
-   //Initialize timer: (Do once per label, I think)
+   //Initialize timer: (Do once per label)
 #ifdef BELOS_TEUCHOS_TIME_MONITOR
    Teuchos::RCP<Teuchos::Time> timerIRSolve_ = Teuchos::TimeMonitor::getNewCounter(Label);
-   Teuchos::RCP<Teuchos::Time> timerIRSolve_import_ = Teuchos::TimeMonitor::getNewCounter(Label_import);
 #endif
 
    { //scope guard for timer
@@ -184,28 +193,20 @@ int main(int argc, char *argv[]) {
 
          Teuchos::Range1D index_prev(0,0);
 
-         RCP<MV> a_j = MVT::CloneViewNonConst( *A, index_prev );
-         RCP<MV> q_j = MVT::CloneViewNonConst( *Q, index_prev );
+         a_j = MVT::CloneViewNonConst( *A, index_prev );
+         q_j = MVT::CloneViewNonConst( *Q, index_prev );
 
          MVT::SetBlock( *A, index_prev, *a_j );
          MVT::SetBlock( *Q, index_prev, *q_j );
 
-
-         { //scope guard for timer
-
-         #ifdef BELOS_TEUCHOS_TIME_MONITOR
-            Teuchos::TimeMonitor slvtimer(*timerIRSolve_import_);
-         #endif
-         RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
-         RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+         submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          import_type importer(globalMap, submapj);
-         RCP<MV> TopA_j = MVT::CloneCopy( *A, index_prev );
-         RCP<MV> Broadcast = rcp( new MV(submapj,1) );
+         TopA_j = MVT::CloneCopy( *A, index_prev );
+         Broadcast = rcp( new MV(submapj,1) );
          Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
          {
          auto b = Broadcast->getLocalViewHost();
          (*R)(0,0) = b(0,0);
-         }
          }
 
          if (my_rank == 0) {   
@@ -215,10 +216,9 @@ int main(int argc, char *argv[]) {
              local_m = mloc;
              offset = 0;
          }   
-         RCP<const Tpetra::Map<LO,GO,Node> >  submapjj;
          submapjj = Tpetra::createContigMapWithNode<LO,GO,Node>(Teuchos::Range1D::INVALID, local_m, comm);
-         RCP<MV> A_jj = MVT::CloneCopy( *A, index_prev );
-         RCP<MV> a_jj = A_jj->offsetViewNonConst(submapjj, offset); 
+         A_jj = MVT::CloneCopy( *A, index_prev );
+         a_jj = A_jj->offsetViewNonConst(submapjj, offset); 
 
          MVT::MvDot( *a_jj, *a_jj, dot );
          norma = sqrt( dot[0] + (*R)(0,0) * (*R)(0,0) );
@@ -249,9 +249,9 @@ int main(int argc, char *argv[]) {
          // Not sure if I need to be doing this. I would prefer to use T_j as the workspace needed..
 
          // Setting up matrices for computation
-         RCP<MV> A_j  = MVT::CloneViewNonConst( *A, index_prev1 );
-         RCP<MV> a_j  = MVT::CloneViewNonConst( *A, index_prev2 );
-         RCP<MV> q_j  = MVT::CloneViewNonConst( *Q, index_prev2 );
+         A_j  = MVT::CloneViewNonConst( *A, index_prev1 );
+         a_j  = MVT::CloneViewNonConst( *A, index_prev2 );
+         q_j  = MVT::CloneViewNonConst( *Q, index_prev2 );
 
          // Step 1: (I - V_{j-1} T_{j-1}^T V_{j-1}^T ) a_j
          MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );                // One AllReduce
@@ -259,15 +259,9 @@ int main(int argc, char *argv[]) {
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *a_j );      
 
          // Step 2: Broadcast R_{1:j,j}, construct v_j and \tau_j
-         { //scope guard for timer
-         #ifdef BELOS_TEUCHOS_TIME_MONITOR
-            Teuchos::TimeMonitor slvtimer(*timerIRSolve_import_);
-         #endif
-         RCP<const map_type> submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
-         RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+         submapj = rcp(new map_type (j+1, indexBase, comm, Tpetra::LocalGlobal::LocallyReplicated));
          import_type importer (globalMap, submapj);
-         RCP<MV> TopA_j = MVT::CloneCopy( *A, index_prev2 );
-         RCP<MV> Broadcast;
+         TopA_j = MVT::CloneCopy( *A, index_prev2 );
          Broadcast = rcp( new MV(submapj,1) );
          Broadcast->doImport (*TopA_j, importer, Tpetra::INSERT);
          {
@@ -284,7 +278,6 @@ int main(int argc, char *argv[]) {
             }
          }
          }
-         }
 
          // Using offset view to point at the j+1^st entry in a_j
          if (startingp > j) {             // full
@@ -297,10 +290,9 @@ int main(int argc, char *argv[]) {
              local_m = (startingp+mloc)-(j+1);
              offset = (j+1)-startingp;
          }   
-         RCP<const Tpetra::Map<LO,GO,Node> >  submapjj;
          submapjj = Tpetra::createContigMapWithNode<LO,GO,Node>(Teuchos::Range1D::INVALID, local_m, comm);
-         RCP<MV> a_ij = MVT::CloneCopy( *A, index_prev2 );
-         RCP<MV> a_jj = a_ij->offsetViewNonConst(submapjj, offset); 
+         A_jj = MVT::CloneCopy( *A, index_prev2 );
+         a_jj = A_jj->offsetViewNonConst(submapjj, offset); 
 
          MVT::MvDot( *a_jj, *a_jj, dot );                                // Two AllReduce
          norma2 = dot[0];
