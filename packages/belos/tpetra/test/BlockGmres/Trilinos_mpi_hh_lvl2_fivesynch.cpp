@@ -166,7 +166,7 @@ int main(int argc, char *argv[]) {
    // Set up printers for output: 
    Teuchos::RCP<std::ostream> outputStream = Teuchos::rcp(&std::cout,false);
    Teuchos::RCP<Belos::OutputManager<double> > printer_ = Teuchos::rcp( new Belos::OutputManager<double>(Belos::TimingDetails,outputStream) );
-   std::string Label ="QR factor time ";
+   std::string Label ="QR factor time for HH level 2 5-synch ";
 
    //Initialize timer: (Do once per label)
 #ifdef BELOS_TEUCHOS_TIME_MONITOR
