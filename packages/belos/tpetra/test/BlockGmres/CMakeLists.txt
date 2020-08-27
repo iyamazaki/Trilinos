@@ -35,6 +35,24 @@ TRIBITS_ADD_EXECUTABLE_AND_TEST(
 ENDIF()
 
 TRIBITS_ADD_EXECUTABLE(
+   Trilinos_mpi_mvtimemataddmv
+   SOURCES Trilinos_mpi_mvtimemataddmv.cpp
+   COMM serial mpi
+)
+
+TRIBITS_ADD_EXECUTABLE(
+   Trilinos_mpi_mvdot
+   SOURCES Trilinos_mpi_mvdot.cpp
+   COMM serial mpi
+)
+
+TRIBITS_ADD_EXECUTABLE(
+   Trilinos_mpi_mvtransmv
+   SOURCES Trilinos_mpi_mvtransmv.cpp
+   COMM serial mpi
+)
+
+TRIBITS_ADD_EXECUTABLE(
    Trilinos_mpi_hh_lvl2_fivesynch
    SOURCES Trilinos_mpi_hh_lvl2_fivesynch.cpp
    COMM serial mpi
