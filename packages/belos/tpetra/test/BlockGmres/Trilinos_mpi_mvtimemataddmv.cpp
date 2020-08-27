@@ -50,15 +50,12 @@ int main(int argc, char *argv[]) {
    Tpetra::ScopeGuard tpetraScope(&argc,&argv);
    {
    Teuchos::RCP<const Teuchos::Comm<int> > comm = Tpetra::getDefaultComm();
-   Teuchos::BLAS<int,ScalarType> blas;
 
    const int my_rank = comm->getRank();
    const int pool_size = comm->getSize();
-   const Tpetra::Details::DefaultTypes::global_ordinal_type indexBase = 0;
 
    int m, n, i, j;
    int seed;
-   size_t mloc, offset, local_m;
 
    m = 20000; n = 50;
    for( i = 1; i < argc; i++ ) {
@@ -72,14 +69,12 @@ int main(int argc, char *argv[]) {
       }
    }
    seed = my_rank*m*m; srand(seed);
-   RCP<const map_type> map = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
-   RCP<const map_type> globalMap = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
+   RCP<const map_type> map = rcp(new map_type (m, 0, comm, Tpetra::GloballyDistributed));
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
 
    RCP<MV> A = rcp( new MV(map,n) );
-   RCP<MV> x = rcp( new MV(map,1) );
    RCP<MV> y = rcp( new MV(map,1) );
 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > work; 
@@ -90,17 +85,8 @@ int main(int argc, char *argv[]) {
       (*work)(i,0) = (double)rand() / (double)(RAND_MAX) - 0.5e+00;
    }
 
-   // Get local/global size and lengths
-   mloc = A->getLocalLength();
-   m = MVT::GetGlobalLength(*A);
-   const Tpetra::global_size_t numGlobalIndices = m;
-
-   // initialize
-   MVT::MvRandom( *x ); 
    MVT::MvRandom( *y ); 
    MVT::MvRandom( *A ); 
-
-   std::vector<double> dot(1);
 
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
