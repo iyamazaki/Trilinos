@@ -247,8 +247,6 @@ int main(int argc, char *argv[]) {
             a_i  = MVT::CloneViewNonConst( *A, index_previ );
             MVT::MvDot( *a_i, *a_j, dot );   
             MVT::MvAddMv( - dot[0]*(tau[i]) , *a_i, (+1.0e+00), *a_j, *a_j );
-//            (*work)(0,0) = - dot[0]*(tau[i]);
-//            MVT::MvTimesMatAddMv( (+1.0e+00), *a_i, (*work), (+1.0e+00), *a_j );    
          }
 
 
@@ -306,8 +304,6 @@ int main(int argc, char *argv[]) {
             a_i  = MVT::CloneViewNonConst( *A, index_previ );
             MVT::MvDot( *a_i, *q_j, dot );     
             MVT::MvAddMv( -(dot[0]*(tau[i])), *a_i, (+1.0e+00), *q_j, *q_j ); 
-//            (*work)(0,0) = - dot[0]*(tau[i]);
-//            MVT::MvTimesMatAddMv( (+1.0e+00), *a_i, *work, (+1.0e+00), *q_j );    
          }
  
       } 

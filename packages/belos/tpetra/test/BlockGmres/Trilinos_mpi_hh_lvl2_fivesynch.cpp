@@ -122,11 +122,8 @@ int main(int argc, char *argv[]) {
    RCP<MV> A_j;
    RCP<MV> a_j;
    RCP<MV> q_j;
-   RCP<MV> A_jj;
-   RCP<MV> a_jj;
    RCP<MV> TopA_j;
-   RCP<MV> Broadcast;
-   Broadcast = rcp( new MV(submapj,1) );
+   RCP<MV> Broadcast = rcp( new MV(submapj,1) );
 
    // Get local/global size and lengths
    mloc = A->getLocalLength();
@@ -241,7 +238,6 @@ int main(int argc, char *argv[]) {
          Teuchos::Range1D index_prev1(0,j-1);
          Teuchos::Range1D index_prev2(j,j);
          work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) ); 
-         // Not sure if I need to be doing this. I would prefer to use T_j as the workspace needed..
 
          // Setting up matrices for computation
          A_j  = MVT::CloneViewNonConst( *A, index_prev1 );
@@ -260,7 +256,6 @@ int main(int argc, char *argv[]) {
          auto b = Broadcast->getLocalViewHost();
          for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);                          // One broadcast
          // Setting the top j-1 elements in v_j to zero
-         // This could be done with offset view but would complexify the code
          auto a = A->getLocalViewHost();
          if( startingp < j ){ 
             if( endingp < j ){
@@ -271,7 +266,7 @@ int main(int argc, char *argv[]) {
          }
          }
 
-         MVT::MvDot( *a_j, *a_j, dot );                                // Two AllReduce
+         MVT::MvDot( *a_j, *a_j, dot );                                 // Two AllReduce
          norma2 = dot[0];
          norma = sqrt( dot[0]  + (*R)(j,j) * (*R)(j,j) );
 
