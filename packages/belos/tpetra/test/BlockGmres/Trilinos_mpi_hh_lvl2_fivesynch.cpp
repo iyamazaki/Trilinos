@@ -18,7 +18,7 @@
 #include "BelosMultiVecTraits.hpp"
 #include "BelosTpetraAdapter.hpp"
 #include <MatrixMarket_Tpetra.hpp>
-#include <vector>                  // I've added from here and below
+#include <vector>                  
 #include <Tpetra_Vector.hpp>
 #include <Tpetra_Version.hpp>
 #include <Teuchos_CommHelpers.hpp>
@@ -150,7 +150,7 @@ int main(int argc, char *argv[]) {
    }  
    std::vector<double> dot(n);
 
-   // Compute the Norm of A
+   // Compute the Frobenius Norm of A
    if( Testing ){
       MVT::MvNorm(*A,dot,Belos::TwoNorm);
       for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
@@ -188,7 +188,6 @@ int main(int argc, char *argv[]) {
    // Begin the orthogonalization process
    for( j=0; j<n; j++){
 
-      // The first step is different than the rest
       if( j == 0 ){
 
          Teuchos::Range1D index_prev(0,0);
@@ -231,7 +230,6 @@ int main(int argc, char *argv[]) {
             }
          }
 
-      // The bulk of the HH algorithm
       } else {
 
          // Setting the index for applying V_{j-1} to a_j and constructing q_j
@@ -245,7 +243,7 @@ int main(int argc, char *argv[]) {
          q_j  = MVT::CloneViewNonConst( *Q, index_prev2 );
 
          // Step 1: (I - V_{j-1} T_{j-1}^T V_{j-1}^T ) a_j
-         MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );                // One AllReduce
+         MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );              // One AllReduce
          blas.TRMV( Teuchos::UPPER_TRI, Teuchos::TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 );
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *a_j );      
 
@@ -254,7 +252,7 @@ int main(int argc, char *argv[]) {
          Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
          {
          auto b = Broadcast->getLocalViewHost();
-         for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);                          // One broadcast
+         for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);                        // One broadcast
          // Setting the top j-1 elements in v_j to zero
          auto a = A->getLocalViewHost();
          if( startingp < j ){ 
@@ -266,7 +264,7 @@ int main(int argc, char *argv[]) {
          }
          }
 
-         MVT::MvDot( *a_j, *a_j, dot );                                 // Two AllReduce
+         MVT::MvDot( *a_j, *a_j, dot );                               // Two AllReduce
          norma2 = dot[0];
          norma = sqrt( dot[0]  + (*R)(j,j) * (*R)(j,j) );
 
@@ -298,13 +296,13 @@ int main(int argc, char *argv[]) {
          }
          }
          for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
-         MVT::MvTransMv( (+1.0e+00), *A_j, *q_j, *work );              // Three AllReduce
+         MVT::MvTransMv( (+1.0e+00), *A_j, *q_j, *work );            // Three AllReduce
          blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 ); 
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *q_j );    
  
          // Step 4: Construct T_{1:j-1,j} = -\tau_j T_{1:j-1,1:j-1} V_{1:j-1}^T v_j
          for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
-         MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );               // Four AllReduce
+         MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );             // Four AllReduce
          for(i=0;i<j;i++) (*T)(i,j) = (*work)(i,0);
          blas.SCAL( j, -(*T)(j,j), &(*T)(0,j), 1 );
          blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*T)(0,j), 1 );

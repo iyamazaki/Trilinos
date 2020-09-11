@@ -44,7 +44,6 @@ using Tpetra::CrsMatrix;
 using Tpetra::MultiVector;
 using Teuchos::RCP;
 
-// I've added
 using Teuchos::outArg;
 using std::endl;
 using map_type = Tpetra::Map<>;
@@ -76,7 +75,6 @@ int main(int argc, char *argv[]) {
    
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
-
 
    m = 20000; n = 50; Testing = 0;
    for( i = 1; i < argc; i++ ) {
@@ -142,7 +140,7 @@ int main(int argc, char *argv[]) {
 
    std::vector<double> dot(n);
 
-   // Compute the Norm of A
+   // Compute the Frobenius Norm of A
    if( Testing ) MVT::Assign( *Q, *A ); 
    if( Testing ){
       MVT::MvNorm(*Q,dot,Belos::TwoNorm);
@@ -199,16 +197,15 @@ int main(int argc, char *argv[]) {
          RCP<MV> Q_j = MVT::CloneViewNonConst( *Q, index_prev1 );
          RCP<MV> q_j = MVT::CloneViewNonConst( *Q, index_prev2 );
 
-         // Step 1:
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );              // One AllReduce
+         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );        // One AllReduce
          MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work, (+1.0e+00), *q_j );  
          for(i=0;i<j;i++) (*R)(i,j) = (*work)(i,0);
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );              // Two AllReduce
+         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );        // Two AllReduce
          MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work, (+1.0e+00), *q_j );  
          for(i=0;i<j;i++) (*R)(i,j) += (*work)(i,0);
 
-         MVT::MvDot( *q_j, *q_j, dot );                                // Three AllReduce
+         MVT::MvDot( *q_j, *q_j, dot );                          // Three AllReduce
          (*R)(j,j) = sqrt( dot[0] );
          MVT::MvScale( *q_j, ( 1 / (*R)(j,j) ) );
 
@@ -249,7 +246,3 @@ int main(int argc, char *argv[]) {
    return 0;
 
 }
-
-
-
-

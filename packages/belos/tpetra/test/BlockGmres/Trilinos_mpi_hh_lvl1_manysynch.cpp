@@ -154,7 +154,7 @@ int main(int argc, char *argv[]) {
    std::vector<double> dot(n);
    std::vector<double> tau(n);
 
-   // Compute the Norm of A
+   // Compute the Frobenius Norm of A
    if( Testing ){
       MVT::MvNorm(*A,dot,Belos::TwoNorm);
       for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
@@ -241,7 +241,7 @@ int main(int argc, char *argv[]) {
          a_j  = MVT::CloneViewNonConst( *A, index_prev );
          q_j  = MVT::CloneViewNonConst( *Q, index_prev );
 
-         // Step 1:  (I - v_{1} tau_{1} v_{1}^T ) *** (I - v_{j-1} tau_{j-1} v_{j-1}^T ) a_j
+         // (I - v_{1} tau_{1} v_{1}^T ) *** (I - v_{j-1} tau_{j-1} v_{j-1}^T ) a_j
          for(i=0;i<j;i++){
             Teuchos::Range1D index_previ(i,i);
             a_i  = MVT::CloneViewNonConst( *A, index_previ );
@@ -250,7 +250,7 @@ int main(int argc, char *argv[]) {
          }
 
 
-         // Step 2: Broadcast R_{1:j,j}, construct v_j and \tau_j
+         // Broadcast R_{1:j,j}, construct v_j and \tau_j
          TopA_j = MVT::CloneCopy( *A, index_prev );
          Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
          {
@@ -283,7 +283,7 @@ int main(int argc, char *argv[]) {
          }
 
 
-         // Step 3: Construct q_j = ( I - V_{j-1} T_{j-1} V_{j-1}^T )( I - v_j \tau_j v_j^T ) e_j
+         // Construct q_j = ( I - V_{j-1} T_{j-1} V_{j-1}^T )( I - v_j \tau_j v_j^T ) e_j
          MVT::Assign( *a_j, *q_j); 
          MVT::MvScale( *q_j, -tau[j] );
          {
@@ -341,9 +341,4 @@ int main(int argc, char *argv[]) {
    }
 
    return 0;
-
 }
-
-
-
-
