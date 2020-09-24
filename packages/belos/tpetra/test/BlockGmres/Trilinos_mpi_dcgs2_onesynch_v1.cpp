@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
    int i, j, k, ldr, ldt;
    int Testing, seed, numrhs, m, n;
    int endingp, startingp;
-   double norma, norma2, tmp; 
+   double norma, norma2; 
    size_t mloc, offset, local_m;
    MagnitudeType orth, repres, nrmA;
    
@@ -98,9 +98,7 @@ int main(int argc, char *argv[]) {
    RCP<MV> Q = rcp( new MV(map,numrhs) );
    RCP<MV> A = rcp( new MV(map,numrhs) );
    RCP<MV> Q_j;
-   RCP<MV> Q_j2;
    RCP<MV> q_j;
-   RCP<MV> q_j2;
    RCP<MV> q_jm1;
    RCP<MV> q_jnew;
 
@@ -190,80 +188,55 @@ int main(int argc, char *argv[]) {
 
       if( j == 0 ){
 
-      }
 
-      if( j == 1 ){
+      } else {
 
-         Teuchos::Range1D index_prev1(0,1);
-         Teuchos::Range1D index_prev2(0,0);
-         Teuchos::Range1D index_prev3(1,1);
-         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(2,1) ); 
-         Q_j  = MVT::CloneViewNonConst( *Q, index_prev1 );
-         q_j  = MVT::CloneViewNonConst( *Q, index_prev2 );
-         q_j2 = MVT::CloneViewNonConst( *Q, index_prev3 );
-
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );        // One AllReduce
-         (*R)(0,0) = sqrt( (*work)(0,0) );                 
-         MVT::MvScale( *q_j, 1/(*R)(0,0) );
-         (*R)(0,1) = (*work)(1,0) / (*R)(0,0);
-         MVT::MvAddMv( 1.0e+00, *q_j2, (-(*R)(0,1)), *q_j, *q_j2 );
-
-      }
-    
-      if( j >= 2){
-
-         Teuchos::Range1D index_prev (0,j-2);
          Teuchos::Range1D index_prev1(0,j-1);
          Teuchos::Range1D index_prev2(j-1,j);
          Teuchos::Range1D index_prev3(j-1,j-1);
          Teuchos::Range1D index_prev4(j,j);
 
          work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,2) ); 
-         work1 = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j-1,2) ); 
+         work1 = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) ); 
 
-         Q_j2 = MVT::CloneViewNonConst( *Q, index_prev );
          Q_j = MVT::CloneViewNonConst( *Q, index_prev1 );
          q_j = MVT::CloneViewNonConst( *Q, index_prev2 );
-         q_jm1 = MVT::CloneViewNonConst( *Q, index_prev3 );
-         q_j2 = MVT::CloneViewNonConst( *Q, index_prev4 );
 
          MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );        // One AllReduce
 
-         for(i=0;i<j;i++) (*R)(i,j) = (*work)(i,1); 
-         (*R)(j-1,j-1) = (*work)(j-1,0);
+         // catching up the delayed orthogonalization
+         q_jm1 = MVT::CloneViewNonConst( *Q, index_prev3 );
+         for(i=0;i<j-1;i++) (*work1)(i,0) = (*work)(i,0); 
+         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work1, (+1.0e+00), *q_jm1 );  
+         for(i=0;i<j-1;i++) (*R)(i,j-1) += (*work1)(i,0); 
 
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp += (*work)(i,0) * (*R)(i,j);
-         (*R)(j-1,j) = (*R)(j-1,j) - tmp;
-
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp += (*work)(i,0) * (*work)(i,0);
-         (*R)(j-1,j-1) = sqrt( (*R)(j-1,j-1) - tmp );
-
-         for(i=0;i<j-1;i++) (*R)(i,j-1) = (*R)(i,j-1) + (*work)(i,0); 
-         (*R)(j-1,j) = (*R)(j-1,j) / (*R)(j-1,j-1);
-
-         for(i=0;i<j-1;i++) (*work1)(i,0) = (*work)(i,0);
-         for(i=0;i<j-1;i++) (*work1)(i,1) = (*R)(i,j);
-         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j2, *work1, (+1.0e+00), *q_j );  
+         // This is the work to finish the delayed normalization 
+         (*R)(j-1,j-1) = sqrt( (*work)(j-1,0) );
+         (*work)(j-1,1) = (*work)(j-1,1) / ( (*R)(j-1,j-1) * (*R)(j-1,j-1) );
+         for(i=0;i<j-1;i++) (*work)(i,1) = (*work)(i,1) / (*R)(j-1,j-1);
+         for(i=0;i<j;i++) (*R)(i,j) = (*work)(i,1);
          MVT::MvScale( *q_jm1, ( 1 / (*R)(j-1,j-1) ) );
-         MVT::MvAddMv( 1.0e+00, *q_j2, (-(*R)(j-1,j)), *q_jm1, *q_j2 );
+
+         // This is the work to finish the first projection 
+         for(i=0;i<j;i++) (*work1)(i,0) = (*work)(i,1); 
+         q_jnew = MVT::CloneViewNonConst( *Q, index_prev4 );
+         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work1, (+1.0e+00), *q_jnew );  
+         for(i=0;i<j;i++) (*R)(i,j) = (*work1)(i,0); 
 
       }
 
       if( j == n-1 ){
 
-         Teuchos::Range1D index_prev1(0,j-1);
-         Teuchos::Range1D index_prev2(j,j);
-         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) ); 
-         Q_j = MVT::CloneViewNonConst( *Q, index_prev1 );
-         q_j = MVT::CloneViewNonConst( *Q, index_prev2 );
+         Teuchos::Range1D index_prev(n-1,n-1);
+         q_j = MVT::CloneViewNonConst( *Q, index_prev );
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work ); 
+         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work1 );  
+         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work1, (+1.0e+00), *q_j );  
+         for(i=0;i<n-1;i++) (*R)(i,n-1) += (*work1)(i,0);
+
          MVT::MvDot( *q_j, *q_j, dot );
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp = tmp + ( (*work)(i,0) * (*work)(i,0) );
-         (*R)(j,j) = sqrt( dot[0] - tmp );
-         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work, (+1.0e+00), *q_j );  
-         for(i=0;i<j-1;i++) (*R)(i,j) = (*R)(i,j) + (*work)(i,0);
-         MVT::MvScale( *q_j, ( 1 / (*R)(j,j) ) );
+         (*R)(n-1,n-1) = sqrt( dot[0] );
+         MVT::MvScale( *q_j, ( 1 / (*R)(n-1,n-1) ) );
 
       }
 
@@ -293,7 +266,7 @@ int main(int argc, char *argv[]) {
          printf("m = %3d, n = %3d,  ",m,n);
          printf("|| I - Q'Q || = %3.3e, ", orth);
          printf("|| A - QR || / ||A|| = %3.3e \n", repres/nrmA);
-      } 
+      }
    } else {
       if( my_rank == 0 ) printf("m = %3d, n = %3d\n",m,n);
    }
