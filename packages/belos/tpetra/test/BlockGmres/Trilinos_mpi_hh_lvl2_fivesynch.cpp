@@ -255,7 +255,7 @@ int main(int argc, char *argv[]) {
          for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);                        // One broadcast
          // Setting the top j-1 elements in v_j to zero
          auto a = A->getLocalViewHost();
-         if( startingp < j ){ 
+         if( startingp <= j ){ 
             if( endingp < j ){
                for(i=0;i<mloc;i++){ a(i,j) = 0.0e+00; }
             } else {
@@ -276,7 +276,7 @@ int main(int argc, char *argv[]) {
          if( startingp <= j && endingp >= j ){
             auto a = A->getLocalViewHost();
             k = j-startingp;
-            a(k,j) = 1.0e+00; 
+            a(k,j) = 1.0e+00;
          }
          }
 
@@ -295,7 +295,8 @@ int main(int argc, char *argv[]) {
             }
          }
          }
-         for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
+
+	 for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
          MVT::MvTransMv( (+1.0e+00), *A_j, *q_j, *work );            // Three AllReduce
          blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 ); 
          MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *q_j );    
