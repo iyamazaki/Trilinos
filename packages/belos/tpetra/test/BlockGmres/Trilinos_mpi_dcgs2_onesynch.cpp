@@ -164,7 +164,7 @@ int main(int argc, char *argv[]) {
    // Set up printers for output: 
    Teuchos::RCP<std::ostream> outputStream = Teuchos::rcp(&std::cout,false);
    Teuchos::RCP<Belos::OutputManager<double> > printer_ = Teuchos::rcp( new Belos::OutputManager<double>(Belos::TimingDetails,outputStream) );
-   std::string Label ="QR factor time CGS2";
+   std::string Label ="QR factor time DCGS2";
    //(You can create multiple labels to time different kernels, if you like )
 
    //Initialize timer: (Do once per label, I think)
