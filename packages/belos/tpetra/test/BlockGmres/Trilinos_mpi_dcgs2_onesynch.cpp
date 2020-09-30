@@ -136,16 +136,12 @@ int main(int argc, char *argv[]) {
  
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > R; 
    Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > work; 
-   Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > work1; 
 
    if (R == Teuchos::null) {
      R = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n) );
    }
    if (work == Teuchos::null) {
-     work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType> );
-   }  
-   if (work1 == Teuchos::null) {
-     work1 = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType> );
+     work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,2) );
    }  
 
    std::vector<double> dot(n);
@@ -197,15 +193,19 @@ int main(int argc, char *argv[]) {
          Teuchos::Range1D index_prev1(0,1);
          Teuchos::Range1D index_prev2(0,0);
          Teuchos::Range1D index_prev3(1,1);
-         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(2,1) ); 
+
+         Teuchos::SerialDenseMatrix<int,ScalarType> work1 (Teuchos::View, *work, 2, 1, 0, 0);
+
          Q_j  = MVT::CloneViewNonConst( *Q, index_prev1 );
          q_j  = MVT::CloneViewNonConst( *Q, index_prev2 );
          q_j2 = MVT::CloneViewNonConst( *Q, index_prev3 );
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );        // One AllReduce
-         (*R)(0,0) = sqrt( (*work)(0,0) );                 
+         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, work1 );        // One AllReduce
+
+         (*R)(0,0) = sqrt( work1(0,0) );                 
          MVT::MvScale( *q_j, 1/(*R)(0,0) );
-         (*R)(0,1) = (*work)(1,0) / (*R)(0,0);
+         (*R)(0,1) = work1(1,0) / (*R)(0,0);
+
          MVT::MvAddMv( 1.0e+00, *q_j2, (-(*R)(0,1)), *q_j, *q_j2 );
 
       }
@@ -218,8 +218,7 @@ int main(int argc, char *argv[]) {
          Teuchos::Range1D index_prev3(j-1,j-1);
          Teuchos::Range1D index_prev4(j,j);
 
-         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,2) ); 
-         work1 = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j-1,2) ); 
+         Teuchos::SerialDenseMatrix<int,ScalarType> work1 (Teuchos::View, *work, j, 2, 0, 0);
 
          Q_j2 = MVT::CloneViewNonConst( *Q, index_prev );
          Q_j = MVT::CloneViewNonConst( *Q, index_prev1 );
@@ -227,23 +226,25 @@ int main(int argc, char *argv[]) {
          q_jm1 = MVT::CloneViewNonConst( *Q, index_prev3 );
          q_j2 = MVT::CloneViewNonConst( *Q, index_prev4 );
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work );        // One AllReduce
+         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, work1 );        // One AllReduce
 
-         for(i=0;i<j;i++) (*R)(i,j) = (*work)(i,1); 
-         (*R)(j-1,j-1) = (*work)(j-1,0);
+         for(i=0;i<j;i++) (*R)(i,j) = work1(i,1); 
+         (*R)(j-1,j-1) = work1(j-1,0);
 
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp += (*work)(i,0) * (*R)(i,j);
+         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp += work1(i,0) * (*R)(i,j);
          (*R)(j-1,j) = (*R)(j-1,j) - tmp;
 
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp += (*work)(i,0) * (*work)(i,0);
+         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp += work1(i,0) * work1(i,0);
          (*R)(j-1,j-1) = sqrt( (*R)(j-1,j-1) - tmp );
 
-         for(i=0;i<j-1;i++) (*R)(i,j-1) = (*R)(i,j-1) + (*work)(i,0); 
+         for(i=0;i<j-1;i++) (*R)(i,j-1) = (*R)(i,j-1) + work1(i,0); 
          (*R)(j-1,j) = (*R)(j-1,j) / (*R)(j-1,j-1);
 
-         for(i=0;i<j-1;i++) (*work1)(i,0) = (*work)(i,0);
-         for(i=0;i<j-1;i++) (*work1)(i,1) = (*R)(i,j);
-         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j2, *work1, (+1.0e+00), *q_j );  
+	 // Note: This copies the first column work1 into work2, we need R in column 2
+         Teuchos::SerialDenseMatrix<int,ScalarType> work2 (Teuchos::View, work1, j-1, 2, 0, 0);	 
+
+         for(i=0;i<j-1;i++) work2(i,1) = (*R)(i,j);
+         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j2, work2, (+1.0e+00), *q_j );  
          MVT::MvScale( *q_jm1, ( 1 / (*R)(j-1,j-1) ) );
          MVT::MvAddMv( 1.0e+00, *q_j2, (-(*R)(j-1,j)), *q_jm1, *q_j2 );
 
@@ -253,16 +254,19 @@ int main(int argc, char *argv[]) {
 
          Teuchos::Range1D index_prev1(0,j-1);
          Teuchos::Range1D index_prev2(j,j);
-         work = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(j,1) ); 
+
+         Teuchos::SerialDenseMatrix<int,ScalarType> work1 (Teuchos::View, *work, j, 1, 0, 0);
+
          Q_j = MVT::CloneViewNonConst( *Q, index_prev1 );
          q_j = MVT::CloneViewNonConst( *Q, index_prev2 );
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, *work ); 
+         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, work1 ); 
          MVT::MvDot( *q_j, *q_j, dot );
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp = tmp + ( (*work)(i,0) * (*work)(i,0) );
+
+         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp = tmp + ( work1(i,0) * work1(i,0) );
          (*R)(j,j) = sqrt( dot[0] - tmp );
-         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, *work, (+1.0e+00), *q_j );  
-         for(i=0;i<j-1;i++) (*R)(i,j) = (*R)(i,j) + (*work)(i,0);
+         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, work1, (+1.0e+00), *q_j );  
+         for(i=0;i<j-1;i++) (*R)(i,j) = (*R)(i,j) + work1(i,0);
          MVT::MvScale( *q_j, ( 1 / (*R)(j,j) ) );
 
       }

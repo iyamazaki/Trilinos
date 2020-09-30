@@ -185,6 +185,8 @@ int main(int argc, char *argv[]) {
       startingp = ( m - ( pool_size - (my_rank) ) * mloc ); 
    } endingp = startingp + mloc - 1;  
 
+printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
+
    // Begin the orthogonalization process
    for( j=0; j<n; j++){
 
@@ -194,9 +196,6 @@ int main(int argc, char *argv[]) {
 
          a_j = MVT::CloneViewNonConst( *A, index_prev );
          q_j = MVT::CloneViewNonConst( *Q, index_prev );
-
-         MVT::SetBlock( *A, index_prev, *a_j );
-         MVT::SetBlock( *Q, index_prev, *q_j );
 
          TopA_j = MVT::CloneCopy( *A, index_prev );
          Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
