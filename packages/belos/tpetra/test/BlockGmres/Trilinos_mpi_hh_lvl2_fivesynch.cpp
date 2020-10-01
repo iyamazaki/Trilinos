@@ -44,6 +44,7 @@ using map_type = Tpetra::Map<>;
 using LO = typename MV::local_ordinal_type;
 using GO = typename MV::global_ordinal_type;
 using Node = typename MV::node_type;
+using range_type = Kokkos::pair<int, int>;
 
 int main(int argc, char *argv[]) {
 
@@ -52,16 +53,23 @@ int main(int argc, char *argv[]) {
    Teuchos::RCP<const Teuchos::Comm<int> > comm = Tpetra::getDefaultComm();
    Teuchos::BLAS<int,ScalarType> blas;
 
+   const ScalarType zero (0.0);
+   const ScalarType one  (1.0);
+   const ScalarType two  (2.0);
+
    const int my_rank = comm->getRank();
    const int pool_size = comm->getSize();
    const Tpetra::Details::DefaultTypes::global_ordinal_type indexBase = 0;
 
-   int i, j, k, ldr, ldt;
-   int Testing, seed, numrhs, m, n;
-   int endingp, startingp;
-   double norma, norma2; 
-   size_t mloc, offset, local_m;
-   MagnitudeType orth, repres, nrmA;
+   int Testing, seed, numrhs;
+   LO i, j, k, ldt;
+   LO mloc;
+   GO m, n, endingp, startingp;
+   MagnitudeType orth (0.0);
+   MagnitudeType repres (0.0);
+   MagnitudeType nrmA (0.0);
+   MagnitudeType norma (0.0);
+   MagnitudeType norma2 (0.0);
 
    m = 20000; n = 50; Testing = 0;
    for( i = 1; i < argc; i++ ) {
@@ -128,8 +136,7 @@ int main(int argc, char *argv[]) {
    // Get local/global size and lengths
    mloc = A->getLocalLength();
    m = MVT::GetGlobalLength(*A);
-   const Tpetra::global_size_t numGlobalIndices = m;
-   ldr = n, ldt = n;
+   ldt = n;
 
    // initialize
    MVT::MvRandom( *A ); 
@@ -153,7 +160,7 @@ int main(int argc, char *argv[]) {
    // Compute the Frobenius Norm of A
    if( Testing ){
       MVT::MvNorm(*A,dot,Belos::TwoNorm);
-      for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
+      for(i=0; i<n; i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
       nrmA = sqrt(dot[0]); 
    }
 
@@ -184,8 +191,7 @@ int main(int argc, char *argv[]) {
    } else { 
       startingp = ( m - ( pool_size - (my_rank) ) * mloc ); 
    } endingp = startingp + mloc - 1;  
-
-printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
+   //printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
 
    // Begin the orthogonalization process
    for( j=0; j<n; j++){
@@ -200,12 +206,16 @@ printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
          TopA_j = MVT::CloneCopy( *A, index_prev );
          Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
          {
+         Broadcast->sync_host ();
          auto b = Broadcast->getLocalViewHost();
          (*R)(0,0) = b(0,0);
          if( my_rank == 0 ){
             {
+            A->sync_host ();
+            A->modify_host ();
             auto a = A->getLocalViewHost();
-            a(0,0) = 0.0e+00; 
+            a(0,0) = zero; 
+            A->sync_device ();
             }
          }
          }
@@ -214,18 +224,25 @@ printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
          norma = sqrt( dot[0] + (*R)(0,0) * (*R)(0,0) );
          norma2 = dot[0];
          (*T)(0,0) = ( (*R)(0,0) > 0 ) ? ( (*R)(0,0) + norma ) : ( (*R)(0,0) - norma );
-         MVT::MvScale( *a_j, 1.0e+00 / (*T)(0,0) );
-         (*T)(0,0) = ( 2.0e+00 ) / ( (1.0e+00) + norma2 / ( (*T)(0,0) * (*T)(0,0) ) ); 
+         MVT::MvScale( *a_j, one / (*T)(0,0) );
+         (*T)(0,0) = two / ( one + norma2 / ( (*T)(0,0) * (*T)(0,0) ) ); 
          (*R)(0,0) = ( (*R)(0,0) > 0 ) ? ( - norma ) : ( + norma );
 
          MVT::Assign( *a_j, *q_j); 
          MVT::MvScale( *q_j, -(*T)(0,0) );
          if( my_rank == 0 ){
             {
+            Q->sync_host ();
+            Q->modify_host ();
             auto q = Q->getLocalViewHost();
-            q(0,0) = 1.0e+00 - (*T)(0,0);
+            q(0,0) = one - (*T)(0,0);
+            Q->sync_device ();
+
+            A->sync_host ();
+            A->modify_host ();
             auto a = A->getLocalViewHost();
-            a(0,0) = 1.0e+00; 
+            a(0,0) = one; 
+            A->sync_device ();
             }
          }
 
@@ -242,25 +259,29 @@ printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
          q_j  = MVT::CloneViewNonConst( *Q, index_prev2 );
 
          // Step 1: (I - V_{j-1} T_{j-1}^T V_{j-1}^T ) a_j
-         MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );              // One AllReduce
+         MVT::MvTransMv( one, *A_j, *a_j, *work );              // One AllReduce
          blas.TRMV( Teuchos::UPPER_TRI, Teuchos::TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 );
-         MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *a_j );      
+         MVT::MvTimesMatAddMv( -one, *A_j, *work, one, *a_j );      
 
          // Step 2: Broadcast R_{1:j,j}, construct v_j and \tau_j
          TopA_j = MVT::CloneCopy( *A, index_prev2 );
          Broadcast->doImport(*TopA_j, importer, Tpetra::INSERT);
          {
+         Broadcast->sync_host ();
          auto b = Broadcast->getLocalViewHost();
          for(i=0;i<j+1;i++) (*R)(i,j) = b(i,0);                        // One broadcast
          // Setting the top j-1 elements in v_j to zero
+         A->sync_host ();
+         A->modify_host ();
          auto a = A->getLocalViewHost();
          if( startingp <= j ){ 
             if( endingp < j ){
-               for(i=0;i<mloc;i++){ a(i,j) = 0.0e+00; }
+               for(i=0;i<mloc;i++){ a(i,j) = zero; }
             } else {
-               for(i=0;i<j-startingp+1;i++){ a(i,j) = 0.0e+00; } 
+               for(i=0;i<j-startingp+1;i++){ a(i,j) = zero; } 
             }
          }
+         A->modify_device ();
          }
 
          MVT::MvDot( *a_j, *a_j, dot );                               // Two AllReduce
@@ -268,14 +289,25 @@ printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
          norma = sqrt( dot[0]  + (*R)(j,j) * (*R)(j,j) );
 
          (*R)(j,j) = ( (*R)(j,j) > 0 ) ? ( (*R)(j,j) + norma ) : ( (*R)(j,j) - norma );
-         (*T)(j,j) = (2.0e+00) / ( (1.0e+00) + norma2 / ( (*R)(j,j) * (*R)(j,j) ) );
+         (*T)(j,j) = two / ( one + norma2 / ( (*R)(j,j) * (*R)(j,j) ) );
          MVT::MvScale( *a_j, ( 1 / (*R)(j,j) ) );
          (*R)(j,j) = ( (*R)(j,j) > 0 ) ? ( - norma ) : ( + norma );
          {
          if( startingp <= j && endingp >= j ){
-            auto a = A->getLocalViewHost();
             k = j-startingp;
-            a(k,j) = 1.0e+00;
+            #if 1
+            A->sync_host ();
+            A->modify_host ();
+            auto a = A->getLocalViewHost();
+            a(k,j) = one;
+            A->sync_device ();
+            #else
+            A->sync_device ();
+            A->modify_device ();
+            auto a = A->getLocalViewDevice();
+            auto akj = Kokkos::subview (a, range_type (k, k+1), range_type (j, j+1));
+            Kokkos::deep_copy (akj, one);
+            #endif
          }
          }
 
@@ -284,25 +316,28 @@ printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
          MVT::MvScale( *q_j, -(*T)(j,j) );
          {
          if( startingp <= j ){ 
+            Q->sync_host ();
+            Q->modify_host ();
             auto q = Q->getLocalViewHost();
             if( endingp >= j ){
-               for(i=0;i<j-startingp;i++){ q(i,j) = 0.0e+00; }
+               for(i=0;i<j-startingp;i++){ q(i,j) = zero; }
                k = j-startingp;
-               q(k,j) = 1.0e+00 - (*T)(j,j);
+               q(k,j) = one - (*T)(j,j);
             } else { 
-               for(i=0;i<mloc;i++){ q(i,j) = 0.0e+00; }
+               for(i=0;i<mloc;i++){ q(i,j) = zero; }
             }
+            Q->sync_device ();
          }
          }
 
-	 for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
-         MVT::MvTransMv( (+1.0e+00), *A_j, *q_j, *work );            // Three AllReduce
+	 for(i=0;i<j;i++) (*work)(i,0) = zero; 
+         MVT::MvTransMv( one, *A_j, *q_j, *work );            // Three AllReduce
          blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*work)(0,0), 1 ); 
-         MVT::MvTimesMatAddMv( (-1.0e+00), *A_j, *work, (+1.0e+00), *q_j );    
+         MVT::MvTimesMatAddMv( -one, *A_j, *work, one, *q_j );    
  
          // Step 4: Construct T_{1:j-1,j} = -\tau_j T_{1:j-1,1:j-1} V_{1:j-1}^T v_j
-         for(i=0;i<j;i++) (*work)(i,0) = 0.0e+00; 
-         MVT::MvTransMv( (+1.0e+00), *A_j, *a_j, *work );             // Four AllReduce
+         for(i=0;i<j;i++) (*work)(i,0) = zero; 
+         MVT::MvTransMv( one, *A_j, *a_j, *work );             // Four AllReduce
          for(i=0;i<j;i++) (*T)(i,j) = (*work)(i,0);
          blas.SCAL( j, -(*T)(j,j), &(*T)(0,j), 1 );
          blas.TRMV( Teuchos::UPPER_TRI, Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG, j, &(*T)(0,0), ldt, &(*T)(0,j), 1 );
@@ -322,19 +357,19 @@ printf("%3d, %3d, %3d, %3d\n",my_rank,mloc,startingp,endingp);
       orth_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) ); 
       // Orthogonality Check
       orth_check->putScalar();
-      MVT::MvTransMv( (+1.0e+00), *Q, *Q, *orth_check );
-      for(i=0;i<n;i++){(*orth_check)(i,i) =  1.0e+00 - (*orth_check)(i,i);}
+      MVT::MvTransMv( one, *Q, *Q, *orth_check );
+      for(i=0;i<n;i++){(*orth_check)(i,i) =  one - (*orth_check)(i,i);}
       orth = orth_check->normFrobenius();
       // Representativity check
-      MVT::MvTimesMatAddMv( (1.0e+00), *Q, *R, (0.0e+00), *repres_check );
-      MVT::MvAddMv( (1.0e+00), *Acpy, (-1.0e+00), *repres_check, *Q );
+      MVT::MvTimesMatAddMv( one, *Q, *R, zero, *repres_check );
+      MVT::MvAddMv( one, *Acpy, -one, *repres_check, *Q );
       MVT::MvNorm(*Q,dot,Belos::TwoNorm);
       for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
       repres = sqrt(dot[0]); 
    }
 
    if( my_rank == 0 ){    
-      printf("m = %3d, n = %3d, num_procs = %3d\n",m,n,pool_size);
+      std::cout << "m = " << m << ", n = " << n << ", num_procs = " << pool_size << std::endl;
       if( Testing ) printf("|| I - Q'Q ||        = %3.3e\n", orth);
       if( Testing ) printf("|| A - QR || / ||A|| = %3.3e \n", repres/nrmA);
    }
