@@ -41,6 +41,12 @@ TRIBITS_ADD_EXECUTABLE(
 )
 
 TRIBITS_ADD_EXECUTABLE(
+   Trilinos_mpi_mvaxpy
+   SOURCES Trilinos_mpi_mvaxpy.cpp
+   COMM serial mpi
+)
+
+TRIBITS_ADD_EXECUTABLE(
    Trilinos_mpi_mvdot
    SOURCES Trilinos_mpi_mvdot.cpp
    COMM serial mpi
