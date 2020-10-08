@@ -182,11 +182,7 @@ int main(int argc, char *argv[]) {
       startingp = ( m - ( pool_size - (my_rank) ) * mloc ); 
    } endingp = startingp + mloc - 1;  
 
-   for( j=0; j<n; j++){
-
-      if( j == 0 ){
-
-      }
+   for( j=1; j<n; j++){
 
       if( j == 1 ){
 
