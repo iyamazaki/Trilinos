@@ -35,6 +35,12 @@ TRIBITS_ADD_EXECUTABLE_AND_TEST(
 ENDIF()
 
 TRIBITS_ADD_EXECUTABLE(
+   nonsymm_matrix 
+   SOURCES nonsymm_matrix.cpp
+   COMM serial mpi
+)
+
+TRIBITS_ADD_EXECUTABLE(
    Trilinos_mpi_mvtimemataddmv
    SOURCES Trilinos_mpi_mvtimemataddmv.cpp
    COMM serial mpi
