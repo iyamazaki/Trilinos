@@ -71,10 +71,23 @@ TRIBITS_ADD_EXECUTABLE(
 )
 
 TRIBITS_ADD_EXECUTABLE(
+   Trilinos_mpi_profile_hh_lvl2
+   SOURCES Trilinos_mpi_profile_hh_lvl2.cpp
+   COMM serial mpi
+)
+
+TRIBITS_ADD_EXECUTABLE(
    Trilinos_mpi_hh_lvl1_manysynch
    SOURCES Trilinos_mpi_hh_lvl1_manysynch.cpp
    COMM serial mpi
 )
+
+TRIBITS_ADD_EXECUTABLE(
+   Trilinos_mpi_profile_hh_lvl1
+   SOURCES Trilinos_mpi_profile_hh_lvl1.cpp
+   COMM serial mpi
+)
+
 
 TRIBITS_ADD_EXECUTABLE(
    Trilinos_mpi_hh_lvl2_foursynch

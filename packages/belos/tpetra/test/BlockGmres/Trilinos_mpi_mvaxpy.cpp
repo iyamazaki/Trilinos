@@ -108,7 +108,8 @@ int main(int argc, char *argv[]) {
 #endif
 
    for( j=0; j<n; j++){
-         MVT::MvTimesMatAddMv( (-1.0e+00), *x, *work, (+1.0e+00), *y );      
+//         MVT::MvTimesMatAddMv( (-1.0e+00), *x, *work, (+1.0e+00), *y );      
+         MVT::MvAddMv( (1.0e+00), *x, (+1.0e+00), *y, *x );      
    }
  
    } // end timer scope guard (i.e. Stop timing.)
