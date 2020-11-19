@@ -35,8 +35,8 @@ TRIBITS_ADD_EXECUTABLE_AND_TEST(
 ENDIF()
 
 TRIBITS_ADD_EXECUTABLE(
-   nonsymm_martrix
-   SOURCES nonsymm_martrix.cpp
+   nonsymm_matrix
+   SOURCES nonsymm_matrix.cpp
    COMM serial mpi
 )
 
