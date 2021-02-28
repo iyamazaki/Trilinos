@@ -66,18 +66,23 @@ int main(int argc, char *argv[]) {
       std::cout << "Total number of processes: " << pool_size << std::endl;
    }
 
-   int i, j, k, ldr, ldt;
+   int i, j;
    int Testing, seed, numrhs, m, n;
-   int endingp, startingp;
-   double norma, norma2, tmp; 
-   size_t mloc, offset, local_m;
-   MagnitudeType orth, repres, nrmA;
+   double tmp; 
+   const double one (1.0);
+   const double zero (0.0);
+   MagnitudeType orth(0.0), repres(0.0), nrmA(0.0);
    
    ////////////////////////////////////////////////////////////////
    ////////////////////////////////////////////////////////////////
 
+   int ntests = 2;
    m = 20000; n = 50; Testing = 0;
    for( i = 1; i < argc; i++ ) {
+      if( strcmp( argv[i], "-ntests" ) == 0 ) {
+         ntests = atoi(argv[i+1]);
+         i++;
+      }
       if( strcmp( argv[i], "-m" ) == 0 ) {
          m = atoi(argv[i+1]);
          i++;
@@ -94,6 +99,7 @@ int main(int argc, char *argv[]) {
 
    numrhs = n;
 
+for (int test = 0; test < ntests; test++) {
    RCP<const map_type> map = rcp(new map_type (m, indexBase, comm, Tpetra::GloballyDistributed));
    RCP<MV> Q = rcp( new MV(map,numrhs) );
    RCP<MV> A = rcp( new MV(map,numrhs) );
@@ -104,10 +110,7 @@ int main(int argc, char *argv[]) {
    RCP<MV> q_jm1;
    RCP<MV> q_jnew;
 
-   mloc = Q->getLocalLength();
    m = MVT::GetGlobalLength(*Q);
-   const Tpetra::global_size_t numGlobalIndices = m;
-   ldr = n, ldt = n;
    seed = my_rank*m*m; srand(seed);
 
    ////////////////////////////////////////////////////////////////
@@ -181,15 +184,6 @@ int main(int argc, char *argv[]) {
    Teuchos::TimeMonitor slvtimer(*timerIRSolve_);
 #endif
 
-   // Getting starting point and ending point for each process
-   if( my_rank == 0 ){ 
-      startingp = 0; 
-   } else if( my_rank < m - pool_size*mloc  ){ 
-      startingp = ( m - ( pool_size - my_rank ) * mloc + 1 ); 
-   } else { 
-      startingp = ( m - ( pool_size - (my_rank) ) * mloc ); 
-   } endingp = startingp + mloc - 1;  
-
    for( j=0; j<n; j++){
 
       if( j == 0 ){
@@ -213,7 +207,7 @@ int main(int argc, char *argv[]) {
             Teuchos::TimeMonitor slvtimer(*timerIRSolve2_);
          #endif
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, work1 );        // One AllReduce
+         MVT::MvTransMv( one, *Q_j, *q_j, work1 );        // One AllReduce
 	 }
 
          (*R)(0,0) = sqrt( work1(0,0) );                 
@@ -225,7 +219,7 @@ int main(int argc, char *argv[]) {
            Teuchos::TimeMonitor slvtimer(*timerIRSolve1_);
         #endif
 
-	MVT::MvAddMv( 1.0e+00, *q_j2, (-(*R)(0,1)), *q_j, *q_j2 );
+	MVT::MvAddMv( one, *q_j2, (-(*R)(0,1)), *q_j, *q_j2 );
 	}
 
       }
@@ -251,16 +245,16 @@ int main(int argc, char *argv[]) {
             Teuchos::TimeMonitor slvtimer(*timerIRSolve2_);
          #endif
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, work1 );        // One AllReduce
+         MVT::MvTransMv( one, *Q_j, *q_j, work1 );        // One AllReduce
 	 }
 
          for(i=0;i<j;i++) (*R)(i,j) = work1(i,1); 
          (*R)(j-1,j-1) = work1(j-1,0);
 
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp += work1(i,0) * (*R)(i,j);
+         tmp = zero; for(i=0;i<j-1;i++) tmp += work1(i,0) * (*R)(i,j);
          (*R)(j-1,j) = (*R)(j-1,j) - tmp;
 
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp += work1(i,0) * work1(i,0);
+         tmp = zero; for(i=0;i<j-1;i++) tmp += work1(i,0) * work1(i,0);
          (*R)(j-1,j-1) = sqrt( (*R)(j-1,j-1) - tmp );
 
          for(i=0;i<j-1;i++) (*R)(i,j-1) = (*R)(i,j-1) + work1(i,0); 
@@ -275,15 +269,20 @@ int main(int argc, char *argv[]) {
             Teuchos::TimeMonitor slvtimer(*timerIRSolve3_);
          #endif
 
-         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j2, work2, (+1.0e+00), *q_j );  
+         //Kokkos::Timer timer;
+         //timer.reset();
+         MVT::MvTimesMatAddMv( -one, *Q_j2, work2, one, *q_j );  
+         //Kokkos::fence();
+         //double mvtime = timer.seconds();
+         //printf( " > %d: %e seconds\n",j,mvtime );
 	 }
-         MVT::MvScale( *q_jm1, ( 1 / (*R)(j-1,j-1) ) );
+         MVT::MvScale( *q_jm1, ( one / (*R)(j-1,j-1) ) );
 	 { //scope guard for timer
          #ifdef BELOS_TEUCHOS_TIME_MONITOR
             Teuchos::TimeMonitor slvtimer(*timerIRSolve1_);
          #endif
 
-         MVT::MvAddMv( 1.0e+00, *q_j2, (-(*R)(j-1,j)), *q_jm1, *q_j2 );
+         MVT::MvAddMv( one, *q_j2, (-(*R)(j-1,j)), *q_jm1, *q_j2 );
 	 }
 
       }
@@ -302,7 +301,7 @@ int main(int argc, char *argv[]) {
             Teuchos::TimeMonitor slvtimer(*timerIRSolve2_);
          #endif
 
-         MVT::MvTransMv( (+1.0e+00), *Q_j, *q_j, work1 ); 
+         MVT::MvTransMv( one, *Q_j, *q_j, work1 ); 
 	 }
 	 { //scope guard for timer
          #ifdef BELOS_TEUCHOS_TIME_MONITOR
@@ -311,17 +310,22 @@ int main(int argc, char *argv[]) {
          MVT::MvDot( *q_j, *q_j, dot );
 	 }
 
-         tmp = 0.0e+00; for(i=0;i<j-1;i++) tmp = tmp + ( work1(i,0) * work1(i,0) );
+         tmp = zero; for(i=0;i<j-1;i++) tmp = tmp + ( work1(i,0) * work1(i,0) );
          (*R)(j,j) = sqrt( dot[0] - tmp );
-	 	 { //scope guard for timer
+ 	 { //scope guard for timer
          #ifdef BELOS_TEUCHOS_TIME_MONITOR
             Teuchos::TimeMonitor slvtimer(*timerIRSolve3_);
          #endif
 
-         MVT::MvTimesMatAddMv( (-1.0e+00), *Q_j, work1, (+1.0e+00), *q_j );  
-		 }
+         //Kokkos::Timer timer;
+         //timer.reset();
+         MVT::MvTimesMatAddMv( -one, *Q_j, work1, one, *q_j );  
+         //Kokkos::fence();
+         //double mvtime = timer.seconds();
+         //printf( " > %d: %e seconds\n",j,mvtime );
+	 }
          for(i=0;i<j-1;i++) (*R)(i,j) = (*R)(i,j) + work1(i,0);
-         MVT::MvScale( *q_j, ( 1 / (*R)(j,j) ) );
+         MVT::MvScale( *q_j, ( one / (*R)(j,j) ) );
 
       }
 
@@ -329,21 +333,25 @@ int main(int argc, char *argv[]) {
 
    } //end timer scope guard (i.e. Stop timing.)
    //Print final timing details:
-   Teuchos::TimeMonitor::summarize( printer_->stream(Belos::TimingDetails) );
-   
+   if (test == 0) {
+     Teuchos::TimeMonitor::summarize( printer_->stream(Belos::TimingDetails) );
+     Teuchos::TimeMonitor::zeroOutTimers ();  
+   } else if (test == ntests-1) {
+     Teuchos::TimeMonitor::summarize( printer_->stream(Belos::TimingDetails) );
+   }
 
    if( Testing ){  
       // Orthogonality Check
       Teuchos::RCP<Teuchos::SerialDenseMatrix<int,ScalarType> > orth_check; 
       orth_check = Teuchos::rcp( new Teuchos::SerialDenseMatrix<int,ScalarType>(n,n,true) );
       orth_check->putScalar();
-      MVT::MvTransMv( (+1.0e+00), *Q, *Q, *orth_check );
-      for(i=0;i<n;i++){(*orth_check)(i,i) =  1.0e+00 - (*orth_check)(i,i);}
+      MVT::MvTransMv( one, *Q, *Q, *orth_check );
+      for(i=0;i<n;i++){(*orth_check)(i,i) = one - (*orth_check)(i,i);}
       orth = orth_check->normFrobenius();
       // Representativity check
       RCP<MV> repres_check  = rcp( new MV(map,numrhs) );
-      MVT::MvTimesMatAddMv( (1.0e+00), *Q, *R, (0.0e+00), *repres_check );
-      MVT::MvAddMv( (1.0e+00), *A, (-1.0e+00), *repres_check, *Q );
+      MVT::MvTimesMatAddMv( one, *Q, *R, zero, *repres_check );
+      MVT::MvAddMv( one, *A, -one, *repres_check, *Q );
       MVT::MvNorm(*Q,dot,Belos::TwoNorm);
       for(i=0;i<n;i++){ dot[i] = dot[i] * dot[i]; if(i!=0){ dot[0] += dot[i]; } } 
       repres = sqrt(dot[0]); 
@@ -352,11 +360,12 @@ int main(int argc, char *argv[]) {
          printf("|| I - Q'Q || = %3.3e, ", orth);
          printf("|| A - QR || / ||A|| = %3.3e \n", repres/nrmA);
       } 
-   } else {
+   } else if (test == ntests-1) {
       if( my_rank == 0 ) printf("m = %3d, n = %3d\n",m,n);
    }
  
    }
+}
    return 0;
 
 }
