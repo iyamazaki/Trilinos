@@ -1,41 +1,17 @@
 /*
- * Copyright(C) 1999-2017, 2020 National Technology & Engineering Solutions
+ * Copyright(C) 1999-2020 National Technology & Engineering Solutions
  * of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
  * NTESS, the U.S. Government retains certain rights in this software.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *
- *     * Redistributions in binary form must reproduce the above
- *       copyright notice, this list of conditions and the following
- *       disclaimer in the documentation and/or other materials provided
- *       with the distribution.
- *
- *     * Neither the name of NTESS nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * See packages/seacas/LICENSE for details
  */
 #include "Ioss_CodeTypes.h"
 #include "Ioss_FileInfo.h"
 #include "Ioss_GetLongOpt.h" // for GetLongOption, etc
 #include "Ioss_Utils.h"      // for Utils
 #include "shell_interface.h"
+#include "tokenize.h"
+
 #include <cctype>  // for tolower
 #include <cstddef> // for nullptr
 #include <cstdlib> // for exit, strtod, EXIT_SUCCESS, etc
@@ -44,8 +20,6 @@
 #include <iostream> // for operator<<, basic_ostream, etc
 #include <string>   // for string, char_traits
 #include <vector>   // for vector
-
-#define NPOS std::string::npos
 
 namespace {
   std::string get_type_from_file(const std::string &filename)
@@ -65,7 +39,10 @@ namespace {
   }
 } // namespace
 
-IOShell::Interface::Interface() { enroll_options(); }
+IOShell::Interface::Interface(const std::string &app_version) : version(app_version)
+{
+  enroll_options();
+}
 
 IOShell::Interface::~Interface() = default;
 
@@ -135,16 +112,28 @@ void IOShell::Interface::enroll_options()
                   nullptr);
 
   options_.enroll("compress", Ioss::GetLongOption::MandatoryValue,
-                  "Specify the hdf5 compression level [0..9] to be used on the output file.",
+                  "Specify the hdf5 zlib compression level [0..9] or szip [even, 4..32] to be used "
+                  "on the output file.",
                   nullptr);
 
-#if defined(PARALLEL_AWARE_EXODUS)
+  options_.enroll(
+      "zlib", Ioss::GetLongOption::NoValue,
+      "Use the Zlib / libz compression method if compression is enabled (default) [exodus only].",
+      nullptr);
+
+  options_.enroll(
+      "szip", Ioss::GetLongOption::NoValue,
+      "Use the SZip library if compression is enabled. Not as portable as zlib [exodus only]",
+      nullptr);
+
+#if defined(SEACAS_HAVE_MPI)
   options_.enroll(
       "compose", Ioss::GetLongOption::OptionalValue,
       "If no argument, specify single-file output; if 'external', then file-per-processor.\n"
       "\t\tAll other options are ignored and just exist for backward-compatibility",
       nullptr, "true");
 
+#if !defined(NO_ZOLTAN_SUPPORT)
   options_.enroll(
       "rcb", Ioss::GetLongOption::NoValue,
       "Use recursive coordinate bisection method to decompose the input mesh in a parallel run.",
@@ -158,7 +147,9 @@ void IOShell::Interface::enroll_options()
       "hsfc", Ioss::GetLongOption::NoValue,
       "Use hilbert space-filling curve method to decompose the input mesh in a parallel run.",
       nullptr);
+#endif
 
+#if !defined(NO_PARMETIS_SUPPORT)
   options_.enroll(
       "metis_sfc", Ioss::GetLongOption::NoValue,
       "Use the metis space-filling-curve method to decompose the input mesh in a parallel run.",
@@ -173,6 +164,7 @@ void IOShell::Interface::enroll_options()
                   "Use the metis kway graph-based method with geometry speedup to decompose the "
                   "input mesh in a parallel run.",
                   nullptr);
+#endif
 
   options_.enroll("linear", Ioss::GetLongOption::NoValue,
                   "Use the linear method to decompose the input mesh in a parallel run.\n"
@@ -194,21 +186,17 @@ void IOShell::Interface::enroll_options()
                   "Files are decomposed externally into a file-per-processor in a parallel run.",
                   nullptr);
 
+#if defined(SEACAS_HAVE_CGNS)
   options_.enroll(
       "add_processor_id_field", Ioss::GetLongOption::NoValue,
       "For CGNS, add a cell-centered field whose value is the processor id of that cell", nullptr);
+#endif
 
   options_.enroll("serialize_io_size", Ioss::GetLongOption::MandatoryValue,
                   "Number of processors that can perform simultaneous IO operations in "
                   "a parallel run; 0 to disable",
                   nullptr);
 #endif
-
-  options_.enroll("file_per_state", Ioss::GetLongOption::NoValue,
-                  "put transient data for each timestep in separate file (EXPERIMENTAL)", nullptr);
-
-  options_.enroll("reverse", Ioss::GetLongOption::NoValue,
-                  "define CGNS zones in reverse order. Used for testing (TEST)", nullptr);
 
   options_.enroll(
       "split_times", Ioss::GetLongOption::MandatoryValue,
@@ -238,6 +226,14 @@ void IOShell::Interface::enroll_options()
 
   options_.enroll("Minimum_Time", Ioss::GetLongOption::MandatoryValue,
                   "Minimum time on input database to transfer to output database", nullptr);
+
+  options_.enroll("select_times", Ioss::GetLongOption::MandatoryValue,
+                  "comma-separated list of times that should be transferred to output database",
+                  nullptr);
+
+  options_.enroll("delete_timesteps", Ioss::GetLongOption::NoValue,
+                  "Do not transfer any timesteps or transient data to the output database",
+                  nullptr);
 
   options_.enroll("append_after_time", Ioss::GetLongOption::MandatoryValue,
                   "add steps on input database after specified time on output database", nullptr);
@@ -273,7 +269,7 @@ void IOShell::Interface::enroll_options()
 
   options_.enroll("retain_empty_blocks", Ioss::GetLongOption::NoValue,
                   "If any empty element blocks on input file, keep them and write to output file.\n"
-		  "\t\tDefault is to ignore empty blocks. based on basename and suffix.",
+                  "\t\tDefault is to ignore empty blocks.",
                   nullptr);
 
 #ifdef SEACAS_HAVE_KOKKOS
@@ -289,6 +285,14 @@ void IOShell::Interface::enroll_options()
                   "POINTER");
 #endif
 
+  options_.enroll("native_variable_names", Ioss::GetLongOption::NoValue,
+                  "Do not lowercase variable names and replace spaces with underscores.\n"
+                  "\t\tVariable names are left as they appear in the input mesh file",
+                  nullptr);
+
+  options_.enroll("boundary_sideset", Ioss::GetLongOption::NoValue,
+                  "Output a sideset for all boundary faces of the model", nullptr);
+
   options_.enroll(
       "memory_read", Ioss::GetLongOption::NoValue,
       "EXPERIMENTAL: file read into memory by netcdf library; ioss accesses memory version",
@@ -299,20 +303,17 @@ void IOShell::Interface::enroll_options()
       "EXPERIMENTAL: file written to memory, netcdf library streams to disk at file close",
       nullptr);
 
-  options_.enroll("native_variable_names", Ioss::GetLongOption::NoValue,
-                  "Do not lowercase variable names and replace spaces with underscores.\n"
-                  "\t\tVariable names are left as they appear in the input mesh file",
-                  nullptr);
+  options_.enroll("file_per_state", Ioss::GetLongOption::NoValue,
+                  "put transient data for each timestep in separate file (EXPERIMENTAL)", nullptr);
 
-  options_.enroll("delete_timesteps", Ioss::GetLongOption::NoValue,
-                  "Do not transfer any timesteps or transient data to the output database",
-                  nullptr);
+  options_.enroll("reverse", Ioss::GetLongOption::NoValue,
+                  "define CGNS zones in reverse order. Used for testing (TEST)", nullptr);
 
   options_.enroll("copyright", Ioss::GetLongOption::NoValue, "Show copyright and license data.",
                   nullptr);
 }
 
-bool IOShell::Interface::parse_options(int argc, char **argv)
+bool IOShell::Interface::parse_options(int argc, char **argv, int my_processor)
 {
   // Get options from environment variable also...
   char *options = getenv("IO_SHELL_OPTIONS");
@@ -331,15 +332,17 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
   }
 
   if (options_.retrieve("help") != nullptr) {
-    options_.usage(std::cerr);
-    fmt::print(stderr, "\n\tCan also set options via IO_SHELL_OPTIONS environment variable.\n\n");
-    fmt::print(stderr, "\t->->-> Send email to gdsjaar@sandia.gov for {} support.<-<-<-\n",
-               options_.program_name());
+    if (my_processor == 0) {
+      options_.usage(std::cerr);
+      fmt::print(stderr, "\n\tCan also set options via IO_SHELL_OPTIONS environment variable.\n\n");
+      fmt::print(stderr, "\t->->-> Send email to gdsjaar@sandia.gov for {} support.<-<-<-\n",
+                 options_.program_name());
+    }
     exit(EXIT_SUCCESS);
   }
 
   if (options_.retrieve("version") != nullptr) {
-    // Version is printed up front, just exit...
+    fmt::print(stderr, "Version: {}\n", version);
     exit(0);
   }
 
@@ -358,17 +361,64 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
   }
 
   shuffle = (options_.retrieve("shuffle") != nullptr);
+  if (options_.retrieve("szip") != nullptr) {
+    szip = true;
+    zlib = false;
+  }
+  zlib = (options_.retrieve("zlib") != nullptr);
+
+  if (szip && zlib) {
+    if (my_processor == 0) {
+      fmt::print(stderr, "ERROR: Only one of 'szip' or 'zlib' can be specified.\n");
+    }
+    return false;
+  }
 
   {
     const char *temp = options_.retrieve("compress");
     if (temp != nullptr) {
       compression_level = std::strtol(temp, nullptr, 10);
+
+      if (zlib) {
+        if (compression_level < 0 || compression_level > 9) {
+          if (my_processor == 0) {
+            fmt::print(stderr,
+                       "ERROR: Bad compression level {}, valid value is between 0 and 9 inclusive "
+                       "for gzip compression.\n",
+                       compression_level);
+          }
+          return false;
+        }
+      }
+      else if (szip) {
+        if (compression_level % 2 != 0) {
+          if (my_processor == 0) {
+            fmt::print(
+                stderr,
+                "ERROR: Bad compression level {}. Must be an even value for szip compression.\n",
+                compression_level);
+          }
+          return false;
+        }
+        if (compression_level < 4 || compression_level > 32) {
+          if (my_processor == 0) {
+            fmt::print(stderr,
+                       "ERROR: Bad compression level {}, valid value is between 4 and 32 inclusive "
+                       "for szip compression.\n",
+                       compression_level);
+          }
+          return false;
+        }
+      }
     }
   }
 
-#if defined(PARALLEL_AWARE_EXODUS)
+#if defined(SEACAS_HAVE_MPI)
+#if defined(SEACAS_HAVE_CGNS)
   add_processor_id_field = (options_.retrieve("add_processor_id_field") != nullptr);
+#endif
 
+#if !defined(NO_ZOLTAN_SUPPORT)
   if (options_.retrieve("rcb") != nullptr) {
     decomp_method = "RCB";
   }
@@ -380,7 +430,9 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
   if (options_.retrieve("hsfc") != nullptr) {
     decomp_method = "HSFC";
   }
+#endif
 
+#if !defined(NO_PARMETIS_SUPPORT)
   if (options_.retrieve("metis_sfc") != nullptr) {
     decomp_method = "METIS_SFC";
   }
@@ -392,6 +444,7 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
   if (options_.retrieve("kway_geom") != nullptr) {
     decomp_method = "KWAY_GEOM";
   }
+#endif
 
   if (options_.retrieve("linear") != nullptr) {
     decomp_method = "LINEAR";
@@ -448,6 +501,7 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
   lower_case_variable_names = (options_.retrieve("native_variable_names") == nullptr);
   disable_field_recognition = (options_.retrieve("disable_field_recognition") != nullptr);
   retain_empty_blocks       = (options_.retrieve("retain_empty_blocks") != nullptr);
+  boundary_sideset          = (options_.retrieve("boundary_sideset") != nullptr);
 
   {
     const char *temp = options_.retrieve("in_type");
@@ -463,7 +517,9 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
     }
   }
 
-#if defined(PARALLEL_AWARE_EXODUS)
+#if defined(SEACAS_HAVE_MPI)
+  // Should be only for parallel-aware-exodus, but not sure yet how to avoid the coupling to get
+  // that define here
   {
     const char *temp = options_.retrieve("compose");
     if (temp != nullptr) {
@@ -527,13 +583,15 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
 #endif
 
       if (data_storage_type == 0) {
-        fmt::print(stderr, "ERROR: Option data_storage must be one of\n");
+        if (my_processor == 0) {
+          fmt::print(stderr, "ERROR: Option data_storage must be one of\n");
 #ifdef SEACAS_HAVE_KOKKOS
-        fmt::print(stderr, "       POINTER, STD_VECTOR, KOKKOS_VIEW_1D, KOKKOS_VIEW_2D, or "
-                           "KOKKOS_VIEW_2D_LAYOUTRIGHT_HOSTSPACE\n");
+          fmt::print(stderr, "       POINTER, STD_VECTOR, KOKKOS_VIEW_1D, KOKKOS_VIEW_2D, or "
+                             "KOKKOS_VIEW_2D_LAYOUTRIGHT_HOSTSPACE\n");
 #else
-        fmt::print(stderr, "       POINTER, or STD_VECTOR\n");
+          fmt::print(stderr, "       POINTER, or STD_VECTOR\n");
 #endif
+        }
         return false;
       }
     }
@@ -550,6 +608,18 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
     const char *temp = options_.retrieve("Minimum_Time");
     if (temp != nullptr) {
       minimum_time = std::strtod(temp, nullptr);
+    }
+  }
+
+  {
+    const char *temp = options_.retrieve("select_times");
+    if (temp != nullptr) {
+      auto time_str = Ioss::tokenize(std::string(temp), ",");
+      for (const auto &str : time_str) {
+        auto time = std::stod(str);
+        selected_times.push_back(time);
+      }
+      std::sort(selected_times.begin(), selected_times.end());
     }
   }
 
@@ -582,33 +652,36 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
   }
 
   if (options_.retrieve("copyright") != nullptr) {
-    fmt::print(stderr, "\n"
-                       "Copyright(C) 1999-2017 National Technology & Engineering Solutions\n"
-                       "of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with\n"
-                       "NTESS, the U.S. Government retains certain rights in this software.\n\n"
-                       "Redistribution and use in source and binary forms, with or without\n"
-                       "modification, are permitted provided that the following conditions are\n"
-                       "met:\n\n "
-                       "    * Redistributions of source code must retain the above copyright\n"
-                       "      notice, this list of conditions and the following disclaimer.\n\n"
-                       "    * Redistributions in binary form must reproduce the above\n"
-                       "      copyright notice, this list of conditions and the following\n"
-                       "      disclaimer in the documentation and/or other materials provided\n"
-                       "      with the distribution.\n\n"
-                       "    * Neither the name of NTESS nor the names of its\n"
-                       "      contributors may be used to endorse or promote products derived\n"
-                       "      from this software without specific prior written permission.\n\n"
-                       "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n"
-                       "\" AS IS \" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n"
-                       "LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n"
-                       "A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n"
-                       "OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n"
-                       "SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n"
-                       "LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n"
-                       "DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n"
-                       "THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n"
-                       "(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n"
-                       "OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n\n");
+    if (my_processor == 0) {
+      fmt::print(stderr,
+                 "\n"
+                 "Copyright(C) 1999-2017 National Technology & Engineering Solutions\n"
+                 "of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with\n"
+                 "NTESS, the U.S. Government retains certain rights in this software.\n\n"
+                 "Redistribution and use in source and binary forms, with or without\n"
+                 "modification, are permitted provided that the following conditions are\n"
+                 "met:\n\n "
+                 "    * Redistributions of source code must retain the above copyright\n"
+                 "      notice, this list of conditions and the following disclaimer.\n\n"
+                 "    * Redistributions in binary form must reproduce the above\n"
+                 "      copyright notice, this list of conditions and the following\n"
+                 "      disclaimer in the documentation and/or other materials provided\n"
+                 "      with the distribution.\n\n"
+                 "    * Neither the name of NTESS nor the names of its\n"
+                 "      contributors may be used to endorse or promote products derived\n"
+                 "      from this software without specific prior written permission.\n\n"
+                 "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n"
+                 "\" AS IS \" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n"
+                 "LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n"
+                 "A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n"
+                 "OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n"
+                 "SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n"
+                 "LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n"
+                 "DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n"
+                 "THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n"
+                 "(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n"
+                 "OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n\n");
+    }
     exit(EXIT_SUCCESS);
   }
 
@@ -620,7 +693,9 @@ bool IOShell::Interface::parse_options(int argc, char **argv)
     outputFile = argv[option_index];
   }
   else {
-    fmt::print(stderr, "\nERROR: input and output filename not specified\n\n");
+    if (my_processor == 0) {
+      fmt::print(stderr, "\nERROR: input and output filename not specified\n\n");
+    }
     return false;
   }
 

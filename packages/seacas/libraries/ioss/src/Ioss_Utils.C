@@ -1,38 +1,15 @@
-// Copyright(C) 1999-2017, 2020 National Technology & Engineering Solutions
+// Copyright(C) 1999-2021 National Technology & Engineering Solutions
 // of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
 // NTESS, the U.S. Government retains certain rights in this software.
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-//       notice, this list of conditions and the following disclaimer.
-//
-//     * Redistributions in binary form must reproduce the above
-//       copyright notice, this list of conditions and the following
-//       disclaimer in the documentation and/or other materials provided
-//       with the distribution.
-//
-//     * Neither the name of NTESS nor the names of its
-//       contributors may be used to endorse or promote products derived
-//       from this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// See packages/seacas/LICENSE for details
 
 #include <Ioss_Assembly.h>
 #include <Ioss_Blob.h>
 #include <Ioss_CodeTypes.h>
+#include <Ioss_CommSet.h>
+#include <Ioss_DataPool.h>
+#include <Ioss_FaceGenerator.h>
 #include <Ioss_MeshCopyOptions.h>
 #include <Ioss_Utils.h>
 #include <algorithm>
@@ -69,8 +46,9 @@
 
 // For memory utilities...
 #if defined(_WIN32)
-#include <psapi.h>
 #include <windows.h>
+#include <psapi.h>
+#undef max
 
 #elif defined(__unix__) || defined(__unix) || defined(unix) ||                                     \
     (defined(__APPLE__) && defined(__MACH__))
@@ -106,45 +84,7 @@ std::string   Ioss::Utils::m_preWarningText = "\nIOSS WARNING: ";
 
 // For copy_database...
 namespace {
-  auto initial_time = std::chrono::high_resolution_clock::now();
-
-  size_t max_field_size = 0;
-
-  struct DataPool
-  {
-    // Data space shared by most field input/output routines...
-    std::vector<char>    data;
-    std::vector<int>     data_int;
-    std::vector<int64_t> data_int64;
-    std::vector<double>  data_double;
-    std::vector<Complex> data_complex;
-#ifdef SEACAS_HAVE_KOKKOS
-    Kokkos::View<char *>    data_view_char;
-    Kokkos::View<int *>     data_view_int;
-    Kokkos::View<int64_t *> data_view_int64;
-    Kokkos::View<double *>  data_view_double;
-    // Kokkos::View<Kokkos_Complex *> data_view_complex cannot be a global variable,
-    // Since Kokkos::initialize() has not yet been called. Also, a Kokkos:View cannot
-    // have type std::complex entities.
-    Kokkos::View<char **>    data_view_2D_char;
-    Kokkos::View<int **>     data_view_2D_int;
-    Kokkos::View<int64_t **> data_view_2D_int64;
-    Kokkos::View<double **>  data_view_2D_double;
-    // Kokkos::View<Kokkos_Complex **> data_view_2D_complex cannot be a global variable,
-    // Since Kokkos::initialize() has not yet been called. Also, a Kokkos:View cannot
-    // have type std::complex entities.
-    Kokkos::View<char **, Kokkos::LayoutRight, Kokkos::HostSpace> data_view_2D_char_layout_space;
-    Kokkos::View<int **, Kokkos::LayoutRight, Kokkos::HostSpace>  data_view_2D_int_layout_space;
-    Kokkos::View<int64_t **, Kokkos::LayoutRight, Kokkos::HostSpace>
-        data_view_2D_int64_layout_space;
-    Kokkos::View<double **, Kokkos::LayoutRight, Kokkos::HostSpace>
-        data_view_2D_double_layout_space;
-    // Kokkos::View<Kokkos_Complex **, Kokkos::LayoutRight, Kokkos::HostSpace>
-    // data_view_2D_complex_layout_space cannot be a global variable,
-    // Since Kokkos::initialize() has not yet been called. Also, a Kokkos:View cannot
-    // have type std::complex entities.
-#endif
-  };
+  auto initial_time = std::chrono::steady_clock::now();
 
   void show_step(int istep, double time, const Ioss::MeshCopyOptions &options, int rank);
 
@@ -265,19 +205,64 @@ namespace {
     }
   }
 
+  template <typename T>
+  size_t calculate_maximum_field_size(const std::vector<T> &entities, size_t max_field_size)
+  {
+    size_t max_size = max_field_size;
+    for (const auto &entity : entities) {
+      Ioss::NameList fields;
+      entity->field_describe(&fields);
+      for (const auto &field_name : fields) {
+        Ioss::Field field = entity->get_field(field_name);
+        max_size          = std::max(field.get_size(), max_size);
+      }
+    }
+    return max_size;
+  }
+
+  size_t calculate_maximum_field_size(const Ioss::Region &region)
+  {
+    size_t max_field_size = 0;
+    max_field_size        = calculate_maximum_field_size(region.get_node_blocks(), max_field_size);
+    max_field_size        = calculate_maximum_field_size(region.get_edge_blocks(), max_field_size);
+    max_field_size        = calculate_maximum_field_size(region.get_face_blocks(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_element_blocks(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_sidesets(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_nodesets(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_edgesets(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_facesets(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_elementsets(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_commsets(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_structured_blocks(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_assemblies(), max_field_size);
+    max_field_size = calculate_maximum_field_size(region.get_blobs(), max_field_size);
+    return max_field_size;
+  }
+
+  template <typename INT>
+  void output_boundary_sideset(Ioss::SideBlock *sb, const std::vector<Ioss::Face> &boundary,
+                               INT /* dummy */)
+  {
+    std::vector<INT> el_side;
+    el_side.reserve(boundary.size() * 2);
+    for (const auto &face : boundary) {
+      el_side.push_back(face.element[0] / 10);
+      el_side.push_back(face.element[0] % 10 + 1);
+    }
+    sb->put_field_data("element_side", el_side);
+  }
 } // namespace
 
 void Ioss::Utils::time_and_date(char *time_string, char *date_string, size_t length)
 {
-  time_t      calendar_time = time(nullptr);
-  auto *      lt            = std::localtime(&calendar_time);
-  std::string time          = fmt::format("{:%H:%M:%S}", *lt);
+  std::time_t t    = std::time(nullptr);
+  std::string time = fmt::format("{:%H:%M:%S}", fmt::localtime(t));
   std::string date;
   if (length >= 10) {
-    date = fmt::format("{:%Y/%m/%d}", *lt);
+    date = fmt::format("{:%Y/%m/%d}", fmt::localtime(t));
   }
   else {
-    date = fmt::format("{:%y/%m/%d}", *lt);
+    date = fmt::format("{:%y/%m/%d}", fmt::localtime(t));
   }
   copy_string(time_string, time, 9);
   copy_string(date_string, date, length + 1);
@@ -897,7 +882,7 @@ std::string Ioss::Utils::platform_information()
       fmt::format("Node: {0}, OS: {1} {2}, {3}, Machine: {4}", sys_info.nodename, sys_info.sysname,
                   sys_info.release, sys_info.version, sys_info.machine);
 #else
-  std::string                 info = "Node: Unknown, OS: Unknown, Machine: Unknown";
+  std::string info = "Node: Unknown, OS: Unknown, Machine: Unknown";
 #endif
   return info;
 }
@@ -907,10 +892,14 @@ size_t Ioss::Utils::get_memory_info()
   // Code from http://nadeausoftware.com/sites/NadeauSoftware.com/files/getRSS.c
   size_t memory_usage = 0;
 #if defined(_WIN32)
+#if 0
   /* Windows -------------------------------------------------- */
   PROCESS_MEMORY_COUNTERS info;
   GetProcessMemoryInfo(GetCurrentProcess(), &info, sizeof(info));
   memory_usage = (size_t)info.WorkingSetSize;
+#else
+  memory_usage = 0;
+#endif
 
 #elif defined(__APPLE__) && defined(__MACH__)
   kern_return_t               error;
@@ -971,10 +960,14 @@ size_t Ioss::Utils::get_hwm_memory_info()
   // Code from http://nadeausoftware.com/sites/NadeauSoftware.com/files/getRSS.c
   size_t memory_usage = 0;
 #if defined(_WIN32)
+#if 0
   /* Windows -------------------------------------------------- */
   PROCESS_MEMORY_COUNTERS info;
   GetProcessMemoryInfo(GetCurrentProcess(), &info, sizeof(info));
   memory_usage = (size_t)info.PeakWorkingSetSize;
+#else
+  memory_usage = 0;
+#endif
 
 #elif (defined(_AIX) || defined(__TOS__AIX__)) ||                                                  \
     (defined(__sun__) || defined(__sun) || defined(sun) && (defined(__SVR4) || defined(__svr4__)))
@@ -1005,10 +998,7 @@ size_t Ioss::Utils::get_hwm_memory_info()
 
 bool Ioss::Utils::block_is_omitted(Ioss::GroupingEntity *block)
 {
-  bool omitted = false;
-  if (block->property_exists("omitted")) {
-    omitted = (block->get_property("omitted").get_int() == 1);
-  }
+  bool omitted = block->get_optional_property("omitted", 0) == 1;
   return omitted;
 }
 
@@ -1140,7 +1130,7 @@ unsigned int Ioss::Utils::hash(const std::string &name)
 
 double Ioss::Utils::timer()
 {
-  auto now = std::chrono::high_resolution_clock::now();
+  auto now = std::chrono::steady_clock::now();
   return std::chrono::duration<double>(now - initial_time).count();
 }
 
@@ -1354,11 +1344,11 @@ void Ioss::Utils::generate_history_mesh(Ioss::Region *region)
     region->begin_mode(Ioss::STATE_DEFINE_MODEL);
 
     // Node Block
-    Ioss::NodeBlock *nb = new Ioss::NodeBlock(db, "nodeblock_1", 1, 3);
+    auto *nb = new Ioss::NodeBlock(db, "nodeblock_1", 1, 3);
     region->add(nb);
 
     // Element Block
-    Ioss::ElementBlock *eb = new Ioss::ElementBlock(db, "e1", "sphere", 1);
+    auto *eb = new Ioss::ElementBlock(db, "e1", "sphere", 1);
     eb->property_add(Ioss::Property("id", 1));
     eb->property_add(Ioss::Property("guid", 1));
     region->add(eb);
@@ -1425,6 +1415,95 @@ int Ioss::Utils::term_width()
   return cols != 0 ? cols : 100;
 }
 
+void Ioss::Utils::info_fields(const Ioss::GroupingEntity *ige, Ioss::Field::RoleType role,
+                              const std::string &header, const std::string &suffix)
+{
+  Ioss::NameList fields;
+  ige->field_describe(role, &fields);
+
+  if (fields.empty()) {
+    return;
+  }
+
+  if (!header.empty()) {
+    fmt::print("{}{}", header, suffix);
+  }
+  // Iterate through results fields and transfer to output
+  // database...
+  // Get max width of a name...
+  int max_width = 0;
+  for (const auto &field_name : fields) {
+    max_width = max_width > (int)field_name.length() ? max_width : field_name.length();
+  }
+
+  auto width = Ioss::Utils::term_width();
+  if (width == 0) {
+    width = 80;
+  }
+  int cur_out = 8; // Tab width...
+  if (!header.empty()) {
+    cur_out = header.size() + suffix.size() + 16; // Assume 2 tabs...
+  }
+  for (const auto &field_name : fields) {
+    const Ioss::VariableType *var_type   = ige->get_field(field_name).raw_storage();
+    int                       comp_count = var_type->component_count();
+    fmt::print("{1:>{0}s}:{2}  ", max_width, field_name, comp_count);
+    cur_out += max_width + 4;
+    if (cur_out + max_width >= width) {
+      fmt::print("\n\t");
+      cur_out = 8;
+    }
+  }
+  if (!header.empty()) {
+    fmt::print("\n");
+  }
+}
+
+void Ioss::Utils::info_property(const Ioss::GroupingEntity *ige, Ioss::Property::Origin origin,
+                                const std::string &header, const std::string &suffix,
+                                bool print_empty)
+{
+  Ioss::NameList properties;
+  ige->property_describe(origin, &properties);
+
+  if (properties.empty()) {
+    if (print_empty && !header.empty()) {
+      fmt::print("{}{} *** No attributes ***\n", header, suffix);
+    }
+    return;
+  }
+
+  if (!header.empty()) {
+    fmt::print("{}{}", header, suffix);
+  }
+
+  int num_out = 0;
+  for (const auto &property_name : properties) {
+    fmt::print("{:>s}: ", property_name);
+    auto prop = ige->get_property(property_name);
+    switch (prop.get_type()) {
+    case Ioss::Property::BasicType::REAL: fmt::print("{}\t", prop.get_real()); break;
+    case Ioss::Property::BasicType::INTEGER: fmt::print("{}\t", prop.get_int()); break;
+    case Ioss::Property::BasicType::STRING: fmt::print("'{}'\t", prop.get_string()); break;
+    case Ioss::Property::BasicType::VEC_INTEGER:
+      fmt::print("{}\t", fmt::join(prop.get_vec_int(), "  "));
+      break;
+    case Ioss::Property::BasicType::VEC_DOUBLE:
+      fmt::print("{}\t", fmt::join(prop.get_vec_double(), "  "));
+      break;
+    default:; // Do nothing
+    }
+    num_out++;
+    if (num_out >= 3) {
+      fmt::print("\n\t");
+      num_out = 0;
+    }
+  }
+  if (!header.empty()) {
+    fmt::print("\n");
+  }
+}
+
 void Ioss::Utils::copy_database(Ioss::Region &region, Ioss::Region &output_region,
                                 Ioss::MeshCopyOptions &options)
 {
@@ -1434,72 +1513,118 @@ void Ioss::Utils::copy_database(Ioss::Region &region, Ioss::Region &output_regio
 
   int rank = dbi->util().parallel_rank();
 
-  bool appending = output_region.get_database()->open_create_behavior() == Ioss::DB_APPEND;
-
-  if (!appending) {
-
-    if (options.debug && rank == 0) {
-      fmt::print(Ioss::DEBUG(), "DEFINING MODEL ... \n");
+  if (options.debug && rank == 0) {
+    fmt::print(Ioss::DEBUG(), "DEFINING MODEL ... \n");
+  }
+  dbi->progress("DEFINING MODEL");
+  if (!output_region.begin_mode(Ioss::STATE_DEFINE_MODEL)) {
+    if (options.verbose) {
+      std::ostringstream errmsg;
+      fmt::print(errmsg, "ERROR: Could not put output region into define model state\n");
+      IOSS_ERROR(errmsg);
     }
-    dbi->progress("DEFINING MODEL");
-    if (!output_region.begin_mode(Ioss::STATE_DEFINE_MODEL)) {
-      if (options.verbose) {
-        std::ostringstream errmsg;
-        fmt::print(errmsg, "ERROR: Could not put output region into define model state\n");
-        IOSS_ERROR(errmsg);
+    else {
+      std::exit(EXIT_FAILURE);
+    }
+  }
+
+  if (rank == 0) {
+    fmt::print(std::cout, "\n\n Input Region summary for rank 0:\n");
+  }
+
+  // Get all properties of input database...
+  transfer_properties(&region, &output_region);
+  transfer_qa_info(region, output_region);
+
+  if (rank == 0) {
+    fmt::print(std::cout, "\n\n Input Region summary for rank 0:\n");
+  }
+  transfer_nodeblock(region, output_region, data_pool, options, rank);
+
+#ifdef SEACAS_HAVE_MPI
+  // This also assumes that the node order and count is the same for input
+  // and output regions... (This is checked during nodeset output)
+  if (output_region.get_database()->needs_shared_node_information()) {
+    if (options.ints_64_bit)
+      set_owned_node_count(region, rank, (int64_t)0);
+    else
+      set_owned_node_count(region, rank, (int)0);
+  }
+#endif
+
+  transfer_edgeblocks(region, output_region, options, rank);
+  transfer_faceblocks(region, output_region, options, rank);
+  transfer_elementblocks(region, output_region, options, rank);
+  transfer_structuredblocks(region, output_region, options, rank);
+
+  transfer_nodesets(region, output_region, options, rank);
+  transfer_edgesets(region, output_region, options, rank);
+  transfer_facesets(region, output_region, options, rank);
+  transfer_elemsets(region, output_region, options, rank);
+
+  transfer_sidesets(region, output_region, options, rank);
+
+  std::vector<Ioss::Face> boundary;
+  if (options.boundary_sideset) {
+    Ioss::FaceGenerator face_generator(region);
+    if (region.get_database()->int_byte_size_api() == 4) {
+      face_generator.generate_faces((int)0, false);
+    }
+    else {
+      face_generator.generate_faces((int64_t)0, false);
+    }
+
+    // Get vector of all boundary faces which will be output as the skin...
+    auto &faces = face_generator.faces("ALL");
+    for (auto &face : faces) {
+      if (face.elementCount_ == 1) {
+        boundary.push_back(face);
       }
     }
 
-    // Get all properties of input database...
-    transfer_properties(&region, &output_region);
-    transfer_qa_info(region, output_region);
+    // Get topology of the sideset faces. Using just block[0] since for what we are doing, doesn't
+    // really matter.
+    const auto &blocks    = region.get_element_blocks();
+    auto        topo      = blocks[0]->topology();
+    auto        elem_topo = topo->name();
+    auto        face_topo = topo->boundary_type(0)->name();
 
-    transfer_nodeblock(region, output_region, data_pool, options, rank);
+    auto ss = new Ioss::SideSet(output_region.get_database(), "boundary");
+    output_region.add(ss);
+    auto sb = new Ioss::SideBlock(output_region.get_database(), "boundary", face_topo, elem_topo,
+                                  boundary.size());
+    ss->add(sb);
+  }
 
-#ifdef SEACAS_HAVE_MPI
-    // This also assumes that the node order and count is the same for input
-    // and output regions... (This is checked during nodeset output)
-    if (output_region.get_database()->needs_shared_node_information()) {
-      if (options.ints_64_bit)
-        set_owned_node_count(region, rank, (int64_t)0);
-      else
-        set_owned_node_count(region, rank, (int)0);
-    }
-#endif
+  transfer_commsets(region, output_region, options, rank);
 
-    transfer_edgeblocks(region, output_region, options, rank);
-    transfer_faceblocks(region, output_region, options, rank);
-    transfer_elementblocks(region, output_region, options, rank);
-    transfer_structuredblocks(region, output_region, options, rank);
+  transfer_coordinate_frames(region, output_region);
+  transfer_blobs(region, output_region, options, rank);
 
-    transfer_nodesets(region, output_region, options, rank);
-    transfer_edgesets(region, output_region, options, rank);
-    transfer_facesets(region, output_region, options, rank);
-    transfer_elemsets(region, output_region, options, rank);
+  // This must be last...
+  transfer_assemblies(region, output_region, options, rank);
 
-    transfer_sidesets(region, output_region, options, rank);
-    transfer_commsets(region, output_region, options, rank);
+  if (options.debug && rank == 0) {
+    fmt::print(Ioss::DEBUG(), "END STATE_DEFINE_MODEL...\n");
+  }
+  dbi->progress("END STATE_DEFINE_MODEL");
 
-    transfer_coordinate_frames(region, output_region);
-    transfer_assemblies(region, output_region, options, rank);
-    transfer_blobs(region, output_region, options, rank);
+  output_region.end_mode(Ioss::STATE_DEFINE_MODEL);
+  dbi->progress("output_region.end_mode(Ioss::STATE_DEFINE_MODEL) finished");
 
-    if (options.debug && rank == 0) {
-      fmt::print(Ioss::DEBUG(), "END STATE_DEFINE_MODEL...\n");
-    }
-    dbi->progress("END STATE_DEFINE_MODEL");
+  // Minimize number of times that we grow the memory buffer used for transferring field data.
+  size_t max_field_size = calculate_maximum_field_size(region);
+  if (options.verbose && rank == 0) {
+    fmt::print(Ioss::DEBUG(), "\n Maximum Field size = {:n} bytes.\n", max_field_size);
+  }
+  data_pool.data.resize(max_field_size);
+  if (options.verbose && rank == 0) {
+    fmt::print(Ioss::DEBUG(), " Resize finished...\n");
+  }
 
-    output_region.end_mode(Ioss::STATE_DEFINE_MODEL);
-    dbi->progress("output_region.end_mode(Ioss::STATE_DEFINE_MODEL) finished");
+  bool appending = output_region.get_database()->open_create_behavior() == Ioss::DB_APPEND;
 
-    if (options.verbose && rank == 0) {
-      fmt::print(Ioss::DEBUG(), "Maximum Field size = {:n} bytes.\n", max_field_size);
-    }
-    data_pool.data.resize(max_field_size);
-    if (options.verbose && rank == 0) {
-      fmt::print(Ioss::DEBUG(), "Resize finished...\n");
-    }
-
+  if (!appending) {
     if (options.debug && rank == 0) {
       fmt::print(Ioss::DEBUG(), "TRANSFERRING MESH FIELD DATA ...\n");
     }
@@ -1638,24 +1763,37 @@ void Ioss::Utils::copy_database(Ioss::Region &region, Ioss::Region &output_regio
       if (options.debug && rank == 0) {
         fmt::print(Ioss::DEBUG(), "\n");
       }
+
+      if (options.boundary_sideset) {
+        auto *ss = output_region.get_sideset("boundary");
+        if (ss != nullptr) {
+          auto sb = ss->get_side_block("boundary");
+          if (output_region.get_database()->int_byte_size_api() == 4) {
+            output_boundary_sideset(sb, boundary, (int)0);
+          }
+          else {
+            output_boundary_sideset(sb, boundary, (int64_t)0);
+          }
+        }
+      }
     }
     if (options.debug && rank == 0) {
       fmt::print(Ioss::DEBUG(), "END STATE_MODEL... \n");
     }
     dbi->progress("END STATE_MODEL... ");
     output_region.end_mode(Ioss::STATE_MODEL);
+  }
 
-    if (options.add_proc_id) {
-      Ioss::Utils::clear(data_pool.data);
-      add_proc_id(output_region, rank);
-      return;
-    }
+  if (options.add_proc_id) {
+    Ioss::Utils::clear(data_pool.data);
+    add_proc_id(output_region, rank);
+    return;
+  }
 
-    if (options.delete_timesteps) {
-      Ioss::Utils::clear(data_pool.data);
-      return;
-    }
-  } // !appending
+  if (options.delete_timesteps) {
+    Ioss::Utils::clear(data_pool.data);
+    return;
+  }
 
   if (options.debug && rank == 0) {
     fmt::print(Ioss::DEBUG(), "DEFINING TRANSIENT FIELDS ... \n");
@@ -1664,7 +1802,7 @@ void Ioss::Utils::copy_database(Ioss::Region &region, Ioss::Region &output_regio
 
   if (region.property_exists("state_count") && region.get_property("state_count").get_int() > 0) {
     if (options.verbose && rank == 0) {
-      fmt::print(Ioss::DEBUG(), "\nNumber of time steps on database = {}\n\n",
+      fmt::print(Ioss::DEBUG(), "\n Number of time steps on database = {}\n",
                  region.get_property("state_count").get_int());
     }
 
@@ -1709,9 +1847,32 @@ void Ioss::Utils::copy_database(Ioss::Region &region, Ioss::Region &output_regio
   output_region.begin_mode(Ioss::STATE_TRANSIENT);
   // Get the timesteps from the input database.  Step through them
   // and transfer fields to output database...
-
   int step_count = region.get_property("state_count").get_int();
 
+  // If user specified a list of times to transfer to output database,
+  // process the list and find the times on the input database that are
+  // closest to the times in the list.
+  std::vector<int> selected_steps{};
+  if (!options.selected_times.empty()) {
+    int selected_step = 0;
+    for (auto time : options.selected_times) {
+      double diff = std::numeric_limits<double>::max();
+      for (int step = 1; step <= step_count; step++) {
+        double db_time  = region.get_state_time(step);
+        double cur_diff = std::abs(db_time - time);
+        if (cur_diff < diff) {
+          diff          = std::abs(db_time - time);
+          selected_step = step;
+        }
+      }
+      if (selected_step > 0) {
+        selected_steps.push_back(selected_step);
+      }
+    }
+    Ioss::Utils::uniquify(selected_steps);
+  }
+
+  int selected_step = 0;
   for (int istep = 1; istep <= step_count; istep++) {
     double time = region.get_state_time(istep);
     if (time < options.minimum_time) {
@@ -1719,6 +1880,19 @@ void Ioss::Utils::copy_database(Ioss::Region &region, Ioss::Region &output_regio
     }
     if (time > options.maximum_time) {
       break;
+    }
+    if (!selected_steps.empty()) {
+      if ((size_t)selected_step >= selected_steps.size()) {
+        break;
+      }
+      if (istep != selected_steps[selected_step]) {
+        continue;
+      }
+      selected_step++;
+      if (options.debug && rank == 0) {
+        fmt::print(Ioss::DEBUG(), "\nSelecting Step {} ({} of {})\n", istep, selected_step,
+                   selected_steps.size());
+      }
     }
 
     int ostep = output_region.add_state(time);
@@ -1826,7 +2000,10 @@ void Ioss::Utils::copy_database(Ioss::Region &region, Ioss::Region &output_regio
   dbi->progress("END STATE_TRANSIENT (end) ... ");
   Ioss::Utils::clear(data_pool.data);
 
-  output_region.output_summary(std::cout);
+  if (rank == 0) {
+    fmt::print(std::cout, "\n\n Output Region summary for rank 0:");
+    output_region.output_summary(std::cout);
+  }
 }
 
 namespace {
@@ -1853,7 +2030,7 @@ namespace {
         fmt::print(Ioss::DEBUG(), " Number of Coordinates per Node = {:14n}\n", degree);
         fmt::print(Ioss::DEBUG(), " Number of Nodes                = {:14n}\n", num_nodes);
       }
-      auto nb = new Ioss::NodeBlock(*inb);
+      auto *nb = new Ioss::NodeBlock(*inb);
       output_region.add(nb);
 
       if (output_region.get_database()->needs_shared_node_information()) {
@@ -2051,11 +2228,10 @@ namespace {
       const auto &fbs = ss->get_side_blocks();
       for (const auto &ifb : fbs) {
         if (ifb->parent_block() != nullptr) {
-          auto               fb_name = ifb->parent_block()->name();
-          Ioss::EntityBlock *parent =
-              dynamic_cast<Ioss::EntityBlock *>(output_region.get_entity(fb_name));
+          auto  fb_name = ifb->parent_block()->name();
+          auto *parent  = dynamic_cast<Ioss::EntityBlock *>(output_region.get_entity(fb_name));
 
-          Ioss::SideBlock *ofb = surf->get_side_block(ifb->name());
+          auto *ofb = surf->get_side_block(ifb->name());
           ofb->set_parent_block(parent);
         }
       }
@@ -2110,7 +2286,22 @@ namespace {
         if (options.debug && rank == 0) {
           fmt::print(stderr, "{}, ", name);
         }
+
+        // NOTE: Can't totally use the copy constructor as it will
+        // create a members list containing entities from input
+        // database.  We need corresponding entities from output
+        // database...
         auto o_assem = new Ioss::Assembly(*assm);
+        o_assem->remove_members();
+
+        // Now, repopulate member list with corresponding entities from output database...
+        const auto &members = assm->get_members();
+        for (const auto &member : members) {
+          const auto *entity = output_region.get_entity(member->name(), member->type());
+          if (entity != nullptr) {
+            o_assem->add(entity);
+          }
+        }
         output_region.add(o_assem);
       }
 
@@ -2184,8 +2375,8 @@ namespace {
   {
     const auto &css = region.get_commsets();
     for (const auto &ics : css) {
-      const std::string &name = ics->name();
       if (options.debug && rank == 0) {
+        const std::string &name = ics->name();
         fmt::print(Ioss::DEBUG(), "{}, ", name);
       }
       auto cs = new Ioss::CommSet(*ics);
@@ -2216,9 +2407,6 @@ namespace {
     // whose names begin with the prefix
     for (const auto &field_name : fields) {
       Ioss::Field field = ige->get_field(field_name);
-      if (field.get_size() > max_field_size) {
-        max_field_size = field.get_size();
-      }
       if (field_name != "ids" && !oge->field_exists(field_name) &&
           Ioss::Utils::substr_equal(prefix, field_name)) {
         // If the field does not already exist, add it to the output node block

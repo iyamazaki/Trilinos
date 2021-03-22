@@ -1,8 +1,8 @@
-// Copyright(C) 2020 National Technology & Engineering Solutions
+// Copyright(C) 1999-2020 National Technology & Engineering Solutions
 // of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
 // NTESS, the U.S. Government retains certain rights in this software.
 //
-// See packages/seacas/LICENSE file for details.
+// See packages/seacas/LICENSE for details
 
 #include "modify_interface.h"
 
@@ -19,9 +19,7 @@
 #include <unistd.h>
 #include <utility>
 #include <vector>
-#if defined(SEACAS_HAVE_EXODUS)
-#include <exodusII.h>
-#endif
+
 
 #include <Ionit_Initializer.h>
 #include <Ioss_Assembly.h>
@@ -41,6 +39,7 @@
 #include <Ioss_Field.h>
 #include <Ioss_FileInfo.h>
 #include <Ioss_Getline.h>
+#include <Ioss_Glob.h>
 #include <Ioss_GroupingEntity.h>
 #include <Ioss_IOFactory.h>
 #include <Ioss_NodeBlock.h>
@@ -53,15 +52,20 @@
 #include <Ioss_StructuredBlock.h>
 #include <Ioss_Utils.h>
 #include <Ioss_VariableType.h>
-#include <exodus/Ioex_Utils.h>
-#include <exodus/Ioex_Internals.h>
 #include <tokenize.h>
 
 #include <fmt/color.h>
 #include <fmt/format.h>
 #include <fmt/ostream.h>
+
+#if defined(SEACAS_HAVE_EXODUS)
+#include <exodus/Ioex_Internals.h>
+#include <exodus/Ioex_Utils.h>
+#include <exodusII.h>
+#endif
+
 #if defined(SEACAS_HAVE_CGNS)
-#include <cgnslib.h>
+#include <cgns/Iocgns_Utils.h>
 #endif
 
 #if defined(_MSC_VER)
@@ -72,7 +76,7 @@
 
 namespace {
   std::string codename;
-  std::string version = "0.9 (2020-04-20)";
+  std::string version = "0.94 (2020-10-12)";
 
   std::vector<Ioss::GroupingEntity *> attributes_modified;
 
@@ -176,7 +180,36 @@ namespace {
                    "WARNING: Regular Expression '{}' did not match any {}\n", tokens[3], type);
       }
     }
-    else if (tokens.size() == 3 && Ioss::Utils::substr_equal(tokens[2], "list")) {
+    else if (tokens.size() == 4 && Ioss::Utils::substr_equal(tokens[2], "glob")) {
+      //   0       1           2       3
+      // LIST {entity_type} GLOB {glob}
+      auto entity_type = get_entity_type(tokens[1]);
+      if (entity_type == Ioss::INVALID_TYPE) {
+        fmt::print(stderr, fg(fmt::color::yellow), "WARNING: Unrecognized entity type '{}'.\n",
+                   tokens[1]);
+      }
+      glob::glob     glob(tokens[3]);
+      Ioss::NameList names = get_name_list(region, entity_type);
+
+      // Check for match against all names in list...
+      bool matched = false;
+      for (const auto &name : names) {
+        if (glob::glob_match(name, glob)) {
+          const auto *entity = region.get_entity(name, entity_type);
+          const T *   ge     = dynamic_cast<const T *>(entity);
+          if (ge != nullptr) {
+            info_entity(ge, show_property);
+            matched = true;
+          }
+        }
+      }
+      if (!matched) {
+        fmt::print(stderr, fg(fmt::color::yellow),
+                   "WARNING: Glob Expression '{}' did not match any {}\n", tokens[3], type);
+      }
+    }
+    else if (tokens.size() == 2 ||
+             (tokens.size() == 3 && Ioss::Utils::substr_equal(tokens[2], "list"))) {
       for (const T *ge : entities) {
         info_entity(ge, show_property);
       }
@@ -191,9 +224,6 @@ namespace {
     }
   }
 
-  void info_property(const Ioss::GroupingEntity *ige, Ioss::Property::Origin origin,
-                     const std::string &header, const std::string &suffix = "\n\t");
-
   std::string name(const Ioss::GroupingEntity *entity)
   {
     return entity->type_string() + " '" + entity->name() + "'";
@@ -201,10 +231,7 @@ namespace {
 
   int64_t id(const Ioss::GroupingEntity *entity)
   {
-    int64_t id = -1;
-    if (entity->property_exists("id")) {
-      id = entity->get_property("id").get_int();
-    }
+    int64_t id = entity->get_optional_property("id", -1);
     return id;
   }
 
@@ -284,12 +311,12 @@ int main(int argc, char *argv[])
     std::string input;
     if (from_term) {
       fmt::print(fg(fmt::terminal_color::magenta), "\n");
-      const char *cinput = getline_int("COMMAND> ");
-      if (cinput[0] == '\0') {
+      const char *cinput = io_getline_int("COMMAND> ");
+      if (cinput && cinput[0] == '\0') {
         break;
       }
       if (cinput) {
-        gl_histadd(cinput);
+        io_gl_histadd(cinput);
       }
       input = cinput;
     }
@@ -372,7 +399,7 @@ namespace {
     int64_t num_node = sb->get_property("node_count").get_int();
     fmt::print("{:14n} cells, {:14n} nodes\n", num_cell, num_node);
     if (show_property) {
-      info_property(sb, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
+      Ioss::Utils::info_property(sb, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
     }
   }
 
@@ -380,7 +407,8 @@ namespace {
   {
     fmt::print("\nRegion (global)\n");
     if (show_property) {
-      info_property(&region, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
+      Ioss::Utils::info_property(&region, Ioss::Property::ATTRIBUTE,
+                                 "\tAttributes (Reduction): ", "\t");
     }
   }
 
@@ -401,7 +429,7 @@ namespace {
     }
     fmt::print("\n");
     if (show_property) {
-      info_property(as, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
+      Ioss::Utils::info_property(as, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
     }
   }
 
@@ -410,7 +438,8 @@ namespace {
     fmt::print("\n{} id: {:6d}, contains: {} item(s).\n", name(blob), id(blob),
                blob->entity_count());
     if (show_property) {
-      info_property(blob, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
+      Ioss::Utils::info_property(blob, Ioss::Property::ATTRIBUTE,
+                                 "\tAttributes (Reduction): ", "\t");
     }
   }
 
@@ -418,12 +447,12 @@ namespace {
   {
     int64_t num_elem = eb->entity_count();
 
-    std::string type       = eb->get_property("topology_type").get_string();
+    std::string type       = eb->topology()->name();
     int64_t     num_attrib = eb->get_property("attribute_count").get_int();
     fmt::print("\n{} id: {:6d}, topology: {:>10s}, {:14n} elements, {:3d} attributes.\n", name(eb),
                id(eb), type, num_elem, num_attrib);
     if (show_property) {
-      info_property(eb, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
+      Ioss::Utils::info_property(eb, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
     }
   }
 
@@ -447,7 +476,7 @@ namespace {
                  count, num_attrib, num_dist);
     }
     if (show_property) {
-      info_property(ss, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
+      Ioss::Utils::info_property(ss, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
     }
   }
 
@@ -459,7 +488,7 @@ namespace {
     fmt::print("\n{} id: {:6d}, {:8n} nodes, {:3d} attributes, {:8n} distribution factors.\n",
                name(ns), id(ns), count, num_attrib, num_dist);
     if (show_property) {
-      info_property(ns, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
+      Ioss::Utils::info_property(ns, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
     }
   }
 
@@ -469,7 +498,7 @@ namespace {
     int64_t num_attrib = nb->get_property("attribute_count").get_int();
     fmt::print("\n{} {:14n} nodes, {:3d} attributes.\n", name(nb), num_nodes, num_attrib);
     if (show_property) {
-      info_property(nb, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
+      Ioss::Utils::info_property(nb, Ioss::Property::ATTRIBUTE, "\tAttributes (Reduction): ", "\t");
     }
   }
 
@@ -486,7 +515,7 @@ namespace {
   {
     bool all = Ioss::Utils::substr_equal(topic, "help");
     if (all) {
-      fmt::print("\n\tHELP [list | assembly | graph | attribute | regex]\n");
+      fmt::print("\n\tHELP [list | assembly | graph | attribute | regex | glob]\n");
       fmt::print("\n\tEND | EXIT\n");
       fmt::print("\t\tEnd command input and output changed assembly definitions (if any).\n");
       fmt::print("\n\tQUIT\n");
@@ -499,17 +528,15 @@ namespace {
                  "\t\tThis will cause the database to be rewritten. Without this option, it is "
                  "updated in place.\n");
     }
-    if (all || Ioss::Utils::substr_equal(topic, "regex")) {
-      fmt::print("\n\tRegular Expression help (used in ASSEMBLY MATCHES and LIST MATCHES and "
-                 "ATTRIBUTE LIST MATCHES options)\n"
-                 "\tSupports \"POSIX Extended Regular Expressions\" syntax\n"
-                 "\tSee https://www.regular-expressions.info/posix.html\n"
-                 "\tQuickStart: https://www.regular-expressions.info/quickstart.html\n");
-    }
     if (all || Ioss::Utils::substr_equal(topic, "list")) {
-      fmt::print("\n\tLIST summary|elementblock|block|assembly|nodeset|sideset|blob\n");
-      fmt::print("\n\tLIST elementblock|block|assembly|nodeset|sideset|blob {{names...}}\n\n");
-      fmt::print("\n\tLIST elementblock|block|assembly|nodeset|sideset|blob MATCHES {{regex}}\n\n");
+      fmt::print(
+          "\n\tLIST elementblock|block|structuredblock|assembly|nodeset|sideset|blob|summary\n");
+      fmt::print("\tLIST elementblock|block|structuredblock|assembly|nodeset|sideset|blob "
+                 "{{names...}}\n");
+      fmt::print("\tLIST elementblock|block|structuredblock|assembly|nodeset|sideset|blob "
+                 "MATCHES {{regex}}\n");
+      fmt::print("\tLIST elementblock|block|structuredblock|assembly|nodeset|sideset|blob "
+                 "GLOB {{glob}}\n");
     }
     if (all || Ioss::Utils::substr_equal(topic, "assembly")) {
       fmt::print("\n\tFor all commands, if an assembly named `name` does not exist, it will be "
@@ -527,6 +554,9 @@ namespace {
       fmt::print("\n\tASSEMBLY {{name}} TYPE {{type}} MATCHES {{regex}}\n");
       fmt::print("\t\tAdds the entities of the specified type to the assembly.\n"
                  "\t\tAll entities whose name matches the {{regex}} will be added.\n");
+      fmt::print("\n\tASSEMBLY {{name}} TYPE {{type}} GLOB {{glob}}\n");
+      fmt::print("\t\tAdds the entities of the specified type to the assembly.\n"
+                 "\t\tAll entities whose name matches the {{glob}} will be added.\n");
 
       fmt::print("\n\tASSEMBLY {{name}} TYPE {{type}} NAMED {{list of one or more names}}\n");
       fmt::print("\t\tAdds the entities of the specified type to the assembly.\n"
@@ -571,6 +601,28 @@ namespace {
       fmt::print("\tATTRIBUTE {{ent_type}} MATCH {{regex}}\n"
                  "\t\tList attributes for all entities in the specified entity type whose name "
                  "matches the regex.\n");
+      fmt::print("\tATTRIBUTE {{ent_type}} GLOB {{glob}}\n"
+                 "\t\tList attributes for all entities in the specified entity type whose name "
+                 "matches the glob.\n");
+    }
+    if (all || Ioss::Utils::substr_equal(topic, "regex")) {
+      fmt::print("\n\tRegular Expression help (used in ASSEMBLY MATCHES and LIST MATCHES and "
+                 "ATTRIBUTE LIST MATCHES options)\n"
+                 "\t\tSupports \"POSIX Extended Regular Expressions\" syntax\n"
+                 "\t\tSee https://www.regular-expressions.info/posix.html\n"
+                 "\t\tQuickStart: https://www.regular-expressions.info/quickstart.html\n");
+    }
+    if (all || Ioss::Utils::substr_equal(topic, "glob")) {
+      fmt::print(
+          "\n\tGlob help (used in ASSEMBLY GLOB and LIST GLOB and ATTRIBUTE LIST GLOB options)\n"
+          "\t\t?(pattern-list)   Matches zero or one occurrence of the given patterns\n"
+          "\t\t*(pattern-list)   Matches zero or more occurrences of the given patterns\n"
+          "\t\t+(pattern-list)   Matches one or more occurrences of the given patterns\n"
+          "\t\t@(pattern-list)   Matches one of the given patterns\n"
+          "\t\t!(pattern-list)   Matches anything except one of the given patterns\n"
+          "\tGlob Examples\n"
+          "\t\tblock*    : All names that start with 'block'\n"
+          "\t\t[A-Z]*    : All names that start with a capital letter\n");
     }
   }
 
@@ -603,7 +655,7 @@ namespace {
         const auto &entities = region.get_node_blocks();
         info_entities(entities, tokens, region, "Node Block", show_attribute);
       }
-      else if (Ioss::Utils::substr_equal(tokens[1], "structuredlock")) {
+      else if (Ioss::Utils::substr_equal(tokens[1], "structuredblock")) {
         const auto &entities = region.get_structured_blocks();
         info_entities(entities, tokens, region, "Structured Blocks", show_attribute);
       }
@@ -677,20 +729,22 @@ namespace {
       recStack[v] = true;
 
       // Recur for all the m_vertices adjacent to this vertex
-      for (auto i = m_adj[v].begin(); i != m_adj[v].end(); ++i) {
-        if (!visited[*i] && is_cyclic_internal(*i, visited, recStack)) {
-          if (*i != 0 && v != 0) {
-            fmt::print(fg(fmt::color::yellow), "\t*** Cycle contains {} -> {}\n", m_vertex[v],
-                       m_vertex[*i]);
+      if (v < (int)m_adj.size()) {
+        for (auto i = m_adj[v].begin(); i != m_adj[v].end(); ++i) {
+          if (!visited[*i] && is_cyclic_internal(*i, visited, recStack)) {
+            if (*i != 0 && v != 0) {
+              fmt::print(fg(fmt::color::yellow), "\t*** Cycle contains {} -> {}\n", m_vertex[v],
+                         m_vertex[*i]);
+            }
+            return true;
           }
-          return true;
-        }
-        else if (recStack[*i]) {
-          if (*i != 0 && v != 0) {
-            fmt::print(fg(fmt::color::yellow), "\t*** Cycle contains {} -> {}\n", m_vertex[v],
-                       m_vertex[*i]);
+          else if (recStack[*i]) {
+            if (*i != 0 && v != 0) {
+              fmt::print(fg(fmt::color::yellow), "\t*** Cycle contains {} -> {}\n", m_vertex[v],
+                         m_vertex[*i]);
+            }
+            return true;
           }
-          return true;
         }
       }
     }
@@ -923,7 +977,7 @@ namespace {
         if (ge != nullptr) {
           std::string prefix =
               fmt::format("\n{} id: {:6d}\n\tAttributes (Reduction): ", name(ge), id(ge));
-          info_property(ge, Ioss::Property::ATTRIBUTE, prefix, "\t");
+          Ioss::Utils::info_property(ge, Ioss::Property::ATTRIBUTE, prefix, "\t");
         }
       }
       return false;
@@ -934,6 +988,11 @@ namespace {
       return false;
     }
     else if (Ioss::Utils::substr_equal(tokens[2], "matches")) {
+      // ATTRIBUTE {{ent_type}} MATCH {regex}
+      handle_list(tokens, region, true);
+      return false;
+    }
+    else if (Ioss::Utils::substr_equal(tokens[2], "glob")) {
       // ATTRIBUTE {{ent_type}} MATCH {regex}
       handle_list(tokens, region, true);
       return false;
@@ -972,7 +1031,6 @@ namespace {
     }
 
     if (assem == nullptr) {
-
       fmt::print(stderr, fg(fmt::color::red), "ERROR: Unable to create or access assembly '{}'.\n",
                  tokens[1]);
       return false;
@@ -1036,6 +1094,25 @@ namespace {
             // Check for match against all names in list...
             for (const auto &name : names) {
               if (std::regex_match(name, reg)) {
+                const auto *entity = region.get_entity(name, type);
+                if (entity != nullptr) {
+                  if (assem->add(entity)) {
+                    changed = true;
+                  }
+                }
+              }
+            }
+          }
+          else if (Ioss::Utils::substr_equal(tokens[4], "glob")) {
+            // regex match on names
+            // Get list of all names for this entity type...
+            Ioss::NameList names = get_name_list(region, type);
+
+            glob::glob glob(tokens[5]);
+
+            // Check for match against all names in list...
+            for (const auto &name : names) {
+              if (glob::glob_match(name, glob)) {
                 const auto *entity = region.get_entity(name, type);
                 if (entity != nullptr) {
                   if (assem->add(entity)) {
@@ -1152,7 +1229,31 @@ namespace {
     return names;
   }
 
-  void update_assembly_info(Ioss::Region &region, const Modify::Interface &interFace)
+#if defined(SEACAS_HAVE_CGNS)
+  void update_cgns_assembly_info(Ioss::Region &region, const Modify::Interface &interFace)
+  {
+    region.end_mode(Ioss::STATE_DEFINE_MODEL);
+    int file_ptr = region.get_database()->get_file_pointer();
+
+    fmt::print(fg(fmt::color::cyan), "\n\t*** Database changed. Updating assembly definitions.\n");
+    const auto &assemblies = region.get_assemblies();
+    for (const auto *assembly : assemblies) {
+      if (assembly->property_exists("modified")) {
+        if (assembly->property_exists("created")) {
+          fmt::print(fg(fmt::color::cyan), "\t*** Creating assembly '{}'\n", assembly->name());
+          Iocgns::Utils::output_assembly(file_ptr, assembly, false, true);
+        }
+        else {
+          fmt::print(stderr, fg(fmt::color::yellow),
+                     "WARNING: Can not modify existing assembly '{}'  yet.\n", assembly->name());
+        }
+      }
+    }
+  }
+#endif
+
+#if defined(SEACAS_HAVE_EXODUS)
+  void update_exodus_assembly_info(Ioss::Region &region, const Modify::Interface &interFace)
   {
     std::vector<Ioex::Assembly> ex_assemblies;
     bool                        modify_existing = false;
@@ -1214,48 +1315,30 @@ namespace {
       Ioex::write_reduction_attributes(exoid, attributes_modified);
     }
   }
+#endif
 
-  void info_property(const Ioss::GroupingEntity *ige, Ioss::Property::Origin origin,
-                     const std::string &header, const std::string &suffix)
+  void update_assembly_info(Ioss::Region &region, const Modify::Interface &interFace)
   {
-    Ioss::NameList properties;
-    ige->property_describe(origin, &properties);
-
-    if (properties.empty()) {
-      if (!header.empty()) {
-        fmt::print("{}{} *** No attributes ***\n", header, suffix);
-      }
-      return;
+    // Determine type of underlying database...
+    const auto type = region.get_database()->get_format();
+    if (type == "Exodus") {
+#if defined(SEACAS_HAVE_EXODUS)
+      update_exodus_assembly_info(region, interFace);
+#else
+      fmt::print(stderr, fg(fmt::color::red), "ERROR: Exodus capability is not enabled.\n");
+#endif
     }
-
-    if (!header.empty()) {
-      fmt::print("{}{}", header, suffix);
+    else if (type == "CGNS") {
+#if defined(SEACAS_HAVE_CGNS)
+      update_cgns_assembly_info(region, interFace);
+#else
+      fmt::print(stderr, fg(fmt::color::red), "ERROR: CGNS capability is not enabled.\n");
+#endif
     }
-
-    int num_out = 0;
-    for (const auto &property_name : properties) {
-      fmt::print("{:>s}: ", property_name);
-      auto prop = ige->get_property(property_name);
-      switch (prop.get_type()) {
-      case Ioss::Property::BasicType::REAL: fmt::print("{}\t", prop.get_real()); break;
-      case Ioss::Property::BasicType::INTEGER: fmt::print("{}\t", prop.get_int()); break;
-      case Ioss::Property::BasicType::STRING: fmt::print("'{}'\t", prop.get_string()); break;
-      case Ioss::Property::BasicType::VEC_INTEGER:
-        fmt::print("{}\t", fmt::join(prop.get_vec_int(), "  "));
-        break;
-      case Ioss::Property::BasicType::VEC_DOUBLE:
-        fmt::print("{}\t", fmt::join(prop.get_vec_double(), "  "));
-        break;
-      default:; // Do nothing
-      }
-      num_out++;
-      if (num_out >= 3) {
-        fmt::print("\n\t");
-        num_out = 0;
-      }
-    }
-    if (!header.empty()) {
-      fmt::print("\n");
+    else {
+      fmt::print(stderr, fg(fmt::color::red),
+                 "ERROR: Can not modify the database '{}' of type '{}'.\n", interFace.filename(),
+                 type);
     }
   }
 

@@ -35,10 +35,10 @@
 #ifndef stk_util_parallel_CommSparse_hpp
 #define stk_util_parallel_CommSparse_hpp
 
-#include <cstddef>                      // for size_t, ptrdiff_t
-#include <vector>
-#include <stk_util/parallel/Parallel.hpp>  // for ParallelMachine
-#include <stk_util/parallel/ParallelComm.hpp>  // for CommBuffer etc
+#include "stk_util/parallel/Parallel.hpp"      // for ParallelMachine, parallel_machine_null
+#include "stk_util/parallel/ParallelComm.hpp"  // for CommBuffer
+#include <cstddef>                             // for size_t
+#include <vector>                              // for vector
 
 //------------------------------------------------------------------------
 
@@ -139,6 +139,8 @@ public:
   {
   }
 
+  CommSparse(const CommSparse&) = delete;
+
   /** Allocate communication buffers based upon
    *  sizing from the surrogate send buffer packing.
    *  Returns true if the local processor is actually
@@ -206,7 +208,7 @@ private:
 };
 
 template<typename COMM, typename PACK_ALGORITHM>
-void pack_and_communicate(COMM & comm, const PACK_ALGORITHM & algorithm)
+bool pack_and_communicate(COMM & comm, const PACK_ALGORITHM & algorithm)
 {
     algorithm();
     const bool actuallySendingOrReceiving = comm.allocate_buffers();
@@ -214,6 +216,7 @@ void pack_and_communicate(COMM & comm, const PACK_ALGORITHM & algorithm)
         algorithm();
         comm.communicate();
     }
+    return actuallySendingOrReceiving;
 }
 
 template<typename COMM, typename UNPACK_ALGORITHM>
@@ -232,21 +235,15 @@ void unpack_communications(COMM & comm, const UNPACK_ALGORITHM & algorithm)
 }
 
 template <typename T>
-void pack_vector_to_proc(stk::CommSparse& comm, const T& data, int otherProc)
+void pack_vector_to_proc(stk::CommSparse& comm, const std::vector<T>& data, int otherProc)
 {
-    comm.send_buffer(otherProc).pack<unsigned>(data.size());
-    for(size_t i=0; i<data.size(); ++i)
-        comm.send_buffer(otherProc).pack<typename T::value_type>(data[i]);
+  comm.send_buffer(otherProc).pack(data);
 }
 
 template <typename T>
-void unpack_vector_from_proc(stk::CommSparse& comm, T& data, int fromProc)
+void unpack_vector_from_proc(stk::CommSparse& comm, std::vector<T>& data, int fromProc)
 {
-    unsigned num_items = 0;
-    comm.recv_buffer(fromProc).unpack<unsigned>(num_items);
-    data.resize(num_items);
-    for(unsigned i=0;i<num_items;++i)
-        comm.recv_buffer(fromProc).unpack<typename T::value_type>(data[i]);
+  comm.recv_buffer(fromProc).unpack(data);
 }
 
 }

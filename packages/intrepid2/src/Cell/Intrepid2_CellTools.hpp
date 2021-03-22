@@ -82,6 +82,8 @@
 #include "Intrepid2_HGRAD_WEDGE_C2_FEM.hpp"
 //#include "Intrepid2_HGRAD_WEDGE_I2_FEM.hpp"
 
+#include "Intrepid2_Data.hpp"
+
 namespace Intrepid2 {
 
   //============================================================================================//
@@ -100,8 +102,9 @@ namespace Intrepid2 {
   */
 
 
-  template<typename ExecSpaceType>
+  template<typename DeviceType>
   class CellTools {
+    using ExecSpaceType = typename DeviceType::execution_space;
   public:
 
     /** \brief  Checks if a cell topology has reference cell
@@ -154,6 +157,8 @@ namespace Intrepid2 {
       return r_val;
     }
 
+    typedef Kokkos::DynRankView<double,ExecSpaceType> subcellParamViewType;
+
   private:
 
     /** \brief Generates default HGrad basis based on cell topology 
@@ -161,28 +166,28 @@ namespace Intrepid2 {
      */
     template<typename outputValueType, 
              typename pointValueType>
-    static Teuchos::RCP<Basis<ExecSpaceType,outputValueType,pointValueType> >
+    static Teuchos::RCP<Basis<DeviceType,outputValueType,pointValueType> >
     createHGradBasis( const shards::CellTopology cellTopo ) {
-      Teuchos::RCP<Basis<ExecSpaceType,outputValueType,pointValueType> > r_val;
+      Teuchos::RCP<Basis<DeviceType,outputValueType,pointValueType> > r_val;
 
       switch (cellTopo.getKey()) {
-      case shards::Line<2>::key:          r_val = Teuchos::rcp(new Basis_HGRAD_LINE_C1_FEM   <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Triangle<3>::key:      r_val = Teuchos::rcp(new Basis_HGRAD_TRI_C1_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Quadrilateral<4>::key: r_val = Teuchos::rcp(new Basis_HGRAD_QUAD_C1_FEM   <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Tetrahedron<4>::key:   r_val = Teuchos::rcp(new Basis_HGRAD_TET_C1_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Hexahedron<8>::key:    r_val = Teuchos::rcp(new Basis_HGRAD_HEX_C1_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Wedge<6>::key:         r_val = Teuchos::rcp(new Basis_HGRAD_WEDGE_C1_FEM  <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Pyramid<5>::key:       r_val = Teuchos::rcp(new Basis_HGRAD_PYR_C1_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
+      case shards::Line<2>::key:          r_val = Teuchos::rcp(new Basis_HGRAD_LINE_C1_FEM   <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Triangle<3>::key:      r_val = Teuchos::rcp(new Basis_HGRAD_TRI_C1_FEM    <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Quadrilateral<4>::key: r_val = Teuchos::rcp(new Basis_HGRAD_QUAD_C1_FEM   <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Tetrahedron<4>::key:   r_val = Teuchos::rcp(new Basis_HGRAD_TET_C1_FEM    <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Hexahedron<8>::key:    r_val = Teuchos::rcp(new Basis_HGRAD_HEX_C1_FEM    <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Wedge<6>::key:         r_val = Teuchos::rcp(new Basis_HGRAD_WEDGE_C1_FEM  <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Pyramid<5>::key:       r_val = Teuchos::rcp(new Basis_HGRAD_PYR_C1_FEM    <DeviceType,outputValueType,pointValueType>()); break;
 
-      case shards::Triangle<6>::key:      r_val = Teuchos::rcp(new Basis_HGRAD_TRI_C2_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Quadrilateral<9>::key: r_val = Teuchos::rcp(new Basis_HGRAD_QUAD_C2_FEM   <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Tetrahedron<10>::key:  r_val = Teuchos::rcp(new Basis_HGRAD_TET_C2_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Tetrahedron<11>::key:  r_val = Teuchos::rcp(new Basis_HGRAD_TET_COMP12_FEM<ExecSpaceType,outputValueType,pointValueType>()); break;
-        //case shards::Hexahedron<20>::key:   r_val = Teuchos::rcp(new Basis_HGRAD_HEX_I2_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Hexahedron<27>::key:   r_val = Teuchos::rcp(new Basis_HGRAD_HEX_C2_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
-        //case shards::Wedge<15>::key:        r_val = Teuchos::rcp(new Basis_HGRAD_WEDGE_I2_FEM  <ExecSpaceType,outputValueType,pointValueType>()); break;
-      case shards::Wedge<18>::key:        r_val = Teuchos::rcp(new Basis_HGRAD_WEDGE_C2_FEM  <ExecSpaceType,outputValueType,pointValueType>()); break;
-        //case shards::Pyramid<13>::key:      r_val = Teuchos::rcp(new Basis_HGRAD_PYR_I2_FEM    <ExecSpaceType,outputValueType,pointValueType>()); break;
+      case shards::Triangle<6>::key:      r_val = Teuchos::rcp(new Basis_HGRAD_TRI_C2_FEM    <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Quadrilateral<9>::key: r_val = Teuchos::rcp(new Basis_HGRAD_QUAD_C2_FEM   <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Tetrahedron<10>::key:  r_val = Teuchos::rcp(new Basis_HGRAD_TET_C2_FEM    <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Tetrahedron<11>::key:  r_val = Teuchos::rcp(new Basis_HGRAD_TET_COMP12_FEM<DeviceType,outputValueType,pointValueType>()); break;
+        //case shards::Hexahedron<20>::key:   r_val = Teuchos::rcp(new Basis_HGRAD_HEX_I2_FEM    <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Hexahedron<27>::key:   r_val = Teuchos::rcp(new Basis_HGRAD_HEX_C2_FEM    <DeviceType,outputValueType,pointValueType>()); break;
+        //case shards::Wedge<15>::key:        r_val = Teuchos::rcp(new Basis_HGRAD_WEDGE_I2_FEM  <DeviceType,outputValueType,pointValueType>()); break;
+      case shards::Wedge<18>::key:        r_val = Teuchos::rcp(new Basis_HGRAD_WEDGE_C2_FEM  <DeviceType,outputValueType,pointValueType>()); break;
+        //case shards::Pyramid<13>::key:      r_val = Teuchos::rcp(new Basis_HGRAD_PYR_I2_FEM    <DeviceType,outputValueType,pointValueType>()); break;
 
       case shards::Quadrilateral<8>::key: 
       case shards::Line<3>::key:
@@ -250,7 +255,6 @@ namespace Intrepid2 {
     /** \struct Intrepid2::CellTools::SubcellParamData
         \brief Parametrization coefficients of edges and faces of reference cells
      */
-    typedef Kokkos::DynRankView<double,ExecSpaceType> subcellParamViewType;
     struct SubcellParamData {
       subcellParamViewType dummy;
       subcellParamViewType lineEdges;  // edge maps for 2d non-standard cells; shell line and beam
@@ -264,6 +268,24 @@ namespace Intrepid2 {
     static SubcellParamData subcellParamData_;
 
     static bool isSubcellParametrizationSet_;
+
+
+    /** \brief  Sets orientation-preserving parametrizations of reference edges and faces of cell
+        topologies with reference cells. Used to populate Intrepid2::CellTools::SubcellParamData.
+
+        See Intrepid2::CellTools::setSubcellParametrization and Section \ref sec_cell_topology_subcell_map
+        more information about parametrization maps.
+
+        \param  subcellParam           [out]  - array with the coefficients of the parametrization map
+        \param  subcellDim             [in]   - dimension of the subcells being parametrized (1 or 2)
+        \param  parentCell             [in]   - topology of the parent cell owning the subcells.
+    */
+    static void
+    setSubcellParametrization(       subcellParamViewType &subcellParam,
+                               const ordinal_type          subcellDim,
+                               const shards::CellTopology  parentCell );
+
+  public:
 
     /** \brief  Defines orientation-preserving parametrizations of reference edges and faces of cell
         topologies with reference cells.
@@ -300,23 +322,6 @@ namespace Intrepid2 {
 
     */
     static void setSubcellParametrization();
-
-    /** \brief  Sets orientation-preserving parametrizations of reference edges and faces of cell
-        topologies with reference cells. Used to populate Intrepid2::CellTools::SubcellParamData.
-
-        See Intrepid2::CellTools::setSubcellParametrization and Section \ref sec_cell_topology_subcell_map
-        more information about parametrization maps.
-
-        \param  subcellParametrization [out]  - array with the coefficients of the parametrization map
-        \param  subcellDim             [in]   - dimension of the subcells being parametrized (1 or 2)
-        \param  parentCell             [in]   - topology of the parent cell owning the subcells.
-    */
-    static void
-    setSubcellParametrization(       subcellParamViewType &subcellParam,
-                               const ordinal_type          subcellDim,
-                               const shards::CellTopology  parentCell );
-
-  public:
 
    /** \brief  Default constructor.
       */
@@ -361,20 +366,66 @@ namespace Intrepid2 {
                 or not the points are inside a reference cell.
 
         \param  jacobian          [out] - rank-4 array with dimensions (C,P,D,D) with the Jacobians
-        \param  points            [in]  - rank-2/3 array with dimensions (P,D)/(C,P,D) with the evaluation points
-        \param  cellWorkset       [in]  - rank-3 array with dimensions (C,N,D) with the nodes of the cell workset
-        \param  basis             [in]  - HGrad basis for reference to physical cell mapping
+        \param  points               [in]  - rank-2/3 array with dimensions (P,D)/(C,P,D) with the evaluation points
+        \param  cellWorkset    [in]  - rank-3 container with nominal dimensions (C,N,D) with the nodes of the cell workset
+        \param  basis                 [in]  - HGrad basis for reference to physical cell mapping
+        \param  startCell        [in] - first cell index in cellWorkset for which we should compute the Jacobian; corresponds to the 0 index in Jacobian and/or points container.  Default: 0.
+        \param  endCell            [in] - first cell index in cellWorkset that we do not process; endCell - startCell must equal the extent of the Jacobian container in dimension 0.  Default: -1, a special value that indicates the extent of the cellWorkset should be used.
      */
     template<typename jacobianValueType,    class ...jacobianProperties,
              typename pointValueType,       class ...pointProperties,
-             typename worksetCellValueType, class ...worksetCellProperties,
-             typename HGradBasisPtrType>
+             typename WorksetType,
+             typename HGradBasisType>
     static void
     setJacobian(       Kokkos::DynRankView<jacobianValueType,jacobianProperties...>       jacobian,
                  const Kokkos::DynRankView<pointValueType,pointProperties...>             points,
-                 const Kokkos::DynRankView<worksetCellValueType,worksetCellProperties...> worksetCell,
-                 const HGradBasisPtrType basis );
+                 const WorksetType worksetCell,
+                 const Teuchos::RCP<HGradBasisType> basis,
+                 const int startCell=0, const int endCell=-1);
+    
+    /** \brief  Computes the Jacobian matrix \e DF of the reference-to-physical frame map \e F.
 
+                There are two use cases:
+        \li     Computes Jacobians \f$DF_{c}\f$ of the reference-to-physical map for \b all physical cells
+                in a cell workset on a \b single set of reference points stored in a rank-2 (P,D) array;
+        \li     Computes Jacobians \f$DF_{c}\f$ of the reference-to-physical map for \b all physical cells
+                in a cell workset on \b multiple reference point sets having the same number of points,
+                indexed by cell ordinal, and stored in a rank-3 (C,P,D) array;
+
+                For a single point set in a rank-2 array (P,D) returns a rank-4 (C,P,D,D) array
+                such that
+        \f[
+                \mbox{jacobian}(c,p,i,j) = [DF_{c}(\mbox{points}(p))]_{ij} \quad c=0,\ldots, C
+        \f]
+                For multiple sets of reference points in a rank-3 (C,P,D) array returns
+                rank-4 (C,P,D,D) array such that
+        \f[
+                \mbox{jacobian}(c,p,i,j) = [DF_{c}(\mbox{points}(c,p))]_{ij} \quad c=0,\ldots, C
+        \f]
+
+                Requires pointer to HGrad basis that defines reference to physical cell mapping.
+                See Section \ref sec_cell_topology_ref_map_DF for definition of the Jacobian.
+
+                \warning
+                The points are not required to be in the reference cell associated with the specified
+                cell topology. CellTools provides several inclusion tests methods to check whether
+                or not the points are inside a reference cell.
+
+        \param  jacobian          [out] - rank-4 array with dimensions (C,P,D,D) with the Jacobians
+        \param  cellWorkset    [in]  - rank-3 container with nominal dimensions (C,N,D) with the nodes of the cell workset
+        \param  gradients         [in]  - rank-3/4 array with dimensions (N,P,D)/(C,N,P,D) with the gradients of the physical-to-cell mapping
+        \param  startCell        [in] - first cell index in cellWorkset for which we should compute the Jacobian; corresponds to the 0 index in Jacobian and/or points container.  Default: 0.
+        \param  endCell            [in] - first cell index in cellWorkset that we do not process; endCell - startCell must equal the extent of the Jacobian container in dimension 0.  Default: -1, a special value that indicates the extent of the cellWorkset should be used.
+     */
+    template<typename jacobianValueType,    class ...jacobianProperties,
+             typename BasisGradientsType,
+             typename WorksetType>
+    static void
+    setJacobian(       Kokkos::DynRankView<jacobianValueType,jacobianProperties...> jacobian,
+                 const WorksetType worksetCell,
+                 const BasisGradientsType gradients,
+                 const int startCell=0, const int endCell=-1);
+    
     /** \brief  Computes the Jacobian matrix \e DF of the reference-to-physical frame map \e F.
 
                 There are two use cases:
@@ -456,7 +507,40 @@ namespace Intrepid2 {
     setJacobianDet(       Kokkos::DynRankView<jacobianDetValueType,jacobianDetProperties...>  jacobianDet,
                     const Kokkos::DynRankView<jacobianValueType,jacobianProperties...>        jacobian );
 
+    /** \brief  Allocates and returns a Data container suitable for storing determinants corresponding to the Jacobians in the Data container provided
 
+        \param  jacobian          [in]  - data with shape (C,P,D,D), as returned by CellGeometry::allocateJacobianData()
+        \return Data container with shape (C,P)
+    */
+    template<class PointScalar>
+    static Data<PointScalar,DeviceType> allocateJacobianDet( const Data<PointScalar,DeviceType> & jacobian );
+
+    /** \brief  Allocates and returns a Data container suitable for storing inverses corresponding to the Jacobians in the Data container provided
+
+        \param  jacobian          [in]  - data with shape (C,P,D,D), as returned by CellGeometry::allocateJacobianData()
+        \return Data container with shape (C,P,D,D)
+    */
+    template<class PointScalar>
+    static Data<PointScalar,DeviceType> allocateJacobianInv( const Data<PointScalar,DeviceType> & jacobian );
+
+    /** \brief  Computes determinants corresponding to the Jacobians in the Data container provided
+
+        \param  jacobianDet   [out]  - data with shape (C,P), as returned by CellTools::allocateJacobianDet()
+        \param  jacobian          [in]    - data with shape (C,P,D,D), as returned by CellGeometry::allocateJacobianData()
+    */
+    template<class PointScalar>
+    static void setJacobianDet( Data<PointScalar,DeviceType> & jacobianDet,
+                               const Data<PointScalar,DeviceType> & jacobian);
+
+    /** \brief  Computes determinants corresponding to the Jacobians in the Data container provided
+
+        \param  jacobianInv   [out]  - data container with shape (C,P,D,D), as returned by CellTools::allocateJacobianInv()
+        \param  jacobian          [in]    - data with shape (C,P,D,D), as returned by CellGeometry::allocateJacobianData()
+    */
+    template<class PointScalar>
+    static void setJacobianInv( Data<PointScalar,DeviceType> & jacobianInv,
+                               const Data<PointScalar,DeviceType> & jacobian);
+    
     //============================================================================================//
     //                                                                                            //
     //                     Node information                                                       //
@@ -990,19 +1074,19 @@ namespace Intrepid2 {
         inclusion tests methods to check whether or not the points are inside a reference cell.
 
         \param  physPoints        [out] - rank-3 array with dimensions (C,P,D) with the images of the ref. points
-        \param  refPoints         [in]  - rank-3/2 array with dimensions (C,P,D)/(P,D) with points in reference frame
-        \param  cellWorkset       [in]  - rank-3 array with dimensions (C,N,D) with the nodes of the cell workset
-        \param  basis             [in]  - pointer to HGrad basis used in reference-to-physical cell mapping
+        \param  refPoints          [in]  - rank-3/2 array with dimensions (C,P,D)/(P,D) with points in reference frame
+        \param  cellWorkset      [in]  - rank-3 container with nominal dimensions (C,N,D) with the nodes of the cell workset
+        \param  basis                   [in]  - pointer to HGrad basis used in reference-to-physical cell mapping
 
     */
     template<typename physPointValueType,   class ...physPointProperties,
              typename refPointValueType,    class ...refPointProperties,
-             typename worksetCellValueType, class ...worksetCellProperties,
+             typename WorksetType,
              typename HGradBasisPtrType>
     static void
     mapToPhysicalFrame(       Kokkos::DynRankView<physPointValueType,physPointProperties...>     physPoints,
                         const Kokkos::DynRankView<refPointValueType,refPointProperties...>       refPoints,
-                        const Kokkos::DynRankView<worksetCellValueType,worksetCellProperties...> worksetCell,
+                        const WorksetType worksetCell,
                         const HGradBasisPtrType basis );
 
     /** \brief  Computes \e F, the reference-to-physical frame map.
@@ -1139,6 +1223,28 @@ namespace Intrepid2 {
                            const ordinal_type subcellDim,
                            const ordinal_type subcellOrd,
                            const shards::CellTopology parentCell );
+
+
+    /**
+     \brief  Overload of mapToReferenceSubcell that runs on device.
+
+        \param  refSubcellPoints  [out] - rank-2 (P,D1) array with images of parameter space points
+        \param  paramPoints       [in]  - rank-2 (P,D2) array with points in 1D or 2D parameter domain
+        \param  subcellMap        [in]  - array with the coefficients of the subcell parametrization map
+        \param  subcellDim        [in]  - dimension of the subcell where points are mapped to
+        \param  subcellOrd        [in]  - subcell ordinal
+        \param  parentCellDim     [in]  - dimension of the parent cell.
+     */
+    template<typename refSubcellPointValueType, class ...refSubcellPointProperties,
+             typename paramPointValueType, class ...paramPointProperties>
+    static void
+    KOKKOS_INLINE_FUNCTION
+    mapToReferenceSubcell(       Kokkos::DynRankView<refSubcellPointValueType,refSubcellPointProperties...> refSubcellPoints,
+                           const Kokkos::DynRankView<paramPointValueType,paramPointProperties...>           paramPoints,
+                           const subcellParamViewType subcellMap,
+                           const ordinal_type subcellDim,
+                           const ordinal_type subcellOrd,
+                           const ordinal_type parentCellDim);
 
 
     //============================================================================================//

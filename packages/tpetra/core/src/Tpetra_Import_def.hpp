@@ -356,6 +356,7 @@ namespace Tpetra {
         Array<LO>  newRemoteLIDs(indexIntoRemotePIDs-cnt);
         Array<int> newRemotePIDs(indexIntoRemotePIDs-cnt);
         cnt = 0;
+
         for (size_type j = 0; j < indexIntoRemotePIDs; ++j)
           if(tRemotePIDs[j] != -1) {
             newRemoteGIDs[cnt] = tRemoteGIDs[j];
@@ -903,6 +904,7 @@ namespace Tpetra {
 
       typename decltype (this->TransferData_->exportLIDs_)::t_host
         exportLIDs (view_alloc_no_init ("exportLIDs"), numExportIDs);
+
       for (size_type k = 0; k < numExportIDs; ++k) {
         exportLIDs[k] = sourceMap->getLocalElement (exportGIDs[k]);
       }
@@ -1004,6 +1006,7 @@ namespace Tpetra {
     const LO LINVALID = Teuchos::OrdinalTraits<LO>::invalid ();
     const LO numTgtLids = as<LO> (numTgtGids);
     LO numPermutes = 0;
+
     for (LO tgtLid = numSameGids; tgtLid < numTgtLids; ++tgtLid) {
       const GO curTargetGid = rawTgtGids[tgtLid];
       // getLocalElement() returns LINVALID if the GID isn't in the
@@ -1292,6 +1295,7 @@ namespace Tpetra {
       typename decltype (this->TransferData_->exportLIDs_)::t_host
         exportLIDs (view_alloc_no_init ("exportLIDs"), numExportIDs);
       ArrayView<const GO> expGIDs = exportGIDs ();
+
       for (size_type k = 0; k < numExportIDs; ++k) {
         exportLIDs[k] = source.getLocalElement (expGIDs[k]);
       }
@@ -1530,6 +1534,7 @@ namespace Tpetra {
     // Convert the permute GIDs to permute-from LIDs in the source Map.
     Array<LO> permuteToLIDsUnion(numPermuteIDsUnion);
     Array<LO> permuteFromLIDsUnion(numPermuteIDsUnion);
+
     for (size_type k = 0; k < numPermuteIDsUnion; ++k) {
       size_type idx = numSameIDsUnion + k;
       permuteToLIDsUnion[k] = static_cast<LO>(idx);
@@ -1823,6 +1828,7 @@ namespace Tpetra {
     if (debug) {
       badIndices = std::unique_ptr<std::vector<size_t>> (new std::vector<size_t>);
     }
+
     for (size_t i = 0; i < NumRemotes; ++i) {
       const LO oldLclInd = oldRemoteLIDs[i];
       if (oldLclInd == Teuchos::OrdinalTraits<LO>::invalid ()) {

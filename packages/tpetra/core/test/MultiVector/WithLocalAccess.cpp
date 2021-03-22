@@ -114,7 +114,7 @@ namespace { // (anonymous)
       {
         using local_access_type =
           LocalAccess<multivec_type, dev_mem_space,
-                      Tpetra::Details::read_only>;
+                      Tpetra::Access::ReadOnly>;
 
         using mv_mlo = GetMasterLocalObject<local_access_type>::
           master_local_object_type;
@@ -291,7 +291,7 @@ namespace { // (anonymous)
 
       using local_access_type = decltype (lclAccess);
       static_assert(std::is_same<local_access_type::access_mode,
-        Tpetra::Details::write_only>::value, "Incorrect AccessMode");
+        Tpetra::Access::WriteOnly>::value, "Incorrect AccessMode");
       static_assert
         (std::is_same<local_access_type::global_object_type, vec_type>::value,
          "Incorrect global_object_type");
@@ -335,6 +335,7 @@ namespace { // (anonymous)
         KOKKOS_LAMBDA (const LO lclRow) {
           X_lcl_1d_wo(lclRow) = 42.0;
         });
+      Kokkos::fence();
     }
 
     {
@@ -360,6 +361,7 @@ namespace { // (anonymous)
           std::pair<double, double> p {3.0, 4.0};
           X_lcl_1d_wo(lclRow) = p.first * p.second;
         });
+      Kokkos::fence();
 
       // Just plain modify some entries, in some sequential order.
       // Just in case LO is unsigned, start at +1.

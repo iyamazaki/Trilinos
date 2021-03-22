@@ -1,36 +1,9 @@
 /*
- * Copyright (C) 2009-2017, 2020 National Technology & Engineering Solutions of
- * Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
+ * Copyright(C) 1999-2021 National Technology & Engineering Solutions
+ * of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
  * NTESS, the U.S. Government retains certain rights in this software.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *
- *     * Redistributions in binary form must reproduce the above
- *       copyright notice, this list of conditions and the following
- *       disclaimer in the documentation and/or other materials provided
- *       with the distribution.
- *
- *     * Neither the name of NTESS nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * See packages/seacas/LICENSE for details
  */
 
 /*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -73,8 +46,8 @@
 
 int ilog2i(size_t n)
 {
-  size_t       i  = 0;
-  unsigned int n1 = n;
+  size_t i  = 0;
+  size_t n1 = n;
   while ((n1 >>= 1) != 0U) {
     ++i;
   }
@@ -534,7 +507,7 @@ int generate_loadbal(Machine_Description *machine, Problem_Description *problem,
       Gen_Error(0, "fatal: insufficient memory");
       goto cleanup;
     }
-    start_proc = 0; /* counter to keep track of proccessors for each group */
+    start_proc = 0; /* counter to keep track of processors for each group */
   }
 
   /*
@@ -1078,7 +1051,7 @@ namespace {
     size_t           num_found = 0;
 
     std::vector<int> list_ptr;
-    int              end;
+    size_t           end;
 
     /*
      * look for discontinuities in the graph
@@ -1162,7 +1135,7 @@ namespace {
                   ;
                 }
                 size_t distance = 1;
-                for (int i = graph->start[ecnt]; i < end; i++) {
+                for (size_t i = graph->start[ecnt]; i < end; i++) {
                   int proc2 = lb->vertex2proc[graph->adj[i] - 1];
                   assert(proc2 < machine->num_procs);
                   if (proc2 == proc) {
@@ -1192,7 +1165,7 @@ namespace {
                   else {
                     end = graph->nadj;
                   }
-                  for (int i = graph->start[ecnt]; i < end; i++) {
+                  for (size_t i = graph->start[ecnt]; i < end; i++) {
                     int proc2 = lb->vertex2proc[graph->adj[i] - 1];
                     assert(proc2 < machine->num_procs);
                     if (proc2 == proc) {

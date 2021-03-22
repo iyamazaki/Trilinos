@@ -20,7 +20,7 @@ SET(TACHO_HAVE_VTUNE ${TPL_ENABLE_VTune})
 
 #-----------------------------------------------------------------------------
 
-TRIBITS_CONFIGURE_FILE(${PACKAGE_NAME}_config.h)
+TRIBITS_CONFIGURE_FILE(Tacho_config.h)
 
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})
@@ -36,13 +36,15 @@ SET(HEADERS_PRIVATE "")
 SET(SOURCES "")
 
 FILE(GLOB HEADERS_PUBLIC *.hpp impl/*.hpp)
-LIST( APPEND HEADERS_PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/${PACKAGE_NAME}_config.h )
+LIST( APPEND HEADERS_PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/Tacho_config.h )
 
 
 APPEND_SET(SOURCES
   impl/Tacho_Util.cpp
   impl/Tacho_Blas_External.cpp
   impl/Tacho_Lapack_External.cpp
+  impl/Tacho_GraphTools_Metis.cpp
+  impl/Tacho_SymbolicTools.cpp
   eti/Tacho_Solver_ETI_ChseLevTaskScheduler_complex_double_Cuda.cpp
   eti/Tacho_Solver_ETI_ChseLevTaskScheduler_complex_double_OpenMP.cpp
   eti/Tacho_Solver_ETI_ChseLevTaskScheduler_complex_double_Serial.cpp

@@ -88,7 +88,6 @@ namespace Intrepid2 {
                            _physPoints.extent(1),
                            iter );
               auto phys = Kokkos::subdynrankview( _physPoints, cell, pt, Kokkos::ALL());
-        const auto dofs = Kokkos::subdynrankview( _worksetCells, cell, Kokkos::ALL(), Kokkos::ALL());
 
         const auto valRank = _basisVals.rank();
         const auto val = ( valRank == 2 ? Kokkos::subdynrankview( _basisVals,       Kokkos::ALL(), pt) :
@@ -100,7 +99,7 @@ namespace Intrepid2 {
         for (ordinal_type i=0;i<dim;++i) {
           phys(i) = 0;
           for (ordinal_type bf=0;bf<cardinality;++bf)
-            phys(i) += dofs(bf, i)*val(bf);
+            phys(i) += _worksetCells(cell, bf, i)*val(bf);
         }
       }
     };
@@ -129,14 +128,14 @@ namespace Intrepid2 {
   template<typename SpT>
   template<typename physPointValueType,   class ...physPointProperties,
            typename refPointValueType,    class ...refPointProperties,
-           typename worksetCellValueType, class ...worksetCellProperties,
+           typename WorksetType,
            typename HGradBasisPtrType>
   void
   CellTools<SpT>::
-  mapToPhysicalFrame(       Kokkos::DynRankView<physPointValueType,physPointProperties...>     physPoints,
-                      const Kokkos::DynRankView<refPointValueType,refPointProperties...>       refPoints,
-                      const Kokkos::DynRankView<worksetCellValueType,worksetCellProperties...> worksetCell,
-                      const HGradBasisPtrType basis ) {
+  mapToPhysicalFrame(      Kokkos::DynRankView<physPointValueType,physPointProperties...>     physPoints,
+                     const Kokkos::DynRankView<refPointValueType,refPointProperties...>       refPoints,
+                     const WorksetType worksetCell,
+                     const HGradBasisPtrType basis ) {
 #ifdef HAVE_INTREPID2_DEBUG
     CellTools_mapToPhysicalFrameArgs( physPoints, refPoints, worksetCell, basis->getBaseCellTopology() );
 #endif
@@ -174,13 +173,12 @@ namespace Intrepid2 {
       break;
     }
     }
-
-    typedef Kokkos::DynRankView<worksetCellValueType,worksetCellProperties...> worksetCellViewType;
-    typedef FunctorCellTools::F_mapToPhysicalFrame<physPointViewType,worksetCellViewType,valViewType> FunctorType;
-    typedef typename ExecSpace<typename worksetCellViewType::execution_space,SpT>::ExecSpaceType ExecSpaceType;
+    
+    using FunctorType    = FunctorCellTools::F_mapToPhysicalFrame<physPointViewType,WorksetType,valViewType>;
+    using ExecutionSpace = typename Kokkos::DynRankView<physPointValueType,physPointProperties...>::execution_space;
 
     const auto loopSize = physPoints.extent(0)*physPoints.extent(1);
-    Kokkos::RangePolicy<ExecSpaceType,Kokkos::Schedule<Kokkos::Static> > policy(0, loopSize);
+    Kokkos::RangePolicy<ExecutionSpace,Kokkos::Schedule<Kokkos::Static> > policy(0, loopSize);
     Kokkos::parallel_for( policy, FunctorType(physPoints, worksetCell, vals) );
   }
 
@@ -223,20 +221,39 @@ namespace Intrepid2 {
                                   ">>> ERROR (Intrepid2::CellTools::mapToReferenceSubcell): refSubcellPoints dimension (0) does not match to paramPoints dimension(0).");
 #endif
 
+    if(!isSubcellParametrizationSet_)
+      setSubcellParametrization();
 
-    const ordinal_type cellDim = parentCell.getDimension();
-    const ordinal_type numPts  = paramPoints.extent(0);
+    INTREPID2_TEST_FOR_EXCEPTION( subcellDim != 1 &&
+                                  subcellDim != 2, std::invalid_argument,
+                                  ">>> ERROR (Intrepid2::CellTools::mapToReferenceSubcell): method defined only for 1 and 2-subcells");
+
 
     // Get the subcell map, i.e., the coefficients of the parametrization function for the subcell
-
-    // can i get this map from devices ?
     subcellParamViewType subcellMap;
     getSubcellParametrization( subcellMap,
                                subcellDim,
                                parentCell );
 
-    // subcell parameterization should be small computation (numPts is small) and it should be decorated with
-    // kokkos inline... let's not do this yet
+    // Apply the parametrization map to every point in parameter domain
+    mapToReferenceSubcell( refSubcellPoints, paramPoints, subcellMap, subcellDim, subcellOrd, parentCell.getDimension());
+  }
+
+
+  template<typename SpT>
+  template<typename refSubcellPointValueType, class ...refSubcellPointProperties,
+           typename paramPointValueType, class ...paramPointProperties>
+  void
+  KOKKOS_INLINE_FUNCTION
+  CellTools<SpT>::
+  mapToReferenceSubcell(       Kokkos::DynRankView<refSubcellPointValueType,refSubcellPointProperties...> refSubcellPoints,
+                         const Kokkos::DynRankView<paramPointValueType,paramPointProperties...>           paramPoints,
+                         const subcellParamViewType subcellMap,
+                         const ordinal_type subcellDim,
+                         const ordinal_type subcellOrd,
+                         const ordinal_type parentCellDim ) {
+
+    const ordinal_type numPts  = paramPoints.extent(0);
 
     // Apply the parametrization map to every point in parameter domain
     switch (subcellDim) {
@@ -246,7 +263,7 @@ namespace Intrepid2 {
         const auto v = paramPoints(pt, 1);
 
         // map_dim(u,v) = c_0(dim) + c_1(dim)*u + c_2(dim)*v because both Quad and Tri ref faces are affine!
-        for (ordinal_type i=0;i<cellDim;++i)
+        for (ordinal_type i=0;i<parentCellDim;++i)
           refSubcellPoints(pt, i) = subcellMap(subcellOrd, i, 0) + ( subcellMap(subcellOrd, i, 1)*u +
                                                                      subcellMap(subcellOrd, i, 2)*v );
       }
@@ -255,16 +272,12 @@ namespace Intrepid2 {
     case 1: {
       for (ordinal_type pt=0;pt<numPts;++pt) {
         const auto u = paramPoints(pt, 0);
-        for (ordinal_type i=0;i<cellDim;++i)
+        for (ordinal_type i=0;i<parentCellDim;++i)
           refSubcellPoints(pt, i) = subcellMap(subcellOrd, i, 0) + ( subcellMap(subcellOrd, i, 1)*u );
       }
       break;
     }
-    default: {
-      INTREPID2_TEST_FOR_EXCEPTION( subcellDim != 1 &&
-                                    subcellDim != 2, std::invalid_argument,
-                                    ">>> ERROR (Intrepid2::CellTools::mapToReferenceSubcell): method defined only for 1 and 2-subcells");
-    }
+    default: {}
     }
   }
 }

@@ -49,6 +49,7 @@
 #include <Xpetra_CrsGraphFactory.hpp>
 #include <Xpetra_CrsGraph.hpp>
 #include <Xpetra_ImportFactory.hpp>
+#include <Xpetra_ExportFactory.hpp>
 #include <Xpetra_MapFactory.hpp>
 #include <Xpetra_Map.hpp>
 #include <Xpetra_Matrix.hpp>
@@ -81,7 +82,34 @@
 // Should be removed once we are confident that this works.
 //#define DJS_READ_ENV_VARIABLES
 
+
 namespace MueLu {
+
+  namespace Details {
+    template<class real_type, class LO>
+    struct DropTol {
+      
+      DropTol()               = default;
+      DropTol(DropTol const&) = default;
+      DropTol(DropTol &&)     = default;
+      
+      DropTol& operator=(DropTol const&) = default;
+      DropTol& operator=(DropTol &&)     = default;
+      
+      DropTol(real_type val_, real_type diag_, LO col_, bool drop_)
+        : val{val_}, diag{diag_},  col{col_}, drop{drop_}
+      {}
+      
+      real_type val  {Teuchos::ScalarTraits<real_type>::zero()};
+                  real_type diag {Teuchos::ScalarTraits<real_type>::zero()};
+      LO        col  {Teuchos::OrdinalTraits<LO>::invalid()};
+      bool      drop {true};
+
+      // CMS: Auxillary information for debugging info
+      //      real_type aux_val {Teuchos::ScalarTraits<real_type>::nan()};
+    };
+  }
+
 
   template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
   RCP<const ParameterList> CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::GetValidParameterList() const {
@@ -91,57 +119,116 @@ namespace MueLu {
     SET_VALID_ENTRY("aggregation: drop tol");
     SET_VALID_ENTRY("aggregation: Dirichlet threshold");
     SET_VALID_ENTRY("aggregation: drop scheme");
+    SET_VALID_ENTRY("aggregation: block diagonal: interleaved blocksize");
     {
       typedef Teuchos::StringToIntegralParameterEntryValidator<int> validatorType;
-      validParamList->getEntry("aggregation: drop scheme").setValidator(
-        rcp(new validatorType(Teuchos::tuple<std::string>("classical", "distance laplacian"), "aggregation: drop scheme")));
+      validParamList->getEntry("aggregation: drop scheme").setValidator(rcp(new validatorType(Teuchos::tuple<std::string>("classical", "distance laplacian","block diagonal","block diagonal classical","block diagonal distance laplacian"), "aggregation: drop scheme")));
+                                                                        
     }
     SET_VALID_ENTRY("aggregation: distance laplacian algo");
+    SET_VALID_ENTRY("aggregation: classical algo");
 #undef  SET_VALID_ENTRY
     validParamList->set< bool >                  ("lightweight wrap",           true, "Experimental option for lightweight graph access");
 
     validParamList->set< RCP<const FactoryBase> >("A",                  Teuchos::null, "Generating factory of the matrix A");
     validParamList->set< RCP<const FactoryBase> >("UnAmalgamationInfo", Teuchos::null, "Generating factory for UnAmalgamationInfo");
     validParamList->set< RCP<const FactoryBase> >("Coordinates",        Teuchos::null, "Generating factory for Coordinates");
+    validParamList->set< RCP<const FactoryBase> >("BlockNumber",        Teuchos::null, "Generating factory for Coordinates");
 
     return validParamList;
   }
-
+    
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
   CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::CoalesceDropFactory() : predrop_(Teuchos::null) { }
-
+  
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
   void CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::DeclareInput(Level &currentLevel) const {
     Input(currentLevel, "A");
     Input(currentLevel, "UnAmalgamationInfo");
-
+    
     const ParameterList& pL = GetParameterList();
     if (pL.get<bool>("lightweight wrap") == true) {
-      if (pL.get<std::string>("aggregation: drop scheme") == "distance laplacian")
-        Input(currentLevel, "Coordinates");
-
-    }
+      std::string algo = pL.get<std::string>("aggregation: drop scheme");
+      if (algo == "distance laplacian" || algo == "block diagonal distance laplacian") {
+        Input(currentLevel, "Coordinates");    
+      }
+      if (algo == "block diagonal classical" || algo == "block diagonal distance laplacian" || algo == "block diagonal")  {
+        Input(currentLevel, "BlockNumber");
+      }
+    }     
+    
   }
-
+  
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
   void CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Build(Level &currentLevel) const {
-
+    
     FactoryMonitor m(*this, "Build", currentLevel);
-
+    
     typedef Teuchos::ScalarTraits<SC> STS;
     typedef typename STS::magnitudeType real_type;
     typedef Xpetra::MultiVector<real_type,LO,GO,NO> RealValuedMultiVector;
-
+    typedef Xpetra::MultiVectorFactory<real_type,LO,GO,NO> RealValuedMultiVectorFactory;
+    
     if (predrop_ != Teuchos::null)
       GetOStream(Parameters0) << predrop_->description();
 
-    RCP<Matrix> A = Get< RCP<Matrix> >(currentLevel, "A");
+    RCP<Matrix> realA = Get< RCP<Matrix> >(currentLevel, "A");
     RCP<AmalgamationInfo> amalInfo = Get< RCP<AmalgamationInfo> >(currentLevel, "UnAmalgamationInfo");
-
     const ParameterList  & pL = GetParameterList();
     bool doExperimentalWrap = pL.get<bool>("lightweight wrap");
 
     GetOStream(Parameters0) << "lightweight wrap = " << doExperimentalWrap << std::endl;
+    std::string algo = pL.get<std::string>("aggregation: drop scheme");
+    
+    RCP<RealValuedMultiVector> Coords;
+
+    RCP<Matrix> A;    
+    if(algo == "distance laplacian" ) { 
+      // Grab the coordinates for distance laplacian
+      Coords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
+      A = realA;
+    }
+    else if(algo == "block diagonal") {
+      // Handle the "block diagonal" filtering and then leave
+      BlockDiagonalize(currentLevel,realA,false);
+      return;
+    }
+    else if (algo == "block diagonal classical" || algo == "block diagonal distance laplacian")  {
+      // Handle the "block diagonal" filtering, and then continue onward
+      RCP<Matrix> filteredMatrix = BlockDiagonalize(currentLevel,realA,true);
+      if(algo == "block diagonal") return;
+      else if(algo == "block diagonal distance laplacian") {  
+        // We now need to expand the coordinates by the interleaved blocksize
+        LO blocksize = as<LO>(pL.get<int>("aggregation: block diagonal: interleaved blocksize"));
+        RCP<RealValuedMultiVector> OldCoords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
+        if (OldCoords->getLocalLength() != realA->getNodeNumRows()) {
+           LO dim = (LO) OldCoords->getNumVectors();
+           Coords = RealValuedMultiVectorFactory::Build(realA->getRowMap(),dim);
+           for(LO k=0; k<dim; k++){
+             ArrayRCP<const real_type> old_vec = OldCoords->getData(k);
+             ArrayRCP<real_type>       new_vec = Coords->getDataNonConst(k);
+             for(LO i=0; i <(LO)OldCoords->getLocalLength(); i++) {   
+               LO new_base = i*dim;
+               for(LO j=0; j<blocksize; j++) 
+                new_vec[new_base + j] = old_vec[i];
+             }
+          }
+        }
+        else {
+          Coords = OldCoords;
+        }  
+        algo = "distance laplacian";
+      }
+      else if(algo == "block diagonal classical") {
+        algo = "classical";
+      }
+      // Both cases
+      A = filteredMatrix;
+    }
+    else {
+      A = realA;
+    }
+
 
     // decide wether to use the fast-track code path for standard maps or the somewhat slower
     // code path for non-standard maps
@@ -155,14 +242,13 @@ namespace MueLu {
     }*/
 
     if (doExperimentalWrap) {
-      std::string algo = pL.get<std::string>("aggregation: drop scheme");
-
       TEUCHOS_TEST_FOR_EXCEPTION(predrop_ != null   && algo != "classical", Exceptions::RuntimeError, "Dropping function must not be provided for \"" << algo << "\" algorithm");
       TEUCHOS_TEST_FOR_EXCEPTION(algo != "classical" && algo != "distance laplacian", Exceptions::RuntimeError, "\"algorithm\" must be one of (classical|distance laplacian)");
 
       SC threshold = as<SC>(pL.get<double>("aggregation: drop tol"));
       std::string distanceLaplacianAlgoStr = pL.get<std::string>("aggregation: distance laplacian algo");
-      real_type distanceLaplacianThreshold = STS::magnitude(threshold);
+      std::string classicalAlgoStr = pL.get<std::string>("aggregation: classical algo");
+      real_type realThreshold = STS::magnitude(threshold);// CMS: Rename this to "magnitude threshold" sometime
       ////////////////////////////////////////////////////
       // Remove this bit once we are confident that cut-based dropping works.
 #ifdef HAVE_MUELU_DEBUG
@@ -175,7 +261,7 @@ namespace MueLu {
 
       if (getenv("MUELU_DROP_TOLERANCE_THRESHOLD")) {
         auto tmp = atoi(getenv("MUELU_DROP_TOLERANCE_THRESHOLD"));
-        distanceLaplacianThreshold = 1e-4*tmp;
+        realThreshold = 1e-4*tmp;
       }
 
 # ifdef HAVE_MUELU_DEBUG
@@ -185,10 +271,11 @@ namespace MueLu {
 # endif
 #endif
       ////////////////////////////////////////////////////
+ 
+      enum decisionAlgoType {defaultAlgo, unscaled_cut, scaled_cut, scaled_cut_symmetric};
 
-      enum distanceLaplacianAlgoType {defaultAlgo, unscaled_cut, scaled_cut};
-
-      distanceLaplacianAlgoType distanceLaplacianAlgo = defaultAlgo;
+      decisionAlgoType distanceLaplacianAlgo = defaultAlgo;
+      decisionAlgoType classicalAlgo = defaultAlgo;
       if (algo == "distance laplacian") {
         if (distanceLaplacianAlgoStr == "default")
           distanceLaplacianAlgo = defaultAlgo;
@@ -196,9 +283,22 @@ namespace MueLu {
           distanceLaplacianAlgo = unscaled_cut;
         else if (distanceLaplacianAlgoStr == "scaled cut")
           distanceLaplacianAlgo = scaled_cut;
+        else if (distanceLaplacianAlgoStr == "scaled cut symmetric")
+          distanceLaplacianAlgo = scaled_cut_symmetric;
         else
           TEUCHOS_TEST_FOR_EXCEPTION(true, Exceptions::RuntimeError, "\"aggregation: distance laplacian algo\" must be one of (default|unscaled cut|scaled cut), not \"" << distanceLaplacianAlgoStr << "\"");
         GetOStream(Runtime0) << "algorithm = \"" << algo << "\" distance laplacian algorithm = \"" << distanceLaplacianAlgoStr << "\": threshold = " << threshold << ", blocksize = " << A->GetFixedBlockSize() << std::endl;
+      } else if (algo == "classical") {
+        if (classicalAlgoStr == "default")
+          classicalAlgo = defaultAlgo;
+        else if (classicalAlgoStr == "unscaled cut")
+          classicalAlgo = unscaled_cut;
+        else if (classicalAlgoStr == "scaled cut")
+          classicalAlgo = scaled_cut;
+        else
+          TEUCHOS_TEST_FOR_EXCEPTION(true, Exceptions::RuntimeError, "\"aggregation: classical algo\" must be one of (default|unscaled cut|scaled cut), not \"" << classicalAlgoStr << "\"");
+        GetOStream(Runtime0) << "algorithm = \"" << algo << "\" classical algorithm = \"" << classicalAlgoStr << "\": threshold = " << threshold << ", blocksize = " << A->GetFixedBlockSize() << std::endl;
+        
       } else
         GetOStream(Runtime0) << "algorithm = \"" << algo << "\": threshold = " << threshold << ", blocksize = " << A->GetFixedBlockSize() << std::endl;
       Set<bool>(currentLevel, "Filtering", (threshold != STS::zero()));
@@ -262,10 +362,9 @@ namespace MueLu {
 
           RCP<Vector> ghostedDiag = MueLu::Utilities<SC,LO,GO,NO>::GetMatrixOverlappedDiagonal(*A);
           const ArrayRCP<const SC> ghostedDiagVals = ghostedDiag->getData(0);
-          const ArrayRCP<bool>     boundaryNodes(A->getNodeNumRows(), false);
+          ArrayRCP<const bool> boundaryNodes = MueLu::Utilities<SC,LO,GO,NO>::DetectDirichletRows(*A, dirichletThreshold);
 
           LO realnnz = 0;
-
           rows[0] = 0;
           for (LO row = 0; row < Teuchos::as<LO>(A->getRowMap()->getNodeNumElements()); ++row) {
             size_t nnz = A->getNumEntriesInLocalRow(row);
@@ -273,39 +372,139 @@ namespace MueLu {
             ArrayView<const SC> vals;
             A->getLocalRowView(row, indices, vals);
 
-            //FIXME the current predrop function uses the following
-            //FIXME    if(std::abs(vals[k]) > std::abs(threshold_) || grow == gcid )
-            //FIXME but the threshold doesn't take into account the rows' diagonal entries
-            //FIXME For now, hardwiring the dropping in here
-
-            LO rownnz = 0;
-            for (LO colID = 0; colID < Teuchos::as<LO>(nnz); colID++) {
-              LO col = indices[colID];
-
-              // we avoid a square root by using squared values
-              typename STS::magnitudeType aiiajj = STS::magnitude(threshold*threshold * ghostedDiagVals[col]*ghostedDiagVals[row]);  // eps^2*|a_ii|*|a_jj|
-              typename STS::magnitudeType aij    = STS::magnitude(vals[colID]*vals[colID]);                                          // |a_ij|^2
-
-              if (aij > aiiajj || row == col) {
-                columns[realnnz++] = col;
-                rownnz++;
-              } else
-                numDropped++;
+            if(classicalAlgo == defaultAlgo) {              
+              //FIXME the current predrop function uses the following
+              //FIXME    if(std::abs(vals[k]) > std::abs(threshold_) || grow == gcid )
+              //FIXME but the threshold doesn't take into account the rows' diagonal entries
+              //FIXME For now, hardwiring the dropping in here
+              
+              LO rownnz = 0;
+              for (LO colID = 0; colID < Teuchos::as<LO>(nnz); colID++) {
+                LO col = indices[colID];
+                
+                // we avoid a square root by using squared values
+                typename STS::magnitudeType aiiajj = STS::magnitude(threshold*threshold * ghostedDiagVals[col]*ghostedDiagVals[row]);  // eps^2*|a_ii|*|a_jj|
+                typename STS::magnitudeType aij    = STS::magnitude(vals[colID]*vals[colID]);                                          // |a_ij|^2
+                
+                if (aij > aiiajj || row == col) {
+                  columns[realnnz++] = col;
+                  rownnz++;
+                } else
+                  numDropped++;
+              }
+              rows[row+1] = realnnz;
             }
-            if (rownnz == 1) {
-              // If the only element remaining after filtering is diagonal, mark node as boundary
-              // FIXME: this should really be replaced by the following
-              //    if (indices.size() == 1 && indices[0] == row)
-              //        boundaryNodes[row] = true;
-              // We do not do it this way now because there is no framework for distinguishing isolated
-              // and boundary nodes in the aggregation algorithms
-              boundaryNodes[row] = true;
+            else {
+              /* Cut Algorithm */
+              //CMS
+              using DropTol = Details::DropTol<real_type,LO>;
+              std::vector<DropTol> drop_vec;
+              drop_vec.reserve(nnz);
+              const real_type zero = Teuchos::ScalarTraits<real_type>::zero();
+              const real_type one  = Teuchos::ScalarTraits<real_type>::one();
+              LO rownnz = 0;
+
+              // find magnitudes
+              for (LO colID = 0; colID < (LO)nnz; colID++) {
+                LO col = indices[colID];              
+                if (row == col) {
+                  drop_vec.emplace_back( zero, one, colID, false);
+                  continue;
+                }
+                
+                // Don't aggregate boundaries
+                if(boundaryNodes[colID]) continue;
+                typename STS::magnitudeType aiiajj = STS::magnitude(threshold*threshold * ghostedDiagVals[col]*ghostedDiagVals[row]);  // eps^2*|a_ii|*|a_jj|
+                typename STS::magnitudeType aij    = STS::magnitude(vals[colID]*vals[colID]);                                          // |a_ij|^2
+                drop_vec.emplace_back(aij, aiiajj, colID, false);
+              }
+
+              const size_t n = drop_vec.size();
+              
+              if (classicalAlgo == unscaled_cut) {
+                std::sort( drop_vec.begin(), drop_vec.end()
+                           , [](DropTol const& a, DropTol const& b) {
+                             return a.val > b.val;
+                           });
+                
+                bool drop = false;
+                for (size_t i=1; i<n; ++i) {
+                  if (!drop) {
+                    auto const& x = drop_vec[i-1];
+                    auto const& y = drop_vec[i];
+                    auto a = x.val;
+                    auto b = y.val;
+                    if (a > realThreshold*b) {
+                      drop = true;
+#ifdef HAVE_MUELU_DEBUG
+                      if (distanceLaplacianCutVerbose) {
+                        std::cout << "DJS: KEEP, N, ROW:  " << i+1 << ", " << n << ", " << row << std::endl;
+                      }
+#endif
+                    }
+                  }
+                  drop_vec[i].drop = drop;
+                }
+              } else if (classicalAlgo == scaled_cut) {               
+                  std::sort( drop_vec.begin(), drop_vec.end()
+                           , [](DropTol const& a, DropTol const& b) {
+                               return a.val/a.diag > b.val/b.diag;
+                             });
+                  bool drop = false;
+                  //                  printf("[%d] Scaled Cut: ",(int)row);
+                  //                  printf("%3d(%4s) ",indices[drop_vec[0].col],"keep");
+                  for (size_t i=1; i<n; ++i) {
+                    if (!drop) {
+                      auto const& x = drop_vec[i-1];
+                      auto const& y = drop_vec[i];
+                      auto a = x.val/x.diag;
+                      auto b = y.val/y.diag;
+                      if (a > realThreshold*b) {
+                        drop = true;
+
+#ifdef HAVE_MUELU_DEBUG
+                        if (distanceLaplacianCutVerbose) {
+                          std::cout << "DJS: KEEP, N, ROW:  " << i+1 << ", " << n << ", " << row << std::endl;
+                        }
+#endif
+                      }
+                      //                      printf("%3d(%4s) ",indices[drop_vec[i].col],drop?"drop":"keep");
+
+                    }
+                    drop_vec[i].drop = drop;
+                  }
+                  //                  printf("\n");
+              }
+              std::sort( drop_vec.begin(), drop_vec.end()
+                         , [](DropTol const& a, DropTol const& b) {
+                           return a.col < b.col;
+                         }
+                         );
+              
+              for (LO idxID =0; idxID<(LO)drop_vec.size(); idxID++) {
+                LO col = indices[drop_vec[idxID].col];
+                // don't drop diagonal
+                if (row == col) {
+                  columns[realnnz++] = col;
+                  rownnz++;
+                  continue;
+                }
+                
+                if (!drop_vec[idxID].drop) {
+                  columns[realnnz++] = col;
+                  rownnz++;
+                } else {
+                  numDropped++;
+                }
+              }
+              // CMS
+              rows[row+1] = realnnz;
+              
             }
-            rows[row+1] = realnnz;
-          }
+          }//end for row
+
           columns.resize(realnnz);
           numTotal = A->getNodeNumEntries();
-
           RCP<GraphBase> graph = rcp(new LWGraph(rows, columns, A->getRowMap(), A->getColMap(), "thresholded graph of A"));
           graph->SetBoundaryNodeMap(boundaryNodes);
           if (GetVerbLevel() & Statistics1) {
@@ -574,7 +773,7 @@ namespace MueLu {
         // ap: somehow, if I move this line to [*1*], Belos throws an error
         // I'm not sure what's going on. Do we always have to Get data, if we did
         // DeclareInput for it?
-        RCP<RealValuedMultiVector> Coords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
+        //        RCP<RealValuedMultiVector> Coords = Get< RCP<RealValuedMultiVector > >(currentLevel, "Coordinates");
 
         // Detect and record rows that correspond to Dirichlet boundary conditions
         // TODO If we use ArrayRCP<LO>, then we can record boundary nodes as usual.  Size
@@ -647,9 +846,9 @@ namespace MueLu {
             RCP<const Import> importer;
             {
               SubFactoryMonitor m1(*this, "Import construction", currentLevel);
-              if (blkSize == 1 && A->getCrsGraph()->getImporter() != Teuchos::null) {
+              if (blkSize == 1 &&  realA->getCrsGraph()->getImporter() != Teuchos::null) {
                 GetOStream(Warnings1) << "Using existing importer from matrix graph" << std::endl;
-                importer = A->getCrsGraph()->getImporter();
+                importer = realA->getCrsGraph()->getImporter();
               } else {
                 GetOStream(Warnings0) << "Constructing new importer instance" << std::endl;
                 importer = ImportFactory::Build(uniqueMap, nonUniqueMap);
@@ -691,13 +890,19 @@ namespace MueLu {
               }
 
               LO nnz = indices.size();
+              bool haveAddedToDiag = false;
               for (LO colID = 0; colID < nnz; colID++) {
                 const LO col = indices[colID];
 
                 if (row != col) {
                   localLaplDiagData[row] += STS::one() / MueLu::Utilities<real_type,LO,GO,NO>::Distance2(coordData, row, col);
+                  haveAddedToDiag = true;
                 }
               }
+              // Deal with the situation where boundary conditions have only been enforced on rows, but not on columns.
+              // We enforce dropping of these entries by assigning a very large number to the diagonal entries corresponding to BCs.
+              if (!haveAddedToDiag)
+                localLaplDiagData[row] = STS::rmax();
             }
             } //subtimer
             {
@@ -717,10 +922,22 @@ namespace MueLu {
           ArrayRCP<LO> rows    = ArrayRCP<LO>(numRows+1);
           ArrayRCP<LO> columns = ArrayRCP<LO>(A->getNodeNumEntries());
 
+#ifdef HAVE_MUELU_DEBUG
+	  // DEBUGGING
+	  for(LO i=0; i<(LO)columns.size(); i++) columns[i]=-666;
+#endif
+
+	  // Extra array for if we're allowing symmetrization with cutting
+	  ArrayRCP<LO> rows_stop;
+	  bool use_stop_array = threshold != STS::zero() && distanceLaplacianAlgo == scaled_cut_symmetric;
+	  if(use_stop_array) 
+	    rows_stop.resize(numRows);
+	 
           const ArrayRCP<bool> amalgBoundaryNodes(numRows, false);
 
           LO realnnz = 0;
           rows[0] = 0;
+
           Array<LO> indicesExtra;
           {
           SubFactoryMonitor m1(*this, "Laplacian dropping", currentLevel);
@@ -734,13 +951,14 @@ namespace MueLu {
             }
           }
 
+	  ArrayView<const SC>     vals;//CMS hackery
           for (LO row = 0; row < numRows; row++) {
             ArrayView<const LO> indices;
             indicesExtra.resize(0);
 	    bool isBoundary = false;
 
             if (blkSize == 1) {
-	      ArrayView<const SC>     vals;
+	      //	      ArrayView<const SC>     vals;//CMS uncomment
               A->getLocalRowView(row, indices, vals);
 	      isBoundary = pointBoundaryNodes[row];
             } else {
@@ -763,6 +981,11 @@ namespace MueLu {
 
             LO nnz = indices.size(), rownnz = 0;
 
+	    if(use_stop_array) {
+	      rows[row+1] = rows[row]+nnz;
+	      realnnz = rows[row];
+	    }
+
             if (threshold != STS::zero()) {
               // default
               if (distanceLaplacianAlgo == defaultAlgo) {
@@ -782,7 +1005,7 @@ namespace MueLu {
 
 
                   SC laplVal = STS::one() / MueLu::Utilities<real_type,LO,GO,NO>::Distance2(coordData, row, col);
-                  real_type aiiajj = STS::magnitude(distanceLaplacianThreshold*distanceLaplacianThreshold * ghostedLaplDiagData[row]*ghostedLaplDiagData[col]);
+                  real_type aiiajj = STS::magnitude(realThreshold*realThreshold * ghostedLaplDiagData[row]*ghostedLaplDiagData[col]);
                   real_type aij    = STS::magnitude(laplVal*laplVal);
 
                   if (aij > aiiajj) {
@@ -794,25 +1017,7 @@ namespace MueLu {
                 }
               } else {
 		/* Cut Algorithm */
-                struct DropTol {
-
-                  DropTol()               = default;
-                  DropTol(DropTol const&) = default;
-                  DropTol(DropTol &&)     = default;
-
-                  DropTol& operator=(DropTol const&) = default;
-                  DropTol& operator=(DropTol &&)     = default;
-
-                  DropTol(real_type val_, real_type diag_, LO col_, bool drop_)
-                    : val{val_}, diag{diag_},  col{col_}, drop{drop_}
-                  {}
-
-                  real_type val  {Teuchos::ScalarTraits<real_type>::zero()};
-                  real_type diag {Teuchos::ScalarTraits<real_type>::zero()};
-                  LO        col  {Teuchos::OrdinalTraits<LO>::invalid()};
-                  bool      drop {true};
-                };
-
+                using DropTol = Details::DropTol<real_type,LO>;
                 std::vector<DropTol> drop_vec;
                 drop_vec.reserve(nnz);
                 const real_type zero = Teuchos::ScalarTraits<real_type>::zero();
@@ -854,7 +1059,7 @@ namespace MueLu {
                       auto const& y = drop_vec[i];
                       auto a = x.val;
                       auto b = y.val;
-                      if (a > distanceLaplacianThreshold*b) {
+                      if (a > realThreshold*b) {
                         drop = true;
 #ifdef HAVE_MUELU_DEBUG
                         if (distanceLaplacianCutVerbose) {
@@ -866,7 +1071,7 @@ namespace MueLu {
                     drop_vec[i].drop = drop;
                   }
                 }
-                else if (distanceLaplacianAlgo == scaled_cut) {
+                else if (distanceLaplacianAlgo == scaled_cut || distanceLaplacianAlgo == scaled_cut_symmetric) {
 
                   std::sort( drop_vec.begin(), drop_vec.end()
                            , [](DropTol const& a, DropTol const& b) {
@@ -881,12 +1086,12 @@ namespace MueLu {
                       auto const& y = drop_vec[i];
                       auto a = x.val/x.diag;
                       auto b = y.val/y.diag;
-                      if (a > distanceLaplacianThreshold*b) {
+                      if (a > realThreshold*b) {
                         drop = true;
 #ifdef HAVE_MUELU_DEBUG
                         if (distanceLaplacianCutVerbose) {
                           std::cout << "DJS: KEEP, N, ROW:  " << i+1 << ", " << n << ", " << row << std::endl;
-                        }
+			}                        
 #endif
                       }
                     }
@@ -908,13 +1113,16 @@ namespace MueLu {
                   if (row == col) {
                     columns[realnnz++] = col;
                     rownnz++;
+		    //		    printf("(%d,%d) KEEP %13s matrix = %6.4e\n",row,row,"DIAGONAL",drop_vec[idxID].aux_val);
                     continue;
                   }
 
                   if (!drop_vec[idxID].drop) {
                     columns[realnnz++] = col;
+		    //		    printf("(%d,%d) KEEP dlap = %6.4e matrix = %6.4e\n",row,col,drop_vec[idxID].val/drop_vec[idxID].diag,drop_vec[idxID].aux_val);
                     rownnz++;
                   } else {
+		    //		    printf("(%d,%d) DROP dlap = %6.4e matrix = %6.4e\n",row,col,drop_vec[idxID].val/drop_vec[idxID].diag,drop_vec[idxID].aux_val);
                     numDropped++;
                   }
                 }
@@ -937,11 +1145,57 @@ namespace MueLu {
               // and boundary nodes in the aggregation algorithms
               amalgBoundaryNodes[row] = true;
             }
-            rows[row+1] = realnnz;
+
+	    if(use_stop_array) 
+	      rows_stop[row] = rownnz + rows[row];
+	    else
+	      rows[row+1] = realnnz;
           } //for (LO row = 0; row < numRows; row++)
 
           } //subtimer
-          columns.resize(realnnz);
+
+	  if (use_stop_array) {
+	    // Do symmetrization of the cut matrix
+	    // NOTE: We assume nested row/column maps here
+	    for (LO row = 0; row < numRows; row++) {
+	      for (LO colidx = rows[row]; colidx < rows_stop[row]; colidx++) {
+		LO col = columns[colidx];
+		if(col >= numRows) continue;
+		
+		bool found = false;
+		for(LO t_col = rows[col] ; !found && t_col  < rows_stop[col]; t_col++) {
+		  if (columns[t_col] == row) 
+		    found = true;
+		}
+		// We didn't find the transpose buddy, so let's symmetrize, unless we'd be symmetrizing
+		// into a Dirichlet unknown.  In that case don't.
+		if(!found && !pointBoundaryNodes[col] && rows_stop[col] < rows[col+1]) {
+		  LO new_idx = rows_stop[col];
+		  //		  printf("(%d,%d) SYMADD entry\n",col,row);
+		  columns[new_idx] = row;
+		  rows_stop[col]++;	
+		  numDropped--;
+		}
+	      }
+	    }	      
+
+	    // Condense everything down
+	    LO current_start=0;
+	    for (LO row = 0; row < numRows; row++) {
+	      LO old_start = current_start;
+	      for (LO col = rows[row]; col < rows_stop[row]; col++) {
+		if(current_start != col) {
+		  columns[current_start] = columns[col];
+		}
+		current_start++;
+	      }
+	      rows[row] = old_start;	      	      	      	      
+	    }
+	    rows[numRows] = realnnz = current_start;
+
+	  }
+
+	  columns.resize(realnnz);
 
           RCP<GraphBase> graph;
           {
@@ -1091,6 +1345,7 @@ namespace MueLu {
 
     } //if (doExperimentalWrap) ... else ...
 
+
   } //Build
 
   template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
@@ -1226,6 +1481,124 @@ namespace MueLu {
 
     return;
   }
+
+
+
+  template <class Scalar,class LocalOrdinal, class GlobalOrdinal, class Node>
+  Teuchos::RCP<Xpetra::Matrix<Scalar,LocalOrdinal,GlobalOrdinal,Node> > CoalesceDropFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::BlockDiagonalize(Level & currentLevel,const RCP<Matrix>& A,bool generate_matrix) const {
+    typedef Teuchos::ScalarTraits<SC> STS;
+ 
+    const ParameterList  & pL = GetParameterList();
+    const typename STS::magnitudeType dirichletThreshold = STS::magnitude(as<SC>(pL.get<double>("aggregation: Dirichlet threshold")));
+
+    RCP<LocalOrdinalVector> BlockNumber = Get<RCP<LocalOrdinalVector> >(currentLevel, "BlockNumber");
+    RCP<LocalOrdinalVector> ghostedBlockNumber;
+    GetOStream(Statistics1) << "Using BlockDiagonal Graph (with provided blocking)"<<std::endl;      
+
+    // Ghost the column block numbers if we need to
+    RCP<const Import> importer = A->getCrsGraph()->getImporter();
+    if(!importer.is_null()) {
+      SubFactoryMonitor m1(*this, "Block Number import", currentLevel);      
+      ghostedBlockNumber= Xpetra::VectorFactory<LO,LO,GO,NO>::Build(importer->getTargetMap());
+      ghostedBlockNumber->doImport(*BlockNumber, *importer, Xpetra::INSERT);
+    } 
+    else {
+      ghostedBlockNumber = BlockNumber;
+    }
+
+    // Accessors for block numbers
+    Teuchos::ArrayRCP<const LO> row_block_number = BlockNumber->getData(0);
+    Teuchos::ArrayRCP<const LO> col_block_number = ghostedBlockNumber->getData(0);
+
+    // allocate space for the local graph
+    ArrayRCP<size_t> rows_mat;   
+    ArrayRCP<LO> rows_graph,columns;
+    ArrayRCP<SC> values;
+    RCP<CrsMatrixWrap> crs_matrix_wrap;
+    
+    if(generate_matrix) {
+      crs_matrix_wrap = rcp(new CrsMatrixWrap(A->getRowMap(), A->getColMap(), 0));
+      crs_matrix_wrap->getCrsMatrix()->allocateAllValues(A->getNodeNumEntries(), rows_mat, columns, values);
+    }
+    else {
+      rows_graph.resize(A->getNodeNumRows()+1);
+      columns.resize(A->getNodeNumEntries());
+      values.resize(A->getNodeNumEntries());
+    }
+      
+    LO realnnz = 0;
+    GO numDropped = 0, numTotal = 0;
+    for (LO row = 0; row < Teuchos::as<LO>(A->getRowMap()->getNodeNumElements()); ++row) {
+      LO row_block = row_block_number[row];
+      size_t nnz = A->getNumEntriesInLocalRow(row);
+      ArrayView<const LO> indices;
+      ArrayView<const SC> vals;
+      A->getLocalRowView(row, indices, vals);
+
+      LO rownnz = 0;
+      for (LO colID = 0; colID < Teuchos::as<LO>(nnz); colID++) {
+        LO col = indices[colID];
+        LO col_block = col_block_number[col];
+        
+        if(row_block == col_block) {
+          if(generate_matrix) values[realnnz] = vals[colID];
+          columns[realnnz++] = col;
+          rownnz++;
+        } else
+          numDropped++;
+      }
+      if(generate_matrix) rows_mat[row+1] = realnnz;
+      else rows_graph[row+1] = realnnz;
+    }
+    
+    ArrayRCP<const bool> boundaryNodes = MueLu::Utilities<SC,LO,GO,NO>::DetectDirichletRows(*A, dirichletThreshold);
+        
+    if(!generate_matrix) {
+      // We can't resize an Arrayrcp and pass the checks for setAllValues
+      values.resize(realnnz);
+      columns.resize(realnnz);
+    }
+    numTotal = A->getNodeNumEntries();
+
+    if (GetVerbLevel() & Statistics1) {
+      GO numLocalBoundaryNodes  = 0;
+      GO numGlobalBoundaryNodes = 0;
+      for (LO i = 0; i < boundaryNodes.size(); ++i)
+        if (boundaryNodes[i])
+          numLocalBoundaryNodes++;
+      RCP<const Teuchos::Comm<int> > comm = A->getRowMap()->getComm();
+      MueLu_sumAll(comm, numLocalBoundaryNodes, numGlobalBoundaryNodes);
+      GetOStream(Statistics1) << "Detected " << numGlobalBoundaryNodes << " Dirichlet nodes" << std::endl;
+
+      GO numGlobalTotal, numGlobalDropped;
+      MueLu_sumAll(comm, numTotal,   numGlobalTotal);
+      MueLu_sumAll(comm, numDropped, numGlobalDropped);
+      GetOStream(Statistics1) << "Number of dropped entries in block-diagonalized matrix graph: " << numGlobalDropped << "/" << numGlobalTotal;
+      if (numGlobalTotal != 0)
+        GetOStream(Statistics1) << " (" << 100*Teuchos::as<double>(numGlobalDropped)/Teuchos::as<double>(numGlobalTotal) << "%)";
+      GetOStream(Statistics1) << std::endl;
+    }
+
+    Set(currentLevel, "Filtering", true);    
+
+    if(generate_matrix) {
+      // NOTE: Trying to use A's Import/Export objects will cause the code to segfault back in Build() with errors on the Import
+      // if you're using Epetra.  I'm not really sure why. By using the Col==Domain and Row==Range maps, we get null Import/Export objects
+      // here, which is legit, because we never use them anyway.
+      crs_matrix_wrap->getCrsMatrix()->setAllValues(rows_mat,columns,values);      
+      crs_matrix_wrap->getCrsMatrix()->expertStaticFillComplete(A->getColMap(), A->getRowMap());
+    }
+    else {
+      RCP<GraphBase> graph =  rcp(new LWGraph(rows_graph, columns, A->getRowMap(), A->getColMap(), "block-diagonalized graph of A"));
+      graph->SetBoundaryNodeMap(boundaryNodes);
+      Set(currentLevel, "Graph",       graph);
+    }
+
+
+    Set(currentLevel, "DofsPerNode", 1);
+    return crs_matrix_wrap;
+  }
+
 } //namespace MueLu
 
 #endif // MUELU_COALESCEDROPFACTORY_DEF_HPP

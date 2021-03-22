@@ -1,9 +1,11 @@
-// Copyright(C) 1999-2017, 2020 National Technology & Engineering Solutions
+// Copyright(C) 1999-2020 National Technology & Engineering Solutions
 // of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
 // NTESS, the U.S. Government retains certain rights in this software.
 //
-// See packages/seacas/LICENSE for details.
+// See packages/seacas/LICENSE for details
 
+#include <exodus/Ioex_DecompositionData.h>
+#if defined PARALLEL_AWARE_EXODUS
 #include <Ioss_CodeTypes.h>
 #include <Ioss_ElementTopology.h> // for ElementTopology
 #include <Ioss_Field.h>           // for Field, etc
@@ -12,7 +14,6 @@
 #include <Ioss_PropertyManager.h> // for PropertyManager
 #include <Ioss_Sort.h>
 #include <Ioss_Utils.h>
-#include <exodus/Ioex_DecompositionData.h>
 #include <exodus/Ioex_Utils.h>
 
 #include <algorithm> // for lower_bound, copy, etc
@@ -430,7 +431,7 @@ namespace Ioex {
         if (remain == 0 || total_read == entitylist_size) {
           // entitylist is full at this point...
           // * Broadcast data to other processors
-          // * Each procesor extracts the entities it manages.
+          // * Each processor extracts the entities it manages.
           m_decomposition.show_progress("\tBroadcast entitylist begin");
           MPI_Bcast(entitylist.data(), entitylist.size(), Ioss::mpi_type(INT(0)), root, comm_);
           m_decomposition.show_progress("\tBroadcast entitylist end");
@@ -1766,3 +1767,4 @@ namespace Ioex {
     }
   }
 } // namespace Ioex
+#endif

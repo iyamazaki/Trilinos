@@ -10,10 +10,6 @@ INCLUDE_DIRECTORIES(
 
 FILE(GLOB SOURCES src/ex_*.c)
 
-if (${TPL_Netcdf_PARALLEL})
-   SET(PARALLEL_AWARE_EXODUS ON)
-endif()
-
 if (${SEACAS_HIDE_DEPRECATED_CODE})
 else()
   FILE(GLOB DEP_SOURCES src/deprecated/ex_*.c)
@@ -39,6 +35,20 @@ TRIBITS_ADD_LIBRARY(
 )
 
 set_property(TARGET exodus PROPERTY C_STANDARD 99)
+
+if (SEACASExodus_ENABLE_SHARED)
+   if (NOT BUILD_SHARED_LIBS)
+      TRIBITS_ADD_LIBRARY(
+              exodus_shared
+              SHARED
+              SOURCES ${SOURCES} ${DEP_SOURCES}
+	      IMPORTEDLIBS ${TPL_Netcdf_LIBRARIES}
+      )
+      set_property(TARGET exodus_shared PROPERTY C_STANDARD 99)
+      set_target_properties(exodus_shared PROPERTIES OUTPUT_NAME exodus)
+      INSTALL(TARGETS exodus_shared DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+   endif()
+endif()
 
 # Many users of the SEACAS installations still want a static exodus library...
 if (SEACASExodus_ENABLE_STATIC)

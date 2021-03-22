@@ -1,34 +1,8 @@
-// Copyright(C) 1999-2017, 2020 National Technology & Engineering Solutions
+// Copyright(C) 1999-2020 National Technology & Engineering Solutions
 // of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
 // NTESS, the U.S. Government retains certain rights in this software.
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-//       notice, this list of conditions and the following disclaimer.
-//
-//     * Redistributions in binary form must reproduce the above
-//       copyright notice, this list of conditions and the following
-//       disclaimer in the documentation and/or other materials provided
-//       with the distribution.
-//
-//     * Neither the name of NTESS nor the names of its
-//       contributors may be used to endorse or promote products derived
-//       from this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// See packages/seacas/LICENSE for details
 
 #include <Ionit_Initializer.h>
 #include <Ioss_CodeTypes.h>
@@ -57,7 +31,7 @@
 
 namespace {
   std::string codename;
-  std::string version = "5.1";
+  std::string version = "5.3";
 
   bool mem_stats = false;
 
@@ -68,7 +42,7 @@ namespace {
 
 int main(int argc, char *argv[])
 {
-  int rank = 0;
+  int rank     = 0;
   int num_proc = 1;
 #ifdef SEACAS_HAVE_MPI
   MPI_Init(&argc, &argv);
@@ -81,8 +55,8 @@ int main(int argc, char *argv[])
   Kokkos::ScopeGuard kokkos(argc, argv);
 #endif
 
-  IOShell::Interface interFace;
-  bool               success = interFace.parse_options(argc, argv);
+  IOShell::Interface interFace(version);
+  bool               success = interFace.parse_options(argc, argv, rank);
   if (!success) {
     exit(EXIT_FAILURE);
   }
@@ -132,7 +106,7 @@ int main(int argc, char *argv[])
   if (rank == 0 && !interFace.quiet) {
     if (num_proc > 1) {
       fmt::print(stderr, "\n\n\tTotal Execution time = {:.5} seconds on {} processors.\n",
-		 end - begin, num_proc);
+                 end - begin, num_proc);
     }
     else {
       fmt::print(stderr, "\n\n\tTotal Execution time = {:.5} seconds.\n", end - begin);
@@ -223,10 +197,12 @@ namespace {
       Ioss::Region region(dbi, "region_1");
 
       if (region.mesh_type() == Ioss::MeshType::HYBRID) {
-        fmt::print(stderr,
-                   "\nERROR: io_shell does not support '{}' meshes. Only 'Unstructured' or "
-                   "'Structured' mesh is supported at this time.\n",
-                   region.mesh_type_string());
+        if (rank == 0) {
+          fmt::print(stderr,
+                     "\nERROR: io_shell does not support '{}' meshes. Only 'Unstructured' or "
+                     "'Structured' mesh is supported at this time.\n",
+                     region.mesh_type_string());
+        }
         return;
       }
 
@@ -271,6 +247,7 @@ namespace {
       }
 
       Ioss::MeshCopyOptions options{};
+      options.selected_times    = interFace.selected_times;
       options.verbose           = !interFace.quiet;
       options.memory_statistics = interFace.memory_statistics;
       options.debug             = interFace.debug;
@@ -282,12 +259,9 @@ namespace {
       options.delay             = interFace.timestep_delay;
       options.reverse           = interFace.reverse;
       options.add_proc_id       = interFace.add_processor_id_field;
+      options.boundary_sideset  = interFace.boundary_sideset;
 
-      size_t ts_count = 0;
-      if (region.property_exists("state_count") &&
-          region.get_property("state_count").get_int() > 0) {
-        ts_count = region.get_property("state_count").get_int();
-      }
+      size_t ts_count = region.get_optional_property("state_count", 0);
 
       int flush_interval = interFace.flush_interval; // Default is zero -- do not flush until end
       properties.add(Ioss::Property("FLUSH_INTERVAL", flush_interval));
@@ -323,6 +297,7 @@ namespace {
 
         // Do normal copy...
         Ioss::Utils::copy_database(region, output_region, options);
+
         if (mem_stats) {
           dbo->release_memory();
         }
@@ -431,10 +406,17 @@ namespace {
       properties.add(Ioss::Property("MEMORY_WRITE", 1));
     }
 
-    if (interFace.compression_level > 0 || interFace.shuffle) {
+    if (interFace.compression_level > 0 || interFace.shuffle || interFace.szip) {
       properties.add(Ioss::Property("FILE_TYPE", "netcdf4"));
       properties.add(Ioss::Property("COMPRESSION_LEVEL", interFace.compression_level));
       properties.add(Ioss::Property("COMPRESSION_SHUFFLE", static_cast<int>(interFace.shuffle)));
+
+      if (interFace.szip) {
+        properties.add(Ioss::Property("COMPRESSION_METHOD", "szip"));
+      }
+      else if (interFace.zlib) {
+        properties.add(Ioss::Property("COMPRESSION_METHOD", "zlib"));
+      }
     }
 
     if (interFace.compose_output == "default") {

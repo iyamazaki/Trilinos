@@ -242,6 +242,7 @@ namespace Tpetra {
     const LO numSrcLids = static_cast<LO> (numSrcGids);
     LO numPermutes = 0;
     LO numExports = 0;
+
     for (LO srcLid = numSameGids; srcLid < numSrcLids; ++srcLid) {
       const GO curSrcGid = rawSrcGids[srcLid];
       // getLocalElement() returns LINVALID if the GID isn't in the
@@ -513,6 +514,7 @@ namespace Tpetra {
       typename decltype (this->TransferData_->remoteLIDs_)::t_host;
     host_remote_lids_type remoteLIDs
       (view_alloc_no_init ("remoteLIDs"), numRemoteIDs);
+
     for (LO j = 0; j < LO (numRemoteIDs); ++j) {
       remoteLIDs[j] = tgtMap.getLocalElement (remoteGIDs[j]);
     }
