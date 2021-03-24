@@ -270,12 +270,21 @@ Relaxation<MatrixType>::getValidParameters () const
     pl->set ("relaxation: sweeps", numSweeps, "Number of relaxation sweeps",
              rcp_const_cast<const PEV> (numSweepsValidator));
 
+    // number of outer sweeps for two-stage GS
+    const int numOuterSweeps = 1;
+    RCP<PEV> numOuterSweepsValidator =
+      rcp_implicit_cast<PEV> (rcp (new NonnegativeIntValidator));
+    pl->set ("relaxation: outer sweeps", numOuterSweeps, "Number of outer relaxation sweeps",
+             rcp_const_cast<const PEV> (numOuterSweepsValidator));
     // number of inner sweeps for two-stage GS
     const int numInnerSweeps = 1;
     RCP<PEV> numInnerSweepsValidator =
       rcp_implicit_cast<PEV> (rcp (new NonnegativeIntValidator));
     pl->set ("relaxation: inner sweeps", numInnerSweeps, "Number of inner relaxation sweeps",
              rcp_const_cast<const PEV> (numInnerSweepsValidator));
+    // specify damping factor for the inner sweeps of two-stage GS
+    const scalar_type innerDampingFactor = STS::one ();
+    pl->set ("relaxation: inner damping factor", innerDampingFactor);
     // specify if using sptrsv instead of inner-iterations for two-stage GS
     const bool innerSpTrsv = false;
     pl->set ("relaxation: inner sparse-triangular solve", innerSpTrsv);
@@ -364,16 +373,22 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
   Teuchos::ArrayRCP<local_ordinal_type> localSmoothingIndices = pl.get<Teuchos::ArrayRCP<local_ordinal_type> >("relaxation: local smoothing indices");
 
   // for Two-stage Gauss-Seidel
+  if (pl.isType<double>("relaxation: inner damping factor")) {
+    // Make sure that ST=complex can run with a damping factor that is
+    // a double.
+    ST df = pl.get<double>("relaxation: inner damping factor");
+    pl.remove("relaxation: inner damping factor");
+    pl.set("relaxation: inner damping factor",df);
+  }
+  const ST innerDampingFactor = pl.get<ST> ("relaxation: inner damping factor");
   const int numInnerSweeps = pl.get<int> ("relaxation: inner sweeps");
+  const int numOuterSweeps = pl.get<int> ("relaxation: outer sweeps");
   const bool innerSpTrsv = pl.get<bool> ("relaxation: inner sparse-triangular solve");
   const bool compactForm = pl.get<bool> ("relaxation: compact form");
 
   // "Commit" the changes, now that we've validated everything.
   PrecType_              = precType;
   NumSweeps_             = numSweeps;
-  NumInnerSweeps_        = numInnerSweeps;
-  InnerSpTrsv_           = innerSpTrsv;
-  CompactForm_           = compactForm;
   DampingFactor_         = dampingFactor;
   ZeroStartingSolution_  = zeroStartSol;
   DoBackwardGS_          = doBackwardGS;
@@ -386,6 +401,12 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
   is_matrix_structurally_symmetric_ = is_matrix_structurally_symmetric;
   ifpack2_dump_matrix_ = ifpack2_dump_matrix;
   localSmoothingIndices_ = localSmoothingIndices;
+  // for Two-stage GS
+  NumInnerSweeps_        = numInnerSweeps;
+  NumOuterSweeps_        = numOuterSweeps;
+  InnerSpTrsv_           = innerSpTrsv;
+  InnerDampingFactor_    = innerDampingFactor;
+  CompactForm_           = compactForm;
 }
 
 
@@ -720,6 +741,8 @@ void Relaxation<MatrixType>::initialize ()
       if (PrecType_ == Details::GS2 || PrecType_ == Details::SGS2) {
         // set parameters for two-stage GS
         mtKernelHandle_->set_gs_set_num_inner_sweeps (NumInnerSweeps_);
+        mtKernelHandle_->set_gs_set_num_outer_sweeps (NumOuterSweeps_);
+        mtKernelHandle_->set_gs_set_inner_damp_factor (InnerDampingFactor_);
         mtKernelHandle_->set_gs_twostage (!InnerSpTrsv_, A_->getNodeNumRows ());
         mtKernelHandle_->set_gs_twostage_compact_form (CompactForm_);
       }
@@ -2305,11 +2328,13 @@ std::string Relaxation<MatrixType>::description () const
     os<<", BlockCrs";
 
   os  << ", " << "sweeps: " << NumSweeps_ << ", "
+      << "outer sweeps: " << NumOuterSweeps_ << ", "
       << "damping factor: " << DampingFactor_ << ", ";
 
   if (PrecType_ == Ifpack2::Details::GS2 ||
       PrecType_ == Ifpack2::Details::SGS2) {
-    os  << "inner sweeps: " << NumInnerSweeps_ << ", ";
+    os  << "inner sweeps: " << NumInnerSweeps_ << ", "
+        << "inner damping factor: " << InnerDampingFactor_ << ", ";
   }
 
   if (DoL1Method_) {
@@ -2402,6 +2427,11 @@ describe (Teuchos::FancyOStream &out,
           << "\"relaxation: backward mode\": " << DoBackwardGS_ << endl
           << "\"relaxation: use l1\": " << DoL1Method_ << endl
           << "\"relaxation: l1 eta\": " << L1Eta_ << endl;
+      if (PrecType_ == Ifpack2::Details::GS2 || PrecType_ == Ifpack2::Details::SGS2) {
+        out << "\"relaxation: inner damping factor\": " << InnerDampingFactor_ << endl;
+        out << "\"relaxation: outer sweeps\" : " << NumOuterSweeps_ << endl;
+        out << "\"relaxation: inner sweeps\" : " << NumInnerSweeps_ << endl;
+      }
     }
     out << "Computed quantities:" << endl;
     {

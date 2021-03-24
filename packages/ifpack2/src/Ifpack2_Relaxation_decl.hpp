@@ -785,10 +785,14 @@ private:
   //! For MTSGS, the cluster size (use point coloring if equal to 1)
   int clusterSize_ = 1;
 
+  //! Number of outer-sweeps for the two-stage Gauss Seidel
+  int NumOuterSweeps_ = 1;
   //! Number of inner-sweeps for the two-stage Gauss Seidel
   int NumInnerSweeps_ = 1;
   //! Whether to use sparse-triangular solve instead of inner-iterations
   bool InnerSpTrsv_ = false;
+  //! Damping factor for inner-sweeps
+  scalar_type InnerDampingFactor_ = STS::one();
   //! Whether to use compact form of recurrence for the two-stage Gauss Seidel
   bool CompactForm_ = false;
 
