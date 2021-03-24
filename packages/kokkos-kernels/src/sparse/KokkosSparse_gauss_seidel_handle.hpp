@@ -574,8 +574,12 @@ namespace KokkosSparse{
     direction (GS_SYMMETRIC),
     two_stage (true),
     compact_form (false),
-    num_inner_sweeps (1)
-    {}
+    num_inner_sweeps (1),
+    num_outer_sweeps (1)
+    {
+      const scalar_t one (1.0);
+      inner_omega = one;
+    }
 
     // Sweep direction
     void setSweepDirection (GSDirection direction_) {
@@ -601,12 +605,28 @@ namespace KokkosSparse{
       return this->compact_form;
     }
 
+    // Number of outer sweeps
+    void setNumOuterSweeps (int num_outer_sweeps_) {
+      this->num_outer_sweeps = num_outer_sweeps_;
+    }
+    int getNumOuterSweeps () {
+      return this->num_outer_sweeps;
+    }
+
     // Number of inner sweeps
     void setNumInnerSweeps (int num_inner_sweeps_) {
       this->num_inner_sweeps = num_inner_sweeps_;
     }
     int getNumInnerSweeps () {
       return this->num_inner_sweeps;
+    }
+
+    // Inner damping factor
+    void setInnerDampFactor (scalar_t inner_omega_) {
+      this->inner_omega = inner_omega_;
+    }
+    scalar_t getInnerDampFactor () {
+      return this->inner_omega;
     }
 
     // Workspaces
@@ -699,6 +719,8 @@ namespace KokkosSparse{
     bool two_stage;
     bool compact_form;
     int num_inner_sweeps;
+    int num_outer_sweeps;
+    scalar_t inner_omega;
   };
   // -------------------------------------
 }

@@ -580,10 +580,22 @@ public:
     return gs2;
   }
   // ---------------------------------------- //
+  // Specify numer of outer sweeps for two-stage Gauss-Seidel
+  void set_gs_set_num_outer_sweeps (int num_outer_sweeps) {
+    auto gs2 = get_twostage_gs_handle();
+    gs2->setNumOuterSweeps (num_outer_sweeps);
+  }
+  // ---------------------------------------- //
   // Specify numer of inner sweeps for two-stage Gauss-Seidel
   void set_gs_set_num_inner_sweeps (int num_inner_sweeps) {
     auto gs2 = get_twostage_gs_handle();
     gs2->setNumInnerSweeps (num_inner_sweeps);
+  }
+  // ---------------------------------------- //
+  // Specify damping factor of inner sweeps for two-stage Gauss-Seidel
+  void set_gs_set_inner_damp_factor (scalar_t_ damp_factor) {
+    auto gs2 = get_twostage_gs_handle();
+    gs2->setInnerDampFactor (damp_factor);
   }
   // ---------------------------------------- //
   // Specify to use either Two-stage or Classical (i.e., inner Jacobi-Richardson or SpTrsv)

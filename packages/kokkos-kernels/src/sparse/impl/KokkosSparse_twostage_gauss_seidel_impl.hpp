@@ -62,7 +62,7 @@
 #include "KokkosSparse_gauss_seidel_handle.hpp"
 
 //#define KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
-#define KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U
+//#define KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U
 
 namespace KokkosSparse{
   namespace Impl{
@@ -926,6 +926,7 @@ namespace KokkosSparse{
         auto *gsHandle = get_gs_handle();
         bool two_stage = gsHandle->isTwoStage ();
         bool compact_form = gsHandle->isCompactForm ();
+        scalar_t gamma = gsHandle->getInnerDampFactor ();
 
         GSDirection direction = gsHandle->getSweepDirection ();
         if (apply_forward && apply_backward) {
@@ -952,6 +953,10 @@ namespace KokkosSparse{
 #ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
         Kokkos::fence();
         tic = timer.seconds ();
+        std::cout << std::endl << "TWO-STAGE GS::APPLY with " << numIter << " outer GS sweeps with omega = " << omega 
+                  << ", and " << gsHandle->getNumInnerSweeps () << " inner JR sweeps, with gamma = " << gamma
+                  << " (numRows=" << num_rows << ")"
+                  << std::endl;
         std::cout << std::endl << "TWO-STAGE GS::APPLY::CREATE CRS_A TIME : " << tic << std::endl;
         timer.reset();
 #endif
@@ -964,8 +969,9 @@ namespace KokkosSparse{
         auto localZ = gsHandle->getVectorZ ();
 
         // outer Gauss-Seidel iteration
-        int NumSweeps = numIter;
+        int NumOuterSweeps = gsHandle->getNumOuterSweeps ();
         int NumInnerSweeps = gsHandle->getNumInnerSweeps ();
+        int NumSweeps = (NumOuterSweeps > numIter ? NumOuterSweeps : numIter);
         if (direction == GS_SYMMETRIC) {
           NumSweeps *= 2;
         }
@@ -1006,6 +1012,15 @@ namespace KokkosSparse{
               spmv ("N", scalar_t(-one), crsmatA,
                                          localX,
                                    one,  localR);
+#ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
+              {
+                auto localRj = Kokkos::subview (localR, Kokkos::ALL (), range_type (0, 1));
+                single_vector_view_t Rj (localRj.data (), num_rows);
+                std::cout << "norm(GS)-" << sweep << " " << KokkosBlas::nrm2 (Rj)
+                          << " (" << (forward_sweep ? "forward" : "backward" )  << ")"
+                          << std::endl;
+              }
+#endif
             }
           }
           //if (sweep == 0) {
@@ -1071,7 +1086,7 @@ namespace KokkosSparse{
                                                        rowmap_view, column_view, values_view,
                                                        localD, localZ, tempR),
                                        normR);
-              std::cout << "norm" << 0 << " " << sqrt(normR) << std::endl;
+              std::cout << "> norm(JR)-" << 0 << " " << sqrt(normR) << std::endl;
             }
 #endif
             // compute starting vector: Z = D^{-1}*R (Z is correction, i.e., output of JR)
@@ -1091,6 +1106,11 @@ namespace KokkosSparse{
                 KokkosBlas::mult (zero, localZ,
                                   one,  localD, localR);
               }
+              // apply inner damping factor, if not one
+              if (gamma != one) {
+                // Z = gamma * Z
+                KokkosBlas::scal (localZ, gamma, localZ);
+              }
             } else {
               #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
               if (!forward_sweep) {
@@ -1108,6 +1128,11 @@ namespace KokkosSparse{
                 // initialize Jacobi-Richardson (using R as workspace for JR iteration)
                 KokkosBlas::scal (localR, one, localT);
               }
+              // apply inner damping factor, if not one
+              if (gamma != one) {
+                // R = gamma * R
+                KokkosBlas::scal (localR, gamma, localR);
+              }
             }
 #ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
             {
@@ -1118,7 +1143,7 @@ namespace KokkosSparse{
                                                        rowmap_view, column_view, values_view,
                                                        localD, localT, tempR),
                                        normR);
-              std::cout << "norm" << 1 << " " << sqrt(normR) << std::endl;
+              std::cout << "> norm(JR)-" << 1 << " " << sqrt(normR) << std::endl;
             }
 #endif
             // inner Jacobi-Richardson:
@@ -1140,20 +1165,28 @@ namespace KokkosSparse{
                                              localR,
                                        one,  localZ);
               }
+              // apply inner damping factor, if not one
+              if (gamma != one) {
+                // Z = gamma * Z
+                KokkosBlas::scal (localZ, gamma, localZ);
+                // Z = Z + (one - one/gamma) * R
+                scalar_t gamma2 = one - gamma;
+                KokkosBlas::axpy (gamma2, localR, localZ);
+              }
               if (ii+1 < NumInnerSweeps) {
                 // reinitialize (R to be Z)
                 KokkosBlas::scal (localR, one, localZ);
               }
 #ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
               {
-                // compute residual norm of the starting vector (D^{-1}R)
+                // compute residual norm(r - (L+D)*y)
                 mag_t normR = zero;
                 Kokkos::parallel_reduce ("normR", range_policy (0, num_rows),
                                          Norm_Functor_t (forward_sweep, num_rows,
                                                          rowmap_view, column_view, values_view,
                                                          localD, localZ, tempR),
                                          normR);
-                std::cout << "norm" << 2+ii << " " << sqrt(normR) << std::endl;
+                std::cout << "> norm(JR)-" << 2+ii << " " << sqrt(normR) << std::endl;
               }
 #endif
             } // end of inner Jacobi Richardson
@@ -1186,6 +1219,19 @@ namespace KokkosSparse{
             }
           } // end of inner GS sweep
         } // end of outer GS sweep
+#ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
+        {
+          // R = B - A*x
+          KokkosBlas::scal (localR, one, localB);
+          KokkosSparse::
+          spmv ("N", scalar_t(-one), crsmatA,
+                                     localX,
+                               one,  localR);
+          auto localRj = Kokkos::subview (localR, Kokkos::ALL (), range_type (0, 1));
+          single_vector_view_t Rj (localRj.data (), num_rows);
+          std::cout << "norm(GS)-" << NumSweeps << " " << KokkosBlas::nrm2 (Rj) << std::endl;
+        }
+#endif
       }
     };
   }
