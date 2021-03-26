@@ -140,8 +140,6 @@ namespace KokkosSparse{
       struct Tag_entriesLU{};
       // tag for inserting values
       struct Tag_valuesLU{};
-      // tag for scaling U values
-      struct Tag_scaleU{};
       // tag for computing residual norm
       struct Tag_normR{};
 
@@ -310,20 +308,6 @@ namespace KokkosSparse{
           values_a2(values_a2_)
         {}
 
-        // for scaling U values (with D extracted)
-        TwostageGaussSeidel_functor (
-                  const_ordinal_t num_rows_,
-                  output_values_view_t  diags_,
-                  output_row_map_view_t row_map_,
-                  output_entries_view_t entries_,
-                  output_values_view_t  values_) :
-          num_rows(num_rows_),
-          row_map(row_map_),
-          entries(entries_),
-          values(values_),
-          diags(diags_)
-        {}
-
         // for computing residual norm
         TwostageGaussSeidel_functor (
                   bool forward_sweep_,
@@ -413,15 +397,6 @@ namespace KokkosSparse{
             }
           }
           nnz +=  nnz_i;
-        }
-
-        // functor for applying column scale to valuesU (with parallel_for)
-        KOKKOS_INLINE_FUNCTION
-        void operator()(const Tag_scaleU&, const ordinal_t i) const
-        {
-          for (size_type k = row_map (i); k < row_map (i+1); k++) {
-            values (k) *= diags (entries(k));
-          }
         }
 
         // ------------------------------------------------------- //
