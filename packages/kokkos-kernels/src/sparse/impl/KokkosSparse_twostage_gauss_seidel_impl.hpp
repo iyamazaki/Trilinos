@@ -62,7 +62,6 @@
 #include "KokkosSparse_gauss_seidel_handle.hpp"
 
 //#define KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
-//#define KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U
 
 namespace KokkosSparse{
   namespace Impl{
@@ -560,12 +559,10 @@ namespace KokkosSparse{
             for (size_type k = row_map (i); k < row_map (i+1); k++) {
               values (k) *= diags (i);
             }
-            #if !defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
             // compute inv(D)*U (apply row-scaling to valueU)
             for (size_type k = row_map2 (i); k < row_map2 (i+1); k++) {
               values2 (k) *= diags (i);
             }
-            #endif
           }
         }
 
@@ -586,11 +583,7 @@ namespace KokkosSparse{
             // compute R(i) = B(i) - (D+U)(i,:)*X
             for (size_type k = rowmap_view (i); k < rowmap_view (i+1); k++) {
               if (column_view (k) >= i && column_view (k) < num_rows) {
-                #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
-                normRi -= values_view (k) * diags(column_view (k)) * localX (column_view (k), 0);
-                #else
                 normRi -= values_view (k) * localX (column_view (k), 0);
-                #endif
               }
             }
           }
@@ -865,15 +858,6 @@ namespace KokkosSparse{
                                             rowmap_viewU, values_viewU,
                                             rowmap_viewLa, values_viewLa, viewDa,
                                             rowmap_viewUa, values_viewUa));
-        #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
-        if (gsHandle->isTwoStage ()) {
-          using scale_policy = Kokkos::RangePolicy <Tag_scaleU, execution_space>;
-          using GS_ColumnScaleFunctor_t = TwostageGaussSeidel_functor<const_row_map_view_t, entries_view_t, values_view_t>;
-          Kokkos::parallel_for ("scaleU", scale_policy (0, num_rows),
-                                GS_ColumnScaleFunctor_t (num_rows, viewD,
-                                                         rowmap_viewU, column_viewU, values_viewU));
-        }
-        #endif
 #ifdef KOKKOSSPARSE_IMPL_TIME_TWOSTAGE_GS
         Kokkos::fence();
         tic = timer.seconds ();
@@ -1093,41 +1077,23 @@ namespace KokkosSparse{
             if (NumInnerSweeps == 0) {
               // this is Jacobi-Richardson X_{k+1} := X_{k} + D^{-1}(b-A*X_{k})
               // copy to localZ (output of JR iteration)
-              #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
-              if (!forward_sweep) {
-                // column-scale: (U*D^{-1})*Y = B
-                // copy R to Z
-                KokkosBlas::scal (localZ, one, localR);
-              } else
-              #endif
-              {
-                // row-scale: (D^{-1}*L)*Y = D^{-1}*B
-                // compute Z := D^{-1}*R
-                KokkosBlas::mult (zero, localZ,
-                                  one,  localD, localR);
-              }
+
+              // row-scale: (D^{-1}*L)*Y = D^{-1}*B
+              // compute Z := D^{-1}*R
+              KokkosBlas::mult (zero, localZ,
+                                one,  localD, localR);
               // apply inner damping factor, if not one
               if (gamma != one) {
                 // Z = gamma * Z
                 KokkosBlas::scal (localZ, gamma, localZ);
               }
             } else {
-              #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
-              if (!forward_sweep) {
-                // to keep symmetry of SGS, we apply "column-scaling" to U
-                // hence solving (U*D^{-1})*Y = B and x = D^{-1}*Y,
-                // and the column-scaling is applied after the inner sweeps.
-                // So, here, we just copy R to T
-                KokkosBlas::scal (localT, one, localR);
-              } else
-              #endif
-              {
-                // copy to localT (workspace used to save D^{-1}*R for JR iteration)
-                KokkosBlas::mult (zero, localT,
-                                  one,  localD, localR);
-                // initialize Jacobi-Richardson (using R as workspace for JR iteration)
-                KokkosBlas::scal (localR, one, localT);
-              }
+              // copy to localT (workspace used to save D^{-1}*R for JR iteration)
+              KokkosBlas::mult (zero, localT,
+                                one,  localD, localR);
+              // initialize Jacobi-Richardson (using R as workspace for JR iteration)
+              KokkosBlas::scal (localR, one, localT);
+
               // apply inner damping factor, if not one
               if (gamma != one) {
                 // R = gamma * R
@@ -1193,29 +1159,12 @@ namespace KokkosSparse{
 
             // update solution
             auto localY = Kokkos::subview (localX, range_type(0, num_rows), Kokkos::ALL ());
-            #if defined(KOKKOSSPARSE_IMPL_TWOSTAGE_GS_COLUMN_SCALE_U)
-            if (!forward_sweep) 
-            {
-              // apply column-scaling: R := D^{-1}*Z
-              KokkosBlas::mult (zero, localR,
-                                one,  localD, localZ);
-              if (compact_form) {
-                // Y := omega * R
-                KokkosBlas::scal (localY, omega, localR);
-              } else {
-                // Y := X + omega * R
-                KokkosBlas::axpy (omega, localR, localY);
-              }
-            } else
-            #endif
-            {
-              if (compact_form) {
-                // Y := omega * z
-                KokkosBlas::scal (localY, omega, localZ);
-              } else {
-                // Y := X + omega * Z
-                KokkosBlas::axpy (omega, localZ, localY);
-              }
+            if (compact_form) {
+              // Y := omega * z
+              KokkosBlas::scal (localY, omega, localZ);
+            } else {
+              // Y := X + omega * Z
+              KokkosBlas::axpy (omega, localZ, localY);
             }
           } // end of inner GS sweep
         } // end of outer GS sweep
