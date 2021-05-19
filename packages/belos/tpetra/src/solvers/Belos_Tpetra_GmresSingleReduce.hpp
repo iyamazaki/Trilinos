@@ -1,42 +1,3 @@
-//@HEADER
-// ************************************************************************
-//
-//                 Belos: Block Linear Solvers Package
-//                  Copyright 2004 Sandia Corporation
-//
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
-// the U.S. Government retains certain rights in this software.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// ************************************************************************
-//@HEADER
-
 #ifndef BELOS_TPETRA_GMRES_SINGLE_REDUCE_HPP
 #define BELOS_TPETRA_GMRES_SINGLE_REDUCE_HPP
 
@@ -85,6 +46,17 @@ public:
 
     int stepSize = params.get<int> ("Step Size", stepSize_);
     stepSize_ = stepSize;
+
+    // delayedRenorm: use Pythagorian for normalization, combined with delayed renorm
+    // delayedNorm: use delayed normalization, without Pythagorian
+    // otherwise: use Pythagorian for normalization
+    bool delayedNorm 
+      = params.get<bool> ("Perform delayed normalization", this->input_.delayedNorm);
+    bool delayedRenorm 
+      = params.get<bool> ("Perform delayed re-normalization", this->input_.delayedRenorm);
+
+    this->input_.delayedNorm = delayedNorm;
+    this->input_.delayedRenorm = delayedRenorm;
   }
 
   void
@@ -130,7 +102,7 @@ private:
     int rank = 1;
     if (input.orthoType != "CGS") {
       vec_type Qn  = * (Q.getVectorNonConst (n));
-      if (input.delayedNorm) {
+      if (input.delayedNorm || input.delayedRenorm) {
         // compute norm
         real_type newNorm (0.0);
         {
@@ -205,6 +177,7 @@ private:
 
     Teuchos::RCP< Teuchos::Time > dotsTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSingleReduce::LowSynch::dot-prod");
     Teuchos::RCP< Teuchos::Time > projTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSingleReduce::LowSynch::project");
+    Teuchos::RCP< Teuchos::Time > scalTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSingleReduce::LowSynch::scale");
 
     int rank = 1;
     // ----------------------------------------------------------
@@ -214,23 +187,30 @@ private:
     MV Qnext = * (Q.subView (index_next));
 
     // vectors to be orthogonalized against
-    Teuchos::Range1D index (0, n+1);
+    #define SINGLE_REDUCE_GMRES_NOT_DELAYED_CONVERGENCE_CHECK
+    #if defined(SINGLE_REDUCE_GMRES_NOT_DELAYED_CONVERGENCE_CHECK)
+    int last_prev_col = n+1;
+    #else
+    int last_prev_col = (!input.delayedNorm || input.delayedRenorm ? n+1 : n);
+    #endif
+    Teuchos::Range1D index (0, last_prev_col);
     Teuchos::RCP< const MV > Qi = MVT::CloneView (Q, index);
 
     // compute coefficient, T(:,n:n+1) = Q(:,0:n+1)'*Q(n:n+1)
     Teuchos::RCP< dense_matrix_type > tj
-      = Teuchos::rcp (new dense_matrix_type (Teuchos::View, T, n+2, 2, 0, n));
+      = Teuchos::rcp (new dense_matrix_type (Teuchos::View, T, 1+last_prev_col, 2, 0, n));
     {
       Teuchos::TimeMonitor LocalTimer (*dotsTimer);
       MVT::MvTransMv (one, *Qi, Qnext, *tj);
     }
 
     // ----------------------------------------------------------
-    // lagged/delayed re-orthogonalization
+    // lagged/delayed (re)orthogonalization
     // ----------------------------------------------------------
     Teuchos::Range1D index_new (n+1, n+1);
     MV Qnew = * (Q.subView (index_new));
-    if (input.delayedNorm) {
+    if (input.delayedNorm || input.delayedRenorm) 
+    {
       // check
       real_type prevNorm = STS::real (T(n, n));
       TEUCHOS_TEST_FOR_EXCEPTION
@@ -244,10 +224,6 @@ private:
         prevNorm = STM::squareroot (prevNorm);
         Tnn = SC {prevNorm};
 
-        Teuchos::Range1D index_old (n, n);
-        MV Qold = * (Q.subView (index_old));
-        MVT::MvScale (Qold, one / Tnn); 
-
         // --------------------------------------
         // update coefficients after reortho
         for (int i = 0; i <= n; i++) {
@@ -257,14 +233,26 @@ private:
         T(n, n+1) /= Tnn;
 
         // --------------------------------------
-        // lagged-normalize Q(:,n+1) := A*Q(:,n)
-        MVT::MvScale (Qnew, one / Tnn);
+        // lagged-normalize Q(:,n) := Q(:,n)/tnn
+        //              and Q(:,n+1) := A*Q(:,n)
+        Teuchos::Range1D index_old (n, n+1);
+        MV Qold = * (Q.subView (index_old));
+        {
+          Teuchos::TimeMonitor LocalTimer (*scalTimer);
+          MVT::MvScale (Qold, one / Tnn); 
+        }
 
         // update coefficients after reortho
-        for (int i = 0; i <= n+1; i++) {
+        for (int i = 0; i < n+1; i++) {
           T (i, n+1) /= Tnn;
         }
-        T(n+1, n+1) /= Tnn;
+        #if !defined(SINGLE_REDUCE_GMRES_NOT_DELAYED_CONVERGENCE_CHECK)
+        if (!input.delayedNorm || input.delayedRenorm)
+        #endif
+        {
+          T(n+1, n+1) /= Tnn; // from right
+          T(n+1, n+1) /= Tnn; // from left
+        }
       } else {
         if (outPtr != nullptr) {
           *outPtr << " > prevNorm = " << prevNorm << " -> T(" << n << ", " << n << ") = zero"
@@ -287,7 +275,7 @@ private:
     }
 
     // extract new coefficients 
-    for (int i = 0; i <= n+1; i++) {
+    for (int i = 0; i < n+1; i++) {
       H (i, n) = T (i, n+1);
     }
 
@@ -325,15 +313,28 @@ private:
     // ----------------------------------------------------------
     // normalize the new vector
     // ----------------------------------------------------------
-    // fix the norm
-    real_type oldNorm = STS::real (H(n+1, n));
-    for (int i = 0; i <= n; ++i) {
-      H(n+1, n) -= (H(i, n)*H(i, n));
+    real_type oldNorm = STS::real (STS::one ());
+    #if !defined(SINGLE_REDUCE_GMRES_NOT_DELAYED_CONVERGENCE_CHECK)
+    if (!input.delayedNorm || input.delayedRenorm)
+    #endif
+    {
+      // fix the norm
+      H (n+1, n) = T (n+1, n+1);
+      real_type oldNorm = STS::real (H(n+1, n));
+      for (int i = 0; i <= n; ++i) {
+        H(n+1, n) -= (H(i, n)*H(i, n));
+      }
     }
+    #if !defined(SINGLE_REDUCE_GMRES_NOT_DELAYED_CONVERGENCE_CHECK)
+    else {
+      // skip normalization, just rely on delayed normalization
+      H(n+1, n) = STS::one ();
+    }
+    #endif
 
     real_type newNorm = STS::real (H(n+1, n));
     if (newNorm <= oldNorm * tolOrtho) {
-      if (input.delayedNorm) {
+      if (input.delayedNorm || input.delayedRenorm) {
         // something might have gone wrong, and let re-norm take care of
         if (outPtr != nullptr) {
           *outPtr << " > newNorm = " << newNorm << " -> H(" << n+1 << ", " << n << ") = one"
@@ -357,12 +358,23 @@ private:
         (newNorm < STM::zero (), std::runtime_error, "At iteration "
          << n << ", H(" << n+1 << ", " << n << ") = " << newNorm << " < 0.");
 
-      // compute norm
-      newNorm = STM::squareroot (newNorm);
-      H(n+1, n) = SC {newNorm};
-
-      // scale
-      MVT::MvScale (Qnew, one / H (n+1, n)); // normalize
+      // scale only if no delayed ortho, otherwise just rely on delayed ortho
+      #if !defined(SINGLE_REDUCE_GMRES_NOT_DELAYED_CONVERGENCE_CHECK) //not defined
+      if (!input.delayedNorm || input.delayedRenorm)
+      #endif
+      {
+        // compute norm
+        newNorm = STM::squareroot (newNorm);
+        H(n+1, n) = SC {newNorm};
+        // scale
+        #if defined(SINGLE_REDUCE_GMRES_NOT_DELAYED_CONVERGENCE_CHECK) // defined
+        if (!input.delayedNorm || input.delayedRenorm)
+        #endif
+        {
+          Teuchos::TimeMonitor LocalTimer (*scalTimer);
+          MVT::MvScale (Qnew, one / H (n+1, n)); // normalize
+        }
+      } 
       rank = 1;
     }
     /*printf( " T = [\n" );
@@ -372,8 +384,8 @@ private:
       }
       printf( "\n" );
     }
-    printf( "];\n" );*/
-    /* printf( " H = [\n" );
+    printf( "];\n" );
+    printf( " H = [\n" );
     for (int i = 0; i <= n+1; i++) {
       for (int j = 0; j <= n; j++) {
         printf( "%e ", H (i, j) );
@@ -421,7 +433,7 @@ private:
     real_type oldNorm = STS::real (H(n+1, n));
 
     // reorthogonalize if requested
-    if (input.delayedNorm) {
+    if (input.delayedNorm || input.delayedRenorm) {
       // Q(:,0:j+1)'*Q(:,j+1)
       dense_matrix_type w_all (Teuchos::View, WORK, n+2, 1, 0, n);
       dense_matrix_type w_prev (Teuchos::View, WORK, n+1, 1, 0, n);
@@ -489,8 +501,13 @@ private:
     Teuchos::RCP< Teuchos::Time > precTimer  = Teuchos::TimeMonitor::getNewCounter ("GmresSingleReduce::precondition ");
     Teuchos::RCP< Teuchos::Time > orthTimer  = Teuchos::TimeMonitor::getNewCounter ("GmresSingleReduce::orthogonalize");
 
+    #ifdef USE_STACKED_TIMMER
+    Teuchos::RCP< Teuchos::StackedTimer> totalTimer = Teuchos::rcp(new Teuchos::StackedTimer("GmresSingleReduce::total        "));
+    Teuchos::TimeMonitor::setStackedTimer(totalTimer);
+    #else
     Teuchos::RCP< Teuchos::Time > totalTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSingleReduce::total        ");
     Teuchos::TimeMonitor GmresTimer (*totalTimer);
+    #endif
 
     SolverOutput<SC> output {};
     // initialize output parameters
@@ -515,6 +532,7 @@ private:
     dense_matrix_type T (restart+1, restart+2, true);
     dense_vector_type y (restart+1, true);
     dense_vector_type z (restart+1, true);
+    dense_vector_type w (restart+1, true);
     std::vector<real_type> cs (restart);
     std::vector<SC> sn (restart);
     
@@ -614,8 +632,15 @@ private:
     y[0] = SC {r_norm};
     const int s = getStepSize ();
     // main loop
-    bool delayed_ortho = ((input.orthoType == "MGS" && input.delayedNorm) ||
-                          (input.orthoType == "CGS2"));
+    bool delayed_ortho = ((input.orthoType != "CGS") &&
+                          (input.delayedNorm || input.delayedRenorm));
+    if (outPtr != nullptr) {
+      *outPtr << " orthoTyppe = " << input.orthoType;
+      if (input.delayedNorm) *outPtr << " input.delayedNorm";
+      if (input.delayedRenorm) *outPtr << " input.delayedRenorm";
+      if (delayed_ortho) *outPtr << " -> delayed ortho";
+      *outPtr << endl;
+    }
     int iter = 0;
     while (output.numIters < input.maxNumIters && ! output.converged) {
       if (input.maxNumIters < output.numIters+restart) {
@@ -670,8 +695,8 @@ private:
           if (outPtr != nullptr) {
             *outPtr << "> Current iteration: iter=" << iter
                     << ", restart=" << restart
-                    << ", metric=" << metric << endl;
-            Indent indent3 (outPtr);
+                    << ", metric=" << metric
+                    << (delayed_ortho ? " (delayed)" : " ") << endl;
           }
 
           // Shift back for Newton basis
@@ -709,6 +734,42 @@ private:
             metric = STM::zero ();
           }
         }
+        #ifdef SINGLE_REDUCE_GMRES_NOT_DELAYED_CONVERGENCE_CHECK
+        if (metric >= input.tol && (input.delayedNorm || input.delayedRenorm)) {
+          // using the "approximate" norm by Pythagorian for convergence check to avoid extra SpMV
+          // if this pass wrongly, it should get catched by the explicit residual norm check at restart
+
+          // save y and H(:,iter)
+          blas.COPY (2+iter, y.values(),    1, z.values(), 1);
+          blas.COPY (2+iter, &(H(0, iter)), 1, w.values(), 1);
+
+          // Shift back for Newton basis
+          if (computeRitzValues) {
+            const complex_type theta = output.ritzValues[iter % s];
+            UpdateNewton<SC, MV>::updateNewtonH (iter, H, theta);
+          }
+
+          if (H(iter+1, iter) != zero) {
+            // Apply Givens rotations to new column of H and y
+            this->reduceHessenburgToTriangular (iter, H, cs, sn, y.values ());
+            // Convergence check
+            metric = this->getConvergenceMetric (STS::magnitude (y[iter+1]),
+                                                 b_norm, input);
+            if (outPtr != nullptr) {
+              *outPtr << " non-delayed convergence check with metric = " << metric << endl;
+            }
+          }
+
+          // restore y and H(:,iter)
+          blas.COPY (2+iter, z.values(), 1, y.values(),    1);
+          blas.COPY (2+iter, w.values(), 1, &(H(0, iter)), 1);
+        }
+
+        if (input.delayedNorm && !input.delayedRenorm) {
+          // since we did not normalize
+          H(iter+1, iter) = one;
+        }
+        #endif
       } // end of restart cycle 
 
       if (delayed_ortho) {
@@ -785,18 +846,20 @@ private:
 
       metric = this->getConvergenceMetric (r_norm, b0_norm, input);
       if (metric <= input.tol) {
+        #ifdef USE_STACKED_TIMMER
+        totalTimer->stopBaseTimer();
+        Teuchos::StackedTimer::OutputOptions options;
+        options.print_warnings = false;
+        totalTimer->report(std::cout, Tpetra::getDefaultComm (), options);
+        #endif
         output.converged = true;
         return output;
       }
       else if (output.numIters < input.maxNumIters) {
         // Restart, only if max inner-iteration was reached.
         // Otherwise continue the inner-iteration.
-        if (iter >= restart || H(iter,iter-1) == zero) { // done with restart cycyle, or probably lost ortho
+        if (iter >= restart) { // done with restart cycyle
           // Initialize starting vector for restart
-          if (outPtr != nullptr && H(iter,iter-1) == zero) {
-            *outPtr << " > restarting with explicit residual vector"
-                    << " since H(" << iter << ", " << iter-1 << ") = zero" << endl;
-          }
           iter = 0;
           P = * (Q.getVectorNonConst (0));
           if (input.precoSide == "left") {
@@ -829,6 +892,12 @@ private:
       }
     }
 
+    #ifdef USE_STACKED_TIMMER
+    totalTimer->stopBaseTimer();
+    Teuchos::StackedTimer::OutputOptions options;
+    options.print_warnings = false;
+    totalTimer->report(std::cout, Tpetra::getDefaultComm (), options);
+    #endif
     return output;
   }
   
