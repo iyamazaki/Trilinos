@@ -285,6 +285,7 @@ public:
 
 protected:
   using vec_type = typename base_type::vec_type;
+  using ortho_type = Belos::OrthoManager<SC, MV>;
 
 private:
   using MVT = Belos::MultiVecTraits<SC, MV>;
@@ -294,7 +295,6 @@ private:
   using STM = Teuchos::ScalarTraits<real_type>;
   using device_type = typename MV::device_type;
 
-  using ortho_type = Belos::OrthoManager<SC, MV>;
   using dense_matrix_type = Teuchos::SerialDenseMatrix<LO, SC>;
   using dense_vector_type = Teuchos::SerialDenseVector<LO, SC>;
   using real_vector_type = Teuchos::SerialDenseVector<LO, real_type>;
@@ -355,9 +355,9 @@ public:
 protected:
   //! Create Belos::OrthoManager instance.
   void
-  setOrthogonalizer (const std::string& ortho)
+  setOrthogonalizer (const std::string& orthoType, Teuchos::RCP<ortho_type> &ortho)
   {
-    if (ortho_.get () == nullptr || this->input_.orthoType != ortho) {
+    if (ortho.get () == nullptr || this->input_.orthoType != orthoType) {
       TEUCHOS_TEST_FOR_EXCEPTION
         (this->input_.orthoType == "", std::runtime_error,
          "Gmres: Failed to specify \"Orthogonalization\" parameter.");
@@ -367,16 +367,27 @@ protected:
       Belos::OrthoManagerFactory<SC, MV, OP> factory;
       Teuchos::RCP<Belos::OutputManager<SC>> outMan; // can be null
       Teuchos::RCP<Teuchos::ParameterList> params;   // can be null
-      if (this->input_.maxOrthoSteps > 0) {
+      if (orthoType == "TSQR") {
+        params = Teuchos::rcp (new Teuchos::ParameterList());
+        params->set ("forceNonnegativeDiagonal", true);
+      }
+      else if (this->input_.maxOrthoSteps > 0) {
         params = Teuchos::rcp (new Teuchos::ParameterList());
         params->set ("maxNumOrthogPasses", this->input_.maxOrthoSteps);
       }
-      ortho_ = factory.makeMatOrthoManager (ortho, Teuchos::null, outMan, "Belos", params);
+      ortho = factory.makeMatOrthoManager (orthoType, Teuchos::null, outMan, "Belos", params);
       TEUCHOS_TEST_FOR_EXCEPTION
-        (ortho_.get () == nullptr, std::runtime_error, "Gmres: Failed to "
-         "create (Mat)OrthoManager of type \"" << ortho << "\".");
-      this->input_.orthoType = ortho;
+        (ortho.get () == nullptr, std::runtime_error, "Gmres: Failed to "
+         "create (Mat)OrthoManager of type \"" << orthoType << "\".");
+      this->input_.orthoType = orthoType;
     }
+  }
+
+  //! Setup orthogonalizer
+  void
+  setOrthogonalizer (const std::string& orthoType)
+  {
+    setOrthogonalizer (orthoType, ortho_);
   }
 
 private:
@@ -455,7 +466,7 @@ protected:
     }
   }
 
-  int
+  virtual int
   normalizeBelosOrthoManager (MV& Q, dense_matrix_type& R)
   {
     if (ortho_.get () == nullptr) {
@@ -590,7 +601,7 @@ protected:
     std::vector<real_type> cs (restart);
     std::vector<SC> sn (restart);
 
-    //#define HAVE_TPETRA_DEBUG
+    #define HAVE_TPETRA_DEBUG
     #ifdef HAVE_TPETRA_DEBUG
     dense_matrix_type H2 (restart+1, restart,   true);
     dense_matrix_type H3 (restart+1, restart,   true);
@@ -780,6 +791,34 @@ protected:
   }
 
   // ! compute condition number
+  real_type
+  computeCondNum(dense_matrix_type &T)
+  {
+    const LO ione = 1;
+
+    LO m = T.numRows ();
+    LO n = T.numCols ();
+    LO minmn = (m < n ? m : n);
+
+    LO INFO, LWORK;
+    SC  U, VT, TEMP;
+    real_type RWORK;
+    real_vector_type S (minmn, true);
+    LWORK = -1;
+    Teuchos::LAPACK<LO ,SC> lapack;
+    lapack.GESVD('N', 'N', m, n, T.values (), T.stride (),
+                 S.values (), &U, ione, &VT, ione,
+                 &TEMP, LWORK, &RWORK, &INFO);
+    LWORK = Teuchos::as<LO> (STS::real (TEMP));
+    dense_vector_type WORK (LWORK, true);
+    lapack.GESVD('N', 'N', m, n, T.values (), T.stride (),
+                 S.values (), &U, ione, &VT, ione,
+                 WORK.values (), LWORK, &RWORK, &INFO);
+
+    return S(0) / S(minmn-1);
+  }
+
+  // ! compute norm
   real_type
   computeNorm(dense_matrix_type &T)
   {

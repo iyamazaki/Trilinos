@@ -202,20 +202,23 @@ private:
   using complex_type = std::complex<mag_type>;
   using dense_matrix_type = Teuchos::SerialDenseMatrix<LO, SC>;
   using dense_vector_type = Teuchos::SerialDenseVector<LO, SC>;
-  using vec_type = typename Krylov<SC, MV, OP>::vec_type;
   using device_type = typename MV::device_type;
   using dot_type = typename MV::dot_type;
+  using vec_type = typename base_type::vec_type;
+  using ortho_type = typename base_type::ortho_type;
 
 public:
   GmresSstep () :
     base_type::Gmres (),
     useCholQR2_ (false),
-    cholqr_ (Teuchos::null)
+    cholqr_ (Teuchos::null),
+    tsqr_ (Teuchos::null)
   {}
 
   GmresSstep (const Teuchos::RCP<const OP>& A) :
     base_type::Gmres (A),
-    cholqr_ (Teuchos::null)
+    cholqr_ (Teuchos::null),
+    tsqr_ (Teuchos::null)
   {}
 
   virtual ~GmresSstep () = default;
@@ -244,13 +247,24 @@ public:
     bool useCholQR = params.get<bool> ("CholeskyQR", useCholQR_default);
 
     bool useCholQR2 = params.get<bool> ("CholeskyQR2", useCholQR2_);
-    useCholQR2_ = useCholQR2;
+
+    std::string tsqrType
+      = params.get<std::string> ("TSQR", this->input_.tsqrType);
+    if (tsqrType != "none") {
+      useCholQR = false;
+      useCholQR2 = false;
+      this->setOrthogonalizer (tsqrType, tsqr_);
+    } else if (!tsqr_.is_null ()) {
+      tsqr_ = Teuchos::null;
+    }
 
     if ((!useCholQR && !useCholQR2) && !cholqr_.is_null ()) {
       cholqr_ = Teuchos::null;
     } else if ((useCholQR || useCholQR2) && cholqr_.is_null ()) {
       cholqr_ = Teuchos::rcp (new CholQR<SC, MV, OP> ());
     }
+    useCholQR2_ = useCholQR2;
+    this->input_.tsqrType = tsqrType;
   }
 
 private:
@@ -298,6 +312,11 @@ private:
     dense_matrix_type  h (restart+1, 1, true); // used for reorthogonalization
     std::vector<mag_type> cs (restart);
     std::vector<SC> sn (restart);
+
+    #ifdef HAVE_TPETRA_DEBUG
+    dense_matrix_type H2 (restart+1, restart,   true);
+    dense_matrix_type H3 (restart+1, restart,   true);
+    #endif
 
     mag_type b_norm;  // initial residual norm
     mag_type b0_norm; // initial residual norm, not left preconditioned
@@ -442,6 +461,18 @@ private:
             const complex_type theta = output.ritzValues[step];
             UpdateNewton<SC, MV>::updateNewtonV(iter+step, Q, theta);
           }
+          #ifdef HAVE_TPETRA_DEBUG
+          if (outPtr != nullptr) {
+            // vector to be orthogonalized
+            Teuchos::Range1D index_prev(iter, iter+step+1);
+            MV Qnew = * (Q.subView(index_prev));
+
+            dense_matrix_type T2 (step+2, step+2, true);
+            MVT::MvTransMv(one, Qnew, Qnew, T2);
+            SC condV = STM::squareroot (this->computeCondNum(T2));
+            *outPtr << " > condNum( V(" << iter << ":" << iter+step+1 << ") ) = " << condV << endl;
+          }
+          #endif
           output.numIters++;
         }
 
@@ -486,6 +517,10 @@ private:
             for (int i = 0; i <= iter+iiter+1; i++) {
               T(i, iter+iiter) = H(i, iter+iiter);
             }
+            #ifdef HAVE_TPETRA_DEBUG
+            this->checkNumerics (outPtr, iter+iiter, iter+iiter, A, M, Q, X, B, y,
+                                 H, H2, H3, cs, sn, input);
+            #endif
             this->reduceHessenburgToTriangular(iter+iiter, T, cs, sn, y);
             metric = this->getConvergenceMetric (STS::magnitude (y(iter+iiter+1)), b_norm, input);
             if (outPtr != nullptr) {
@@ -740,9 +775,25 @@ protected:
     return rank;
   }
 
+  virtual int
+  normalizeBelosOrthoManager (MV& Q, dense_matrix_type& R)
+  {
+    if (this->input_.tsqrType != "none") {
+      if (tsqr_.get () == nullptr) {
+        this->setOrthogonalizer (this->input_.tsqrType, tsqr_);
+      }
+
+      Teuchos::RCP<dense_matrix_type> R_ptr = Teuchos::rcpFromRef (R);
+      return tsqr_->normalize (Q, R_ptr);
+    }
+
+    return base_type::normalizeBelosOrthoManager (Q, R);
+  }
+
 private:
   bool useCholQR2_;
   Teuchos::RCP<CholQR<SC, MV, OP> > cholqr_;
+  Teuchos::RCP<ortho_type> tsqr_;
 };
 
 
