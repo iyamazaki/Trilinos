@@ -202,10 +202,9 @@ namespace Amesos2 {
           const size_t lclNumRows = redist_mv.getLocalLength();
           for (size_t j = 0; j < redist_mv.getNumVectors(); ++j) {
             auto av_j = av(lda*j, lclNumRows);
-            auto X_lcl_j_2d = redist_mv.getLocalViewHost(Tpetra::Access::ReadOnly);
-            auto X_lcl_j_1d = Kokkos::subview (X_lcl_j_2d, Kokkos::ALL (), j);
+            auto X_lcl_j_1d = Kokkos::subview (contig_local_view_2d, Kokkos::ALL (), j);
 
-            using val_type = typename std::remove_const<typename decltype( X_lcl_j_1d )::value_type>::type;
+            using val_type = typename std::remove_const<typename multivec_t::impl_scalar_type>::type;
             Kokkos::View<val_type*, Kokkos::HostSpace> umavj ( const_cast< val_type* > ( reinterpret_cast<const val_type*> ( av_j.getRawPtr () ) ), av_j.size () );
             Kokkos::deep_copy (umavj, X_lcl_j_1d);
           }
@@ -472,7 +471,7 @@ namespace Amesos2 {
             auto X_lcl_j_2d = redist_mv.getLocalViewHost(Tpetra::Access::ReadOnly);
             auto X_lcl_j_1d = Kokkos::subview (X_lcl_j_2d, Kokkos::ALL (), j);
 
-            using val_type = typename std::remove_const<typename decltype( X_lcl_j_1d )::value_type>::type;
+            using val_type = typename std::remove_const<typename multivec_t::impl_scalar_type>::type;
             Kokkos::View<val_type*, Kokkos::HostSpace> umavj ( const_cast< val_type* > ( reinterpret_cast<const val_type*> ( av_j.getRawPtr () ) ), av_j.size () );
             Kokkos::deep_copy (umavj, X_lcl_j_1d);
           }
