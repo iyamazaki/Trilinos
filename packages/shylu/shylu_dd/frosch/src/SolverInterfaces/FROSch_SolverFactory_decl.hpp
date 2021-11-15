@@ -80,29 +80,33 @@ namespace FROSch {
     template <class SC,
               class LO,
               class GO,
-              class NO>
+              class NO,
+              class XM>
     class SolverFactory {
 
     protected:
 
-        using XMatrixPtr                        = typename Solver<SC,LO,GO,NO>::XMatrixPtr;
-        using ConstXMatrixPtr                   = typename Solver<SC,LO,GO,NO>::ConstXMatrixPtr;
+        //using XMatrixPtr                        = typename Solver<SC,LO,GO,NO,XMatrix>::XMatrixPtr;
+        //using ConstXMatrixPtr                   = typename Solver<SC,LO,GO,NO,XMatrix>::ConstXMatrixPtr;
+        using XMatrix                           = XM;
+        using XMatrixPtr                        = RCP<XMatrix>;
+        using ConstXMatrixPtr                   = RCP<const XMatrix>;
 
-        using ParameterListPtr                  = typename Solver<SC,LO,GO,NO>::ParameterListPtr;
+        using ParameterListPtr                  = typename Solver<SC,LO,GO,NO,XMatrix>::ParameterListPtr;
 
-        using SolverPtr                         = RCP<Solver<SC,LO,GO,NO> >;
+        using SolverPtr                         = RCP<Solver<SC,LO,GO,NO,XM> >;
 #if defined(HAVE_SHYLU_DDFROSCH_AMESOS) && defined(HAVE_SHYLU_DDFROSCH_EPETRA)
         using AmesosSolverEpetraPtr             = RCP<AmesosSolverEpetra<SC,LO,GO,NO> >;
 #endif
 #ifdef HAVE_SHYLU_DDFROSCH_EPETRA
         using Amesos2SolverEpetraPtr            = RCP<Amesos2SolverEpetra<SC,LO,GO,NO> >;
 #endif
-        using Amesos2SolverTpetraPtr            = RCP<Amesos2SolverTpetra<SC,LO,GO,NO> >;
+        using Amesos2SolverTpetraPtr            = RCP<Amesos2SolverTpetra<SC,LO,GO,NO,XM> >;
 #ifdef HAVE_SHYLU_DDFROSCH_BELOS
 #ifdef HAVE_SHYLU_DDFROSCH_EPETRA
         using BelosSolverEpetraPtr              = RCP<BelosSolverEpetra<SC,LO,GO,NO> >;
 #endif
-        using BelosSolverTpetraPtr              = RCP<BelosSolverTpetra<SC,LO,GO,NO> >;
+        using BelosSolverTpetraPtr              = RCP<BelosSolverTpetra<SC,LO,GO,NO,XM> >;
 #endif
         using FROSchPreconditionerPtr           = RCP<FROSchPreconditioner<SC,LO,GO,NO> >;
 #ifdef HAVE_SHYLU_DDFROSCH_IFPACK2

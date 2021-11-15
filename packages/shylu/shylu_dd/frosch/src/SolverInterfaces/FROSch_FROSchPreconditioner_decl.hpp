@@ -58,13 +58,15 @@ namespace FROSch {
     template <class SC = double,
               class LO = int,
               class GO = DefaultGlobalOrdinal,
-              class NO = KokkosClassic::DefaultNode::DefaultNodeType>
-    class FROSchPreconditioner : public Solver<SC,LO,GO,NO> {
+              class NO = KokkosClassic::DefaultNode::DefaultNodeType,
+              class XM = Matrix<SC,LO,GO,NO>>
+    class FROSchPreconditioner : public Solver<SC,LO,GO,NO,XM> {
 
     protected:
 
         // Xpetra
-        using ConstXMatrixPtr                   = typename Solver<SC,LO,GO,NO>::ConstXMatrixPtr;
+        //using ConstXMatrixPtr                   = typename Solver<SC,LO,GO,NO>::ConstXMatrixPtr;
+        using ConstXMatrixPtr                   = typename Solver<SC,LO,GO,NO,XM>::ConstXMatrixPtr;
 
         using XMultiVector                      = MultiVector<SC,LO,GO,NO>;
         using ConstXMultiVector                 = const MultiVector<SC,LO,GO,NO>;
@@ -72,10 +74,10 @@ namespace FROSch {
         using ConstXMultiVectorPtr              = RCP<const XMultiVector>;
         using ConstXMultiVectorPtrVecPtr        = ArrayRCP<ConstXMultiVectorPtr>;
 
-        using XMultiVectorFactory               = typename Solver<SC,LO,GO,NO>::XMultiVectorFactory;
+        using XMultiVectorFactory               = typename Solver<SC,LO,GO,NO,XM>::XMultiVectorFactory;
 
         // Teuchos
-        using ParameterListPtr                  = typename Solver<SC,LO,GO,NO>::ParameterListPtr;
+        using ParameterListPtr                  = typename Solver<SC,LO,GO,NO,XM>::ParameterListPtr;
 
         // FROSch
         using SchwarzPreconditionerPtr          = RCP<SchwarzPreconditioner<SC,LO,GO,NO> >;
@@ -122,7 +124,7 @@ namespace FROSch {
 
         SchwarzPreconditionerPtr FROSchPreconditioner_ = null;
 
-        friend class SolverFactory<SC,LO,GO,NO>;
+        friend class SolverFactory<SC,LO,GO,NO,XM>;
     };
 
 }

@@ -44,6 +44,7 @@
 
 #include "Thyra_FROSchFactory_decl.hpp"
 
+#ifdef HAVE_SHYLU_DDFROSCH_THYRA
 #include <FROSch_AlgebraicOverlappingPreconditioner_def.hpp>
 #include <FROSch_GDSWPreconditioner_def.hpp>
 #include <FROSch_RGDSWPreconditioner_def.hpp>
@@ -314,7 +315,7 @@ namespace Thyra {
 
             RCP<Operator<SC,LO,GO,NO> > xpOp = rcp_dynamic_cast<Operator<SC,LO,GO,NO> >(SchwarzPreconditioner);
 
-            thyraPrecOp = fROSchLinearOp<SC,LO,GO,NO>(thyraRangeSpace,thyraDomainSpace,xpOp,bIsEpetra,bIsTpetra);
+            thyraPrecOp = FROSchLinearOp<SC,LO,GO,NO>(thyraRangeSpace,thyraDomainSpace,xpOp,bIsEpetra,bIsTpetra);
 
             TEUCHOS_TEST_FOR_EXCEPT(is_null(thyraPrecOp));
 
@@ -501,4 +502,6 @@ namespace Thyra {
     }
 
 }
+#endif
+
 #endif

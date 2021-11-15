@@ -104,6 +104,7 @@ namespace FROSch {
     int OneLevelPreconditioner<SC,LO,GO,NO>::initialize(int overlap,
                                                         ConstXMapPtr repeatedMap)
     {
+MPI_Barrier(MPI_COMM_WORLD);
         FROSCH_TIMER_START_LEVELID(initializeTime,"OneLevelPreconditioner::initialize");
         int ret = 0;
         if (overlap<0) {
@@ -121,6 +122,7 @@ namespace FROSch {
     template <class SC,class LO,class GO,class NO>
     int OneLevelPreconditioner<SC,LO,GO,NO>::compute()
     {
+MPI_Barrier(MPI_COMM_WORLD);
         FROSCH_TIMER_START_LEVELID(computeTime,"OneLevelPreconditioner::compute");
         return OverlappingOperator_->compute();
     }

@@ -50,43 +50,53 @@ namespace FROSch {
     using namespace Teuchos;
     using namespace Xpetra;
 
-    template<class SC,class LO,class GO,class NO>
-    typename Solver<SC,LO,GO,NO>::ConstXMapPtr Solver<SC,LO,GO,NO>::getDomainMap() const
+    template<class SC,class LO,class GO,class NO,class XMatrix>
+    typename Solver<SC,LO,GO,NO,XMatrix>::ConstXMapPtr
+    Solver<SC,LO,GO,NO,XMatrix>::getDomainMap() const
     {
+        #define OVERLAPPING_MATRIX_ON_HOST
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        return getDeviceMap<NO>(K_->getDomainMap());
+        #else
         return K_->getDomainMap();
+        #endif
     }
 
-    template<class SC,class LO,class GO,class NO>
-    typename Solver<SC,LO,GO,NO>::ConstXMapPtr Solver<SC,LO,GO,NO>::getRangeMap() const
+    template<class SC,class LO,class GO,class NO,class XMatrix>
+    typename Solver<SC,LO,GO,NO,XMatrix>::ConstXMapPtr Solver<SC,LO,GO,NO,XMatrix>::getRangeMap() const
     {
+        #ifdef OVERLAPPING_MATRIX_ON_HOST
+        return getDeviceMap<NO>(K_->getRangeMap());
+        #else
         return K_->getRangeMap();
+        #endif
     }
 
-    template<class SC,class LO,class GO,class NO>
-    bool Solver<SC,LO,GO,NO>::isInitialized() const
+    template<class SC,class LO,class GO,class NO,class XMatrix>
+    bool Solver<SC,LO,GO,NO,XMatrix>::isInitialized() const
     {
         return IsInitialized_;
     }
 
-    template<class SC,class LO,class GO,class NO>
-    bool Solver<SC,LO,GO,NO>::isComputed() const
+    template<class SC,class LO,class GO,class NO,class XMatrix>
+    bool Solver<SC,LO,GO,NO,XMatrix>::isComputed() const
     {
         return IsComputed_;
     }
 
-    template<class SC,class LO,class GO,class NO>
-    void Solver<SC,LO,GO,NO>::residual(const XMultiVector & x,
-                                       const XMultiVector & b,
-                                       XMultiVector& r) const
+    template<class SC,class LO,class GO,class NO,class XMatrix>
+    void Solver<SC,LO,GO,NO,XMatrix>::residual(const XMultiVector & x,
+                                               const XMultiVector & b,
+                                                     XMultiVector& r) const
     {
         apply(x,r);
         r.update(ScalarTraits<SC>::one(),b,-ScalarTraits<SC>::one());
     }
 
-    template<class SC,class LO,class GO,class NO>
-    Solver<SC,LO,GO,NO>::Solver(ConstXMatrixPtr k,
-                                ParameterListPtr parameterList,
-                                string description) :
+    template<class SC,class LO,class GO,class NO,class XMatrix>
+    Solver<SC,LO,GO,NO,XMatrix>::Solver(ConstXMatrixPtr k,
+                                        ParameterListPtr parameterList,
+                                        string description) :
     K_ (k),
     ParameterList_ (parameterList),
     Description_ (description)

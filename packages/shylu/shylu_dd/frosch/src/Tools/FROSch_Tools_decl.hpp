@@ -87,7 +87,7 @@ namespace FROSch {
       Elasticity = 1
     };
 
-        enum Verbosity {None=0,All=1};
+    enum Verbosity {None=0,All=1};
 
     template <typename LO,
               typename GO>
@@ -471,6 +471,21 @@ namespace FROSch {
 
         return;
     }
+
+    template <class NO, class InputMapType>
+    RCP<const Map<typename InputMapType::local_ordinal_type,
+                  typename InputMapType::global_ordinal_type,
+                  NO>> getDeviceMap(RCP<const InputMapType> hMap) {
+
+        using GO = typename InputMapType::global_ordinal_type;
+        using LO = typename InputMapType::local_ordinal_type;
+        
+        auto indexList       = hMap->getNodeElementList ();
+        auto comm            = hMap->getComm ();
+        GO indexBase         = hMap->getIndexBase ();
+        GO numGlobalElements = hMap->getGlobalNumElements ();
+        return MapFactory<LO,GO,NO>::Build(hMap->lib(), numGlobalElements, indexList, indexBase, comm);
+   }
 }
 
 #endif

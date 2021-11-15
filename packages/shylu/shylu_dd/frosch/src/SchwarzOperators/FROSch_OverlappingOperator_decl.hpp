@@ -65,6 +65,14 @@ namespace FROSch {
 
         using XMatrixPtr            = typename SchwarzOperator<SC,LO,GO,NO>::XMatrixPtr;
         using ConstXMatrixPtr       = typename SchwarzOperator<SC,LO,GO,NO>::ConstXMatrixPtr;
+        #if 1
+	using host_node              = typename SchwarzOperator<SC,LO,GO,NO>::host_node;
+	using device_execution_space = typename SchwarzOperator<SC,LO,GO,NO>::device_execution_space;
+        using XMatrixHost            = typename SchwarzOperator<SC,LO,GO,NO>::XMatrixHost;
+        using ConstXMatrixHostPtr    = typename SchwarzOperator<SC,LO,GO,NO>::ConstXMatrixHostPtr;
+        using ConstXMapHostPtr       = typename SchwarzOperator<SC,LO,GO,NO>::ConstXMapHostPtr;
+        //using ConstXMatrixHostPtr   = ConstXMatrixPtr;
+        #endif
 
         using XMultiVector          = typename SchwarzOperator<SC,LO,GO,NO>::XMultiVector;
         using XMultiVectorPtr       = typename SchwarzOperator<SC,LO,GO,NO>::XMultiVectorPtr;
@@ -111,9 +119,14 @@ namespace FROSch {
         virtual int updateLocalOverlappingMatrices() = 0;
 
 
-        ConstXMatrixPtr OverlappingMatrix_;
-
-        ConstXMapPtr OverlappingMap_;
+        #define OVERLAPPING_MATRIX_ON_HOST
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        ConstXMatrixHostPtr OverlappingMatrix_;
+        ConstXMapHostPtr    OverlappingMap_;
+	#else
+        ConstXMatrixPtr     OverlappingMatrix_;
+        ConstXMapPtr        OverlappingMap_;
+        #endif
 
         // Temp Vectors for apply()
         mutable XMultiVectorPtr XTmp_;
@@ -123,7 +136,7 @@ namespace FROSch {
 
         XImportPtr Scatter_;
 
-        SolverPtr SubdomainSolver_;
+        SolverPtr     SubdomainSolver_;
 
         XMultiVectorPtr Multiplicity_;
 

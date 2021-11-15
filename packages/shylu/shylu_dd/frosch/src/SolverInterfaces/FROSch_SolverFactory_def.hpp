@@ -53,10 +53,10 @@ namespace FROSch {
     using namespace Teuchos;
     using namespace Xpetra;
 
-    template <class SC, class LO, class GO, class NO>
-    typename SolverFactory<SC,LO,GO,NO>::SolverPtr SolverFactory<SC,LO,GO,NO>::Build(ConstXMatrixPtr k,
-                                                                                     ParameterListPtr parameterList,
-                                                                                     string description)
+    template <class SC, class LO, class GO, class NO, class XM>
+    typename SolverFactory<SC,LO,GO,NO,XM>::SolverPtr SolverFactory<SC,LO,GO,NO,XM>::Build(ConstXMatrixPtr k,
+                                                                                           ParameterListPtr parameterList,
+                                                                                           string description)
     {
         const string solverType = parameterList->get("SolverType","Amesos2");
         if (!solverType.compare("Amesos")) {
@@ -78,7 +78,7 @@ namespace FROSch {
                 ThrowErrorMissingPackage("FROSch::SolverFactory","Epetra");
 #endif
             } else if (k->getRowMap()->lib()==UseTpetra) {
-                return Amesos2SolverTpetraPtr(new Amesos2SolverTpetra<SC,LO,GO,NO>(k,parameterList,description));
+                return Amesos2SolverTpetraPtr(new Amesos2SolverTpetra<SC,LO,GO,NO,XM>(k,parameterList,description));
             } else {
                 FROSCH_ASSERT(false, "FROSch::SolverFactory: This can't happen. Either use Epetra or Tetra linear algebra stack.");
             }
@@ -91,7 +91,7 @@ namespace FROSch {
                 ThrowErrorMissingPackage("FROSch::SolverFactory","Epetra");
 #endif
             } else if (k->getRowMap()->lib()==UseTpetra) {
-                return BelosSolverTpetraPtr(new BelosSolverTpetra<SC,LO,GO,NO>(k,parameterList,description));
+                return BelosSolverTpetraPtr(new BelosSolverTpetra<SC,LO,GO,NO,XM>(k,parameterList,description));
             } else {
                 FROSCH_ASSERT(false, "FROSch::SolverFactory: This can't happen. Either use Epetra or Tetra linear algebra stack.");
             }
@@ -99,8 +99,10 @@ namespace FROSch {
             ThrowErrorMissingPackage("FROSch::SolverFactory","Belos");
 #endif
         } else if (!solverType.compare("FROSchPreconditioner")) {
-            return FROSchPreconditionerPtr(new FROSchPreconditioner<SC,LO,GO,NO>(k,parameterList,description));
+ #ifndef  OVERLAPPING_MATRIX_ON_HOST
+            return FROSchPreconditionerPtr(new FROSchPreconditioner<SC,LO,GO,NO,XM>(k,parameterList,description));
         } else if (!solverType.compare("Ifpack2")) {
+ #endif
 #ifdef HAVE_SHYLU_DDFROSCH_IFPACK2
             FROSCH_ASSERT(k->getRowMap()->lib()==UseTpetra,"FROSch::SolverFactory: Ifpack2 is not compatible with Epetra.");
             return Ifpack2PreconditionerTpetraPtr(new Ifpack2PreconditionerTpetra<SC,LO,GO,NO>(k,parameterList,description));

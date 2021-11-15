@@ -58,21 +58,24 @@ namespace FROSch {
     template <class SC = double,
               class LO = int,
               class GO = DefaultGlobalOrdinal,
-              class NO = KokkosClassic::DefaultNode::DefaultNodeType>
-    class Amesos2SolverTpetra : public Solver<SC,LO,GO,NO> {
+              class NO = KokkosClassic::DefaultNode::DefaultNodeType,
+	      class XM = Matrix<SC,LO,GO,NO>>
+    class Amesos2SolverTpetra : public Solver<SC,LO,GO,NO,XM> {
 
     protected:
 
         // Xpetra
-        using ConstXMatrixPtr                   = typename Solver<SC,LO,GO,NO>::ConstXMatrixPtr;
+        using XMatrix                           = XM;
+        using ConstXMatrixPtr                   = typename Solver<SC,LO,GO,NO,XMatrix>::ConstXMatrixPtr;
 
-        using XMultiVector                      = typename Solver<SC,LO,GO,NO>::XMultiVector;
-        using XMultiVectorPtr                   = typename Solver<SC,LO,GO,NO>::XMultiVectorPtr;
+        using XMultiVector                      = typename Solver<SC,LO,GO,NO,XMatrix>::XMultiVector;
+        using XMultiVectorPtr                   = typename Solver<SC,LO,GO,NO,XMatrix>::XMultiVectorPtr;
 
-        using XMultiVectorFactory               = typename Solver<SC,LO,GO,NO>::XMultiVectorFactory;
+        using XMultiVectorFactory               = typename Solver<SC,LO,GO,NO,XMatrix>::XMultiVectorFactory;
 
         // Tpetra
-        using TCrsMatrix                        = Tpetra::CrsMatrix<SC,LO,GO,NO>;
+        using matrix_node_type                  = typename XMatrix::node_type;
+        using TCrsMatrix                        = Tpetra::CrsMatrix<SC,LO,GO,matrix_node_type>;
         using TCrsMatrixPtr                     = RCP<TCrsMatrix>;
         using ConstTCrsMatrixPtr                = RCP<const TCrsMatrix>;
 
@@ -80,7 +83,7 @@ namespace FROSch {
         using TMultiVectorPtr                   = RCP<TMultiVector>;
 
         // Teuchos
-        using ParameterListPtr                  = typename Solver<SC,LO,GO,NO>::ParameterListPtr;
+        using ParameterListPtr                  = typename Solver<SC,LO,GO,NO,XMatrix>::ParameterListPtr;
 
         // Amesos2
         using Amesos2SolverTpetraPtr            = RCP<Amesos2::Solver<TCrsMatrix,TMultiVector> >;
@@ -123,7 +126,7 @@ namespace FROSch {
 
         Amesos2SolverTpetraPtr Amesos2Solver_ = null;
 
-        friend class SolverFactory<SC,LO,GO,NO>;
+        friend class SolverFactory<SC,LO,GO,NO,XMatrix>;
     };
 
 }

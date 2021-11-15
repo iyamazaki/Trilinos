@@ -163,6 +163,10 @@ namespace FROSch {
                                                 XMultiVector& y) const
     {
         FROSCH_DETAILTIMER_START_LEVELID(applyPhiTTime,"CoarseOperator::applyPhiT");
+//Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("CoarseOperator::applyPhiT");
+//Teuchos::TimeMonitor LocalTimer (*factorTimer);
+//Kokkos::Timer timer;
+//timer.reset ();
         // AH 08/22/2019 TODO: We cannot ger rid of the Build() calls because of "XCoarse_ = XCoarseSolveTmp_;". This is basically caused by the whole Gathering Map strategy. As soon as we have replaced this, we can get rid of the Build() calls
         XCoarse_ = MultiVectorFactory<SC,LO,GO,NO>::Build(CoarseSpace_->getBasisMapUnique(),x.getNumVectors()); // AH 08/22/2019 TODO: Can we get rid of this? If possible, we should remove the whole GatheringMaps idea and replace it by some smart all-to-all MPI communication
         {
@@ -182,6 +186,11 @@ namespace FROSch {
             XCoarse_ = XCoarseSolveTmp_;
         }
         y = *XCoarseSolveTmp_;
+//Kokkos::fence();
+///double tic = timer.seconds();
+//int myRank = -1;
+//MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+//std::cout << myRank << " CoarseOperator::applyPhiT " << tic << " seconds " << std::endl;
     }
 
     template<class SC,class LO,class GO,class NO>
@@ -208,6 +217,11 @@ namespace FROSch {
                                                XMultiVector& y) const
     {
         FROSCH_DETAILTIMER_START_LEVELID(applyPhiTime,"CoarseOperator::applyPhi");
+//Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("CoarseOperator::applyPhi");
+//Teuchos::TimeMonitor LocalTimer (*factorTimer);
+//Kokkos::Timer timer;
+//timer.reset ();
+
         // AH 08/22/2019 TODO: We have the same issue here as in applyPhiT()
         YCoarseSolveTmp_ = MultiVectorFactory<SC,LO,GO,NO>::Build(x.getMap(),x.getNumVectors());
         *YCoarseSolveTmp_ = x;
@@ -242,6 +256,11 @@ namespace FROSch {
 #endif
             Phi_->apply(*YCoarse_,y,NO_TRANS);
         }
+//Kokkos::fence();
+//double tic = timer.seconds();
+//int myRank = -1;
+//MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+//std::cout << myRank << " CoarseOperator::applyPhi " << tic << " seconds " << std::endl;
     }
 
     template<class SC,class LO,class GO,class NO>

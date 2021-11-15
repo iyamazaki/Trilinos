@@ -57,14 +57,14 @@ namespace FROSch {
     using namespace Teuchos;
     using namespace Xpetra;
 
-    template <class SC,class LO,class GO,class NO>
-    RCP<const Matrix<SC,LO,GO,NO> > ExtractLocalSubdomainMatrix(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
-                                                                RCP<const Map<LO,GO,NO> > map);
+    template <class SC,class LO,class GO,class NO,class ConstXMatrixPtr = RCP<const Matrix<SC,LO,GO,NO> >>
+    ConstXMatrixPtr ExtractLocalSubdomainMatrix(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
+                                                RCP<const Map<LO,GO,NO> > map);
 
-    template <class SC,class LO,class GO,class NO>
-    RCP<const Matrix<SC,LO,GO,NO> > ExtractLocalSubdomainMatrix(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
-                                                                RCP<const Map<LO,GO,NO> > map,
-                                                                SC value);
+    template <class SC,class LO,class GO,class NO,class ConstXMatrixPtr = RCP<const Matrix<SC,LO,GO,NO> >>
+    ConstXMatrixPtr ExtractLocalSubdomainMatrix(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
+                                                RCP<const Map<LO,GO,NO> > map,
+                                                SC value);
 
     template <class SC,class LO,class GO,class NO>
     int UpdateLocalSubdomainMatrix(RCP<Matrix<SC,LO,GO,NO> > globalMatrix,

@@ -42,8 +42,8 @@
 #ifndef _FROSCH_OVERLAPPINGOPERATOR_DEF_HPP
 #define _FROSCH_OVERLAPPINGOPERATOR_DEF_HPP
 
+#include <FROSch_Tools_decl.hpp>
 #include <FROSch_OverlappingOperator_decl.hpp>
-
 
 namespace FROSch {
 
@@ -81,18 +81,25 @@ namespace FROSch {
                                                  SC alpha,
                                                  SC beta) const
     {
-        FROSCH_TIMER_START_LEVELID(applyTime,"OverlappingOperator::apply");
+        FROSCH_TIMER_START_LEVELID(applyTime,"OverlappingOperator::apply-totall");
         FROSCH_ASSERT(this->IsComputed_,"FROSch::OverlappingOperator: OverlappingOperator has to be computed before calling apply()");
         if (XTmp_.is_null()) XTmp_ = MultiVectorFactory<SC,LO,GO,NO>::Build(x.getMap(),x.getNumVectors());
         *XTmp_ = x;
         if (!usePreconditionerOnly && mode == NO_TRANS) {
+Teuchos::RCP< Teuchos::Time > froschMyTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: apply(no-trans)");
+Teuchos::TimeMonitor LocalTimer (*froschMyTimer);
             this->K_->apply(x,*XTmp_,mode,ScalarTraits<SC>::one(),ScalarTraits<SC>::zero());
         }
         // AH 11/28/2018: For Epetra, XOverlap_ will only have a view to the values of XOverlapTmp_. Therefore, xOverlapTmp should not be deleted before XOverlap_ is used.
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        auto dDomainMap = getDeviceMap<NO>(OverlappingMatrix_->getDomainMap());
+        #else
+        auto dDomainMap = OverlappingMatrix_->getDomainMap();
+        #endif
         if (YOverlap_.is_null()) {
-            YOverlap_ = MultiVectorFactory<SC,LO,GO,NO>::Build(OverlappingMatrix_->getDomainMap(),x.getNumVectors());
+            YOverlap_ = MultiVectorFactory<SC,LO,GO,NO>::Build(dDomainMap,x.getNumVectors());
         } else {
-            YOverlap_->replaceMap(OverlappingMatrix_->getDomainMap());
+            YOverlap_->replaceMap(dDomainMap);
         }
         // AH 11/28/2018: replaceMap does not update the GlobalNumRows. Therefore, we have to create a new MultiVector on the serial Communicator. In Epetra, we can prevent to copy the MultiVector.
         if (XTmp_->getMap()->lib() == UseEpetra) {
@@ -112,21 +119,43 @@ namespace FROSch {
             FROSCH_ASSERT(false,"HAVE_XPETRA_EPETRA not defined.");
 #endif
         } else {
+Teuchos::RCP< Teuchos::Time > froschMyTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: import");
+Teuchos::TimeMonitor LocalTimer (*froschMyTimer);
+            #ifdef  OVERLAPPING_MATRIX_ON_HOST
+            auto dOverlappingMap = getDeviceMap<NO>(OverlappingMap_);
+            #else
+            auto dOverlappingMap = OverlappingMap_;
+            #endif
             if (XOverlap_.is_null()) {
-                XOverlap_ = MultiVectorFactory<SC,LO,GO,NO>::Build(OverlappingMap_,x.getNumVectors());
+                XOverlap_ = MultiVectorFactory<SC,LO,GO,NO>::Build(dOverlappingMap,x.getNumVectors());
             } else {
-                XOverlap_->replaceMap(OverlappingMap_);
+                XOverlap_->replaceMap(dOverlappingMap);
             }
+            #ifdef  OVERLAPPING_MATRIX_ON_HOST
+            auto dRangeMap = getDeviceMap<NO>(OverlappingMatrix_->getRangeMap());
+            #else
+            auto dRangeMap = OverlappingMatrix_->getRangeMap();
+            #endif
             XOverlap_->doImport(*XTmp_,*Scatter_,INSERT);
-            XOverlap_->replaceMap(OverlappingMatrix_->getRangeMap());
+            XOverlap_->replaceMap(dRangeMap);
         }
+{
+Teuchos::RCP< Teuchos::Time > froschMyTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: apply(subdomain)");
+Teuchos::TimeMonitor LocalTimer (*froschMyTimer);
         SubdomainSolver_->apply(*XOverlap_,*YOverlap_,mode,ScalarTraits<SC>::one(),ScalarTraits<SC>::zero());
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        YOverlap_->replaceMap(getDeviceMap<NO>(OverlappingMap_));
+        #else
         YOverlap_->replaceMap(OverlappingMap_);
+        #endif
+}
 
         XTmp_->putScalar(ScalarTraits<SC>::zero());
         ConstXMapPtr yMap = y.getMap();
         ConstXMapPtr yOverlapMap = YOverlap_->getMap();
         if (Combine_ == Restricted) {
+Teuchos::RCP< Teuchos::Time > froschMyTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: Restrict");
+Teuchos::TimeMonitor LocalTimer (*froschMyTimer);
 #if defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
             if (XTmp_->getMap()->lib() == UseTpetra) {
                 auto yLocalMap = yMap->getLocalMap();
@@ -165,6 +194,8 @@ namespace FROSch {
             XTmp_->doExport(*YOverlap_,*Scatter_,ADD);
         }
         if (Combine_ == Averaging) {
+Teuchos::RCP< Teuchos::Time > froschMyTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: Averaging");
+Teuchos::TimeMonitor LocalTimer (*froschMyTimer);
             ConstSCVecPtr scaling = Multiplicity_->getData(0);
             for (UN j=0; j<XTmp_->getNumVectors(); j++) {
                 SCVecPtr values = XTmp_->getDataNonConst(j);
@@ -175,20 +206,34 @@ namespace FROSch {
         }
 
         if (!usePreconditionerOnly && mode != NO_TRANS) {
+Teuchos::RCP< Teuchos::Time > froschMyTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: apply(trans)");
+Teuchos::TimeMonitor LocalTimer (*froschMyTimer);
             this->K_->apply(*XTmp_,*XTmp_,mode,ScalarTraits<SC>::one(),ScalarTraits<SC>::zero());
         }
+{
+Teuchos::RCP< Teuchos::Time > froschMyTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: update");
+Teuchos::TimeMonitor LocalTimer (*froschMyTimer);
         y.update(alpha,*XTmp_,beta);
+}
     }
 
     template <class SC,class LO,class GO,class NO>
     int OverlappingOperator<SC,LO,GO,NO>::initializeOverlappingOperator()
     {
         FROSCH_DETAILTIMER_START_LEVELID(initializeOverlappingOperatorTime,"OverlappingOperator::initializeOverlappingOperator");
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        Scatter_ = ImportFactory<LO,GO,NO>::Build(this->getDomainMap(),getDeviceMap<NO>(OverlappingMap_));
+        #else
         Scatter_ = ImportFactory<LO,GO,NO>::Build(this->getDomainMap(),OverlappingMap_);
+        #endif
         if (Combine_ == Averaging) {
             Multiplicity_ = MultiVectorFactory<SC,LO,GO,NO>::Build(this->getRangeMap(),1);
             XMultiVectorPtr multiplicityRepeated;
+            #ifdef  OVERLAPPING_MATRIX_ON_HOST
+            multiplicityRepeated = MultiVectorFactory<SC,LO,GO,NO>::Build(getDeviceMap<NO>(OverlappingMap_),1);
+            #else
             multiplicityRepeated = MultiVectorFactory<SC,LO,GO,NO>::Build(OverlappingMap_,1);
+            #endif
             multiplicityRepeated->putScalar(ScalarTraits<SC>::one());
             XExportPtr multiplicityExporter = ExportFactory<LO,GO,NO>::Build(multiplicityRepeated->getMap(),this->getRangeMap());
             Multiplicity_->doExport(*multiplicityRepeated,*multiplicityExporter,ADD);
@@ -211,9 +256,15 @@ namespace FROSch {
 
         if (!reuseSymbolicFactorization) {
             if (this->IsComputed_ && this->Verbose_) cout << "FROSch::OverlappingOperator : Recomputing the Symbolic Factorization" << endl;
+            #ifdef  OVERLAPPING_MATRIX_ON_HOST
+            SubdomainSolver_ = SolverFactory<SC,LO,GO,NO,XMatrixHost>::Build(OverlappingMatrix_,
+                                                                             sublist(this->ParameterList_,"Solver"),
+                                                                             string("Solver (Level ") + to_string(this->LevelID_) + string(")"));
+            #else
             SubdomainSolver_ = SolverFactory<SC,LO,GO,NO>::Build(OverlappingMatrix_,
                                                                  sublist(this->ParameterList_,"Solver"),
                                                                  string("Solver (Level ") + to_string(this->LevelID_) + string(")"));
+            #endif
             SubdomainSolver_->initialize();
         } else {
             FROSCH_ASSERT(!SubdomainSolver_.is_null(),"FROSch::OverlappingOperator: SubdomainSolver_.is_null()");

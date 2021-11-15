@@ -44,6 +44,8 @@
 
 #include <ShyLU_DDFROSch_config.h>
 
+#ifdef HAVE_SHYLU_DDFROSCH_THYRA
+
 //Thyra
 #include "Thyra_DefaultPreconditioner.hpp"
 #include "Thyra_BlockedLinearOpBase.hpp"
@@ -197,5 +199,6 @@ namespace Thyra {
     };
 
 }
+#endif
 
 #endif

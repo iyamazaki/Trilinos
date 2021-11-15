@@ -158,7 +158,9 @@ namespace FROSch {
         // ====================================================================================
 
         this->OverlappingMap_ = repeatedMap;
-        this->OverlappingMatrix_ = this->K_;
+        #ifndef  OVERLAPPING_MATRIX_ON_HOST
+	this->OverlappingMatrix_ = this->K_;
+        #endif
 
         GO global,sum;
         LO local,minVal,maxVal;
@@ -209,7 +211,11 @@ namespace FROSch {
         }
 
         // Adding Layers of Elements to the overlapping subdomains
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        ConstXCrsGraphPtr overlappingGraph = this->K_->getCrsGraph();
+        #else
         ConstXCrsGraphPtr overlappingGraph = this->OverlappingMatrix_->getCrsGraph();
+        #endif
         for (int i=0; i<overlap; i++) {
             switch (AddingLayersStrategy_) {
                 case LayersFromGraph:
@@ -217,11 +223,19 @@ namespace FROSch {
                     break;
 
                 case LayersFromMatrix:
+                    #ifdef  OVERLAPPING_MATRIX_ON_HOST
+                    ExtendOverlapByOneLayer(this->K_,this->OverlappingMap_,this->OverlappingMatrix_,this->OverlappingMap_);
+                    #else
                     ExtendOverlapByOneLayer(this->OverlappingMatrix_,this->OverlappingMap_,this->OverlappingMatrix_,this->OverlappingMap_);
+                    #endif
                     break;
 
                 case LayersOld:
+                    #ifdef  OVERLAPPING_MATRIX_ON_HOST
+                    ExtendOverlapByOneLayer_Old(this->K_,this->OverlappingMap_,this->OverlappingMatrix_,this->OverlappingMap_);
+                    #else
                     ExtendOverlapByOneLayer_Old(this->OverlappingMatrix_,this->OverlappingMap_,this->OverlappingMatrix_,this->OverlappingMap_);
+                    #endif
                     break;
 
                 default:
@@ -288,10 +302,15 @@ namespace FROSch {
     int AlgebraicOverlappingOperator<SC,LO,GO,NO>::updateLocalOverlappingMatrices()
     {
         FROSCH_DETAILTIMER_START_LEVELID(updateLocalOverlappingMatricesTime,"AlgebraicOverlappingOperator::updateLocalOverlappingMatrices");
-        if (this->IsComputed_) { // already computed once and we want to recycle the information. That is why we reset OverlappingMatrix_ to K_, because K_ has been reset at this point
-            this->OverlappingMatrix_ = this->K_;
-        }
+        #if 1
         this->OverlappingMatrix_ = ExtractLocalSubdomainMatrix(this->OverlappingMatrix_,this->OverlappingMap_);
+        #else
+        if (this->IsComputed_) { // already computed once and we want to recycle the information. That is why we reset OverlappingMatrix_ to K_, because K_ has been reset at this point
+            this->OverlappingMatrix_ = ExtractLocalSubdomainMatrix(this->K_,this->OverlappingMap_);
+        } else {
+            this->OverlappingMatrix_ = ExtractLocalSubdomainMatrix(this->OverlappingMatrix_,this->OverlappingMap_);
+        }
+        #endif
         return 0;
     }
 }

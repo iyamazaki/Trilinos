@@ -60,23 +60,30 @@ namespace FROSch {
     template <class SC = double,
               class LO = int,
               class GO = DefaultGlobalOrdinal,
-              class NO = KokkosClassic::DefaultNode::DefaultNodeType>
+              class NO = KokkosClassic::DefaultNode::DefaultNodeType,
+              class XMatrix = Matrix<SC,LO,GO,NO>>
     class SolverFactory;
 
     template <class SC = double,
               class LO = int,
               class GO = DefaultGlobalOrdinal,
-              class NO = KokkosClassic::DefaultNode::DefaultNodeType>
+              class NO = KokkosClassic::DefaultNode::DefaultNodeType,
+	      class XM = Matrix<SC,LO,GO,NO>>
     class Solver : public Operator<SC,LO,GO,NO> {
 
     protected:
 
         // Xpetra
+        using matrix_node_type                  = typename XM::node_type;
+        using MatrixMap                         = Map<LO,GO,matrix_node_type>;
+        using ConstMatrixMapPtr                 = RCP<const MatrixMap>;
+
         using XMap                              = Map<LO,GO,NO>;
         using XMapPtr                           = RCP<XMap>;
         using ConstXMapPtr                      = RCP<const XMap>;
 
-        using XMatrix                           = Matrix<SC,LO,GO,NO>;
+        //using XMatrix                           = Matrix<SC,LO,GO,NO>;
+        using XMatrix                           = XM;
         using XMatrixPtr                        = RCP<XMatrix>;
         using ConstXMatrixPtr                   = RCP<const XMatrix>;
 
@@ -153,7 +160,7 @@ namespace FROSch {
 
         bool IsComputed_ = false;
 
-        friend class SolverFactory<SC,LO,GO,NO>;
+        friend class SolverFactory<SC,LO,GO,NO,XMatrix>;
     };
 
 }

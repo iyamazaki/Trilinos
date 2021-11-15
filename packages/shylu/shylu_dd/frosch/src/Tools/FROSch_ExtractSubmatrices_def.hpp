@@ -51,18 +51,33 @@ namespace FROSch {
     using namespace Teuchos;
     using namespace Xpetra;
 
-    template <class SC,class LO,class GO,class NO>
-    RCP<const Matrix<SC,LO,GO,NO> > ExtractLocalSubdomainMatrix(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
-                                                                RCP<const Map<LO,GO,NO> > map)
+    template <class SC,class LO,class GO,class NO,class ConstXMatrixPtr>
+    ConstXMatrixPtr ExtractLocalSubdomainMatrix(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
+                                                RCP<const Map<LO,GO,NO> > map)
     {
         FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime,"ExtractLocalSubdomainMatrix");
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        using matrix_node_type = typename ConstXMatrixPtr::node_type;
+        auto subdomainMatrix = MatrixFactory<SC,LO,GO,matrix_node_type>::Build(map,globalMatrix->getGlobalMaxNumRowEntries());
+        #else
         RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(map,globalMatrix->getGlobalMaxNumRowEntries());
+        #endif
         RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(),map);
+MPI_Barrier(MPI_COMM_WORLD);
+{
+Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: ExtractLocalSubdomainMatrix:: doImport");
+Teuchos::TimeMonitor LocalTimer (*factorTimer);
         subdomainMatrix->doImport(*globalMatrix,*scatter,ADD);
+}
         //cout << *subdomainMatrix << endl;
         RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        RCP<Map<LO,GO,matrix_node_type> > localSubdomainMap = MapFactory<LO,GO,matrix_node_type>::Build(map->lib(),map->getNodeNumElements(),0,SerialComm);
+        auto localSubdomainMatrix = MatrixFactory<SC,LO,GO,matrix_node_type>::Build(localSubdomainMap,globalMatrix->getGlobalMaxNumRowEntries());
+        #else
         RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(map->lib(),map->getNodeNumElements(),0,SerialComm);
         RCP<Matrix<SC,LO,GO,NO> > localSubdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap,globalMatrix->getGlobalMaxNumRowEntries());
+        #endif
 
         for (unsigned i=0; i<localSubdomainMap->getNodeNumElements(); i++) {
             ArrayView<const GO> indices;
@@ -80,25 +95,46 @@ namespace FROSch {
                         valuesLocal.push_back(values[j]);
                     }
                 }
+{
+Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: ExtractLocalSubdomainMatrix:: insertGlobalValues");
+Teuchos::TimeMonitor LocalTimer (*factorTimer);
                 localSubdomainMatrix->insertGlobalValues(i,indicesLocal(),valuesLocal());
+}
             }
         }
+{
+Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: ExtractLocalSubdomainMatrix:: fillComplete");
+Teuchos::TimeMonitor LocalTimer (*factorTimer);
         localSubdomainMatrix->fillComplete();
+}
         return localSubdomainMatrix.getConst();
     }
 
-    template <class SC,class LO,class GO,class NO>
-    RCP<const Matrix<SC,LO,GO,NO> > ExtractLocalSubdomainMatrix(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
-                                                                RCP<const Map<LO,GO,NO> > map,
-                                                                SC value)
+    template <class SC,class LO,class GO,class NO,class ConstXMatrixPtr>
+    ConstXMatrixPtr ExtractLocalSubdomainMatrix(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
+                                                RCP<const Map<LO,GO,NO> > map,
+                                                SC value)
     {
         FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime,"ExtractLocalSubdomainMatrix");
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        using matrix_node_type = typename ConstXMatrixPtr::node_type;
+        auto subdomainMatrix = MatrixFactory<SC,LO,GO,matrix_node_type>::Build(map,2*globalMatrix->getGlobalMaxNumRowEntries());
+        #else
         RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(map,2*globalMatrix->getGlobalMaxNumRowEntries());
+        #endif
         RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(),map);
+{
+Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: ExtractLocalSubdomainMatrixV:: doImport");
+Teuchos::TimeMonitor LocalTimer (*factorTimer);
         subdomainMatrix->doImport(*globalMatrix,*scatter,ADD);
+}
         //cout << *subdomainMatrix << endl;
         RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
+        #ifdef  OVERLAPPING_MATRIX_ON_HOST
+        auto localSubdomainMap = MapFactory<LO,GO,matrix_node_type>::Build(map->lib(),map->getNodeNumElements(),0,SerialComm);
+        #else
         RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(map->lib(),map->getNodeNumElements(),0,SerialComm);
+        #endif
         RCP<Matrix<SC,LO,GO,NO> > localSubdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap,globalMatrix->getGlobalMaxNumRowEntries());
 
         for (unsigned i=0; i<localSubdomainMap->getNodeNumElements(); i++) {
@@ -117,7 +153,11 @@ namespace FROSch {
                         valuesLocal.push_back(value);
                     }
                 }
+{
+Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: ExtractLocalSubdomainMatrixV:: insertGlobalValues");
+Teuchos::TimeMonitor LocalTimer (*factorTimer);
                 localSubdomainMatrix->insertGlobalValues(i,indicesGlobal(),valuesLocal());
+}
             }
         }
         localSubdomainMatrix->fillComplete();
@@ -154,7 +194,11 @@ namespace FROSch {
                 localSubdomainMatrix->replaceLocalValues(i,indicesLocal(),valuesLocal());
             }
         }
+{
+Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("FROSch: ExtractLocalSubdomainMatrixV:: fillComplete");
+Teuchos::TimeMonitor LocalTimer (*factorTimer);
         localSubdomainMatrix->fillComplete();
+}
 
         return 0;
     }

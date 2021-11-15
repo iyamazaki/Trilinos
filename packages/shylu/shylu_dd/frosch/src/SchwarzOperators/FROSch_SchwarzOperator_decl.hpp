@@ -80,6 +80,19 @@ namespace FROSch {
 
     protected:
 
+        #if 1
+        using device_execution_space = typename NO::execution_space;
+        using host_execution_space = Kokkos::DefaultHostExecutionSpace;
+        using host_memory_space = typename host_execution_space::memory_space;
+        using host_node = Kokkos::Compat::KokkosDeviceWrapperNode<host_execution_space, host_memory_space>;
+        using XMatrixHost                       = Matrix<SC,LO,GO,host_node>;
+        using ConstXMatrixHostPtr               = RCP<const XMatrixHost>;
+
+        using XMapHost                          = Map<LO,GO,host_node>;
+        using XMapHostPtr                       = RCP<XMapHost>;
+        using ConstXMapHostPtr                  = RCP<const XMapHost>;
+        #endif
+
         using CommPtr                           = RCP<const Comm<int> >;
 
         using XMap                              = Map<LO,GO,NO>;

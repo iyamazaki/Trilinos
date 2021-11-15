@@ -52,8 +52,8 @@ namespace FROSch {
     using namespace Teuchos;
     using namespace Xpetra;
 
-    template<class SC,class LO,class GO,class NO>
-    int FROSchPreconditioner<SC,LO,GO,NO>::initialize()
+    template<class SC,class LO,class GO,class NO,class XM>
+    int FROSchPreconditioner<SC,LO,GO,NO,XM>::initialize()
     {
         FROSCH_TIMER_START_SOLVER(initializeTime,"FROSchPreconditioner::initialize");
         this->IsInitialized_ = true;
@@ -61,8 +61,8 @@ namespace FROSch {
         return 0;
     }
 
-    template<class SC,class LO,class GO,class NO>
-    int FROSchPreconditioner<SC,LO,GO,NO>::compute()
+    template<class SC,class LO,class GO,class NO,class XM>
+    int FROSchPreconditioner<SC,LO,GO,NO,XM>::compute()
     {
         FROSCH_TIMER_START_SOLVER(computeTime,"FROSchPreconditioner::compute");
         FROSCH_ASSERT(this->IsInitialized_,"FROSch::FROSchPreconditioner: !this->IsInitialized_");
@@ -71,12 +71,12 @@ namespace FROSch {
         return 0;
     }
 
-    template<class SC,class LO,class GO,class NO>
-    void FROSchPreconditioner<SC,LO,GO,NO>::apply(const XMultiVector &x,
-                                                  XMultiVector &y,
-                                                  ETransp mode,
-                                                  SC alpha,
-                                                  SC beta) const
+    template<class SC,class LO,class GO,class NO,class XM>
+    void FROSchPreconditioner<SC,LO,GO,NO,XM>::apply(const XMultiVector &x,
+                                                     XMultiVector &y,
+                                                     ETransp mode,
+                                                     SC alpha,
+                                                     SC beta) const
     {
         FROSCH_TIMER_START_SOLVER(applyTime,"FROSchPreconditioner::apply");
         FROSCH_ASSERT(this->IsComputed_,"FROSch::FROSchPreconditioner: !this->IsComputed_.");
@@ -84,19 +84,19 @@ namespace FROSch {
         FROSchPreconditioner_->apply(x,y,mode,alpha,beta);
     }
 
-    template<class SC,class LO,class GO,class NO>
-    int FROSchPreconditioner<SC,LO,GO,NO>::updateMatrix(ConstXMatrixPtr k,
-                                                        bool reuseInitialize)
+    template<class SC,class LO,class GO,class NO,class XM>
+    int FROSchPreconditioner<SC,LO,GO,NO,XM>::updateMatrix(ConstXMatrixPtr k,
+                                                           bool reuseInitialize)
     {
         FROSCH_ASSERT(false,"FROSch::FROSchPreconditioner: updateMatrix() is not implemented for the FROSchPreconditioner yet.");
         return 0;
     }
 
-    template<class SC,class LO,class GO,class NO>
-    FROSchPreconditioner<SC,LO,GO,NO>::FROSchPreconditioner(ConstXMatrixPtr k,
-                                                            ParameterListPtr parameterList,
-                                                            string description) :
-    Solver<SC,LO,GO,NO> (k,parameterList,description)
+    template<class SC,class LO,class GO,class NO,class XM>
+    FROSchPreconditioner<SC,LO,GO,NO,XM>::FROSchPreconditioner(ConstXMatrixPtr k,
+                                                               ParameterListPtr parameterList,
+                                                               string description) :
+    Solver<SC,LO,GO,NO,XM> (k,parameterList,description)
     {
         FROSCH_TIMER_START_SOLVER(FROSchPreconditionerTime,"FROSchPreconditioner::FROSchPreconditioner");
         FROSCH_ASSERT(!this->K_.is_null(),"FROSch::FROSchPreconditioner: K_ is null.");
