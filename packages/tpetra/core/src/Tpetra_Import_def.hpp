@@ -174,6 +174,8 @@ namespace Tpetra {
     TEUCHOS_ASSERT( ! this->TransferData_->exportLIDs_.need_sync_device () );
     TEUCHOS_ASSERT( ! this->TransferData_->exportLIDs_.need_sync_host () );
 
+    this->detectRemoteExportLIDsContiguous();
+
     if (this->verbose ()) {
       std::ostringstream os;
       os << *verbPrefix << "Done!" << endl;
@@ -409,6 +411,8 @@ namespace Tpetra {
       distributor.createFromSendsAndRecvs (this->TransferData_->exportPIDs_, tRemotePIDs);
     }
 
+    this->detectRemoteExportLIDsContiguous();
+
     TEUCHOS_ASSERT( ! this->TransferData_->permuteFromLIDs_.need_sync_device () );
     TEUCHOS_ASSERT( ! this->TransferData_->permuteFromLIDs_.need_sync_host () );
     TEUCHOS_ASSERT( ! this->TransferData_->permuteToLIDs_.need_sync_device () );
@@ -486,6 +490,8 @@ namespace Tpetra {
                     size_t (exportLIDs.size ()) );
     this->TransferData_->exportPIDs_.swap (exportPIDs);
     this->TransferData_->distributor_.swap (distributor);
+
+    this->detectRemoteExportLIDsContiguous();
 
     TEUCHOS_ASSERT( ! this->TransferData_->permuteFromLIDs_.need_sync_device () );
     TEUCHOS_ASSERT( ! this->TransferData_->permuteFromLIDs_.need_sync_host () );
@@ -1171,7 +1177,7 @@ namespace Tpetra {
 
       const size_type numInvalidRemote =
         std::count_if (remoteProcIDs.begin (), remoteProcIDs.end (),
-                       std::bind1st (std::equal_to<int> (), -1));
+                       std::bind (std::equal_to<int> (), -1, std::placeholders::_1));
       TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC
         (numInvalidRemote == 0, std::logic_error, "Calling getRemoteIndexList "
          "on the source Map returned IDNotPresent, but none of the returned "

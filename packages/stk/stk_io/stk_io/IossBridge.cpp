@@ -36,7 +36,6 @@
 // clang-format off
 #include <stk_io/IossBridge.hpp>
 #include <Ioss_IOFactory.h>                          // for IOFactory
-#include <Ioss_NullEntity.h>                         // for NullEntity
 #include <assert.h>                                  // for assert
 #include <math.h>                                    // for log10
 #include <Shards_Array.hpp>                          // for ArrayDimension
@@ -84,7 +83,6 @@
 #include "SidesetTranslator.hpp"
 #include "StkIoUtils.hpp"
 #include "mpi.h"                                     // for MPI_COMM_SELF
-#include "stk_mesh/base/BulkDataInlinedMethods.hpp"
 #include "stk_mesh/base/Entity.hpp"                  // for Entity
 #include "stk_mesh/base/FieldBase.hpp"               // for FieldBase, etc
 #include "stk_mesh/base/FieldRestriction.hpp"
@@ -158,7 +156,7 @@ namespace stk {
           else
             return stk::mesh::InvalidEntityRank;
         }
-      
+
       case Ioss::FACEBLOCK:
         return stk::topology::FACE_RANK;
 
@@ -207,7 +205,7 @@ namespace {
     const bool ioFieldTypeIsRecognized = (ioFieldType == Ioss::Field::INTEGER) || (ioFieldType == Ioss::Field::INT64)
                                       || (ioFieldType == Ioss::Field::REAL)    || (ioFieldType == Ioss::Field::COMPLEX);
     ThrowRequireMsg(ioFieldTypeIsRecognized, "Unrecognized field type for IO field '"<<io_field.get_name()<<"'");
- 
+
     return stk::io::impl::declare_stk_field_internal(meta, type, part, io_field, use_cartesian_for_scalar);
   }
 
@@ -218,11 +216,11 @@ namespace {
                                      std::vector<stk::mesh::Entity> &entities,
                                      Ioss::GroupingEntity *io_entity)
   {
-    size_t field_component_count = io_field.transformed_storage()->component_count();
+    size_t iossNumFieldComponents = io_field.transformed_storage()->component_count();
 
     std::vector<T> io_field_data;
     size_t io_entity_count = io_entity->get_field_data(io_field.get_name(), io_field_data);
-    assert(io_field_data.size() == entities.size() * field_component_count);
+    assert(io_field_data.size() == entities.size() * iossNumFieldComponents);
 
     size_t entity_count = entities.size();
 
@@ -243,8 +241,10 @@ namespace {
       if (mesh.is_valid(entities[i])) {
         T *fld_data = static_cast<T*>(stk::mesh::field_data(*field, entities[i]));
         if (fld_data !=nullptr) {
-          for(size_t j=0; j<field_component_count; ++j) {
-            fld_data[j] = io_field_data[i*field_component_count+j];
+          const size_t stkNumFieldComponents = stk::mesh::field_scalars_per_entity(*field, entities[i]);
+          const size_t len = std::min(stkNumFieldComponents, iossNumFieldComponents);
+          for(size_t j=0; j<len; ++j) {
+            fld_data[j] = io_field_data[i*iossNumFieldComponents+j];
           }
         }
       }
@@ -803,7 +803,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
       return 0;
     }
 
-    Ioss::GroupingEntity* get_grouping_entity(const Ioss::Region& region, stk::mesh::Part& part) 
+    Ioss::GroupingEntity* get_grouping_entity(const Ioss::Region& region, stk::mesh::Part& part)
     {
       if(!stk::io::is_part_io_part(part)) { return nullptr; }
 
@@ -1027,12 +1027,15 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         return is_part_io_part(part);
     }
 
+    struct IossPartAttribute
+    {
+      bool value;
+    };
+
     void put_io_part_attribute(mesh::Part & part)
     {
       if (!is_part_io_part(part)) {
-        mesh::MetaData & meta = mesh::MetaData::get(part);
-        Ioss::GroupingEntity *attr = new Ioss::NullEntity();
-        meta.declare_attribute_with_delete(part, attr);
+        set_ioss_part_attribute<IossPartAttribute>(part, true);
       }
     }
 
@@ -1160,21 +1163,12 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
 
     void remove_io_part_attribute(mesh::Part & part)
     {
-      const Ioss::GroupingEntity *entity = part.attribute<Ioss::GroupingEntity>();
-      if (entity != nullptr) {
+      const IossPartAttribute* ioPartAttr = part.attribute<IossPartAttribute>();
+      if (ioPartAttr != nullptr) {
         mesh::MetaData & meta = mesh::MetaData::get(part);
-        bool success = meta.remove_attribute(part, entity);
-        if (!success) {
-          std::string msg = "stk::io::remove_io_part_attribute( ";
-          msg += part.name();
-          msg += " ) FAILED:";
-          msg += " meta.remove_attribute(..) returned failure.";
-          throw std::runtime_error( msg );
-        }
-
-        if (entity->type() == Ioss::INVALID_TYPE) {
-          delete entity;
-        }
+        bool success = meta.remove_attribute(part, ioPartAttr);
+        ThrowRequireMsg(success, "stk::io::remove_io_part_attribute(" << part.name() << ") FAILED.");
+        delete ioPartAttr;
       }
     }
 
@@ -1860,7 +1854,6 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
     {
         /// \todo REFACTOR Need some additional compatibility checks between
         /// Ioss field and stk::mesh::Field; better error messages...
-
         if (field != nullptr && io_entity->field_exists(io_fld_name)) {
             const Ioss::Field &io_field = io_entity->get_fieldref(io_fld_name);
             if (field->type_is<double>()) {
@@ -2097,10 +2090,23 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         const Ioss::ElementTopology *element_topo = nullptr;
         stk::topology stk_element_topology = stk::topology::INVALID_TOPOLOGY;
         if (tokens.size() >= 4) {
-          // Name of form: "name_eltopo_sidetopo_id" or
-          //               "name_block_id_sidetopo_id"
-          // "name" is typically "surface".
-          element_topo = Ioss::ElementTopology::factory(tokens[1], true);
+	  // If the sideset has a "canonical" name as in "surface_{id}",
+	  // Then the sideblock name will be of the form:
+          //  * "surface_eltopo_sidetopo_id" or
+          //  * "surface_block_id_sidetopo_id"
+	  // If the sideset does *not* have a canonical name, then
+	  // the sideblock name will be of the form:
+	  //  * "{sideset_name}_eltopo_sidetopo" or
+	  //  * "{sideset_name}_block_id_sidetopo"
+
+	  // Check the last token and see if it is an integer...
+	  bool all_dig = tokens.back().find_first_not_of("0123456789") == std::string::npos;
+	  if (all_dig) {
+	    element_topo = Ioss::ElementTopology::factory(tokens[1], true);
+	  }
+	  else {
+	    element_topo = Ioss::ElementTopology::factory(tokens[tokens.size() - 2], true);
+	  }
 
           if (element_topo != nullptr) {
             element_topo_name = element_topo->name();
@@ -3428,7 +3434,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
 
     bool is_part_io_part(const stk::mesh::Part &part)
     {
-      return nullptr != part.attribute<Ioss::GroupingEntity>();
+      return has_ioss_part_attribute<IossPartAttribute>(part);
     }
 
     // TODO: NOTE: The use of "FieldBase" here basically eliminates the use of the attribute
@@ -3444,7 +3450,11 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
                                        const stk::mesh::FieldBase &df_field)
     {
       stk::mesh::MetaData &m = mesh::MetaData::get(p);
-      m.declare_attribute_no_delete(p,&df_field);
+      if (const stk::mesh::FieldBase * existingDistFactField = p.attribute<stk::mesh::FieldBase>()) {
+        m.remove_attribute(p, existingDistFactField);
+      }
+
+      m.declare_attribute_no_delete(p, &df_field);
     }
 
     const Ioss::Field::RoleType* get_field_role(const stk::mesh::FieldBase &f)
@@ -3637,7 +3647,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         }
     }
 
-    void put_field_data(stk::mesh::BulkData &bulk, 
+    void put_field_data(stk::mesh::BulkData &bulk,
                         stk::io::OutputParams& params,
                         stk::mesh::Part &part,
                         stk::mesh::EntityRank part_type,

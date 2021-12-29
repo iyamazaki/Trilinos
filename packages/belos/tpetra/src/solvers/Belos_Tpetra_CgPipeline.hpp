@@ -84,7 +84,8 @@ protected:
 
     SolverOutput<SC> output {};
 
-    MV R_AR (R_in.getMap (), 2); // [R, A*R]
+    bool zeroOut = false;
+    MV R_AR (R_in.getMap (), 2, zeroOut); // [R, A*R]
     vec_type R = * (R_AR.getVectorNonConst (0));
     vec_type AR = * (R_AR.getVectorNonConst (1));
     Tpetra::deep_copy (R, R_in);
@@ -96,12 +97,13 @@ protected:
 
     // results of [R R]'*[R AR]
     Kokkos::View<val_type*, device_type> RR_RAR ("results[numVecs]", 2);
+    auto RR_RAR_host = Kokkos::create_mirror_view (RR_RAR);
     vec_type P (R, Teuchos::Copy);
     vec_type AP (P.getMap ());
-    vec_type AAR(R.getMap ());
+    vec_type AAR(R.getMap (), zeroOut);
     vec_type AW (R.getMap ());
-    vec_type MR (R.getMap ());
-    vec_type U (R.getMap ());
+    vec_type MR (R.getMap (), zeroOut);
+    vec_type U (R.getMap (), zeroOut);
     vec_type Q (R.getMap ());
 
     // local vars
@@ -128,9 +130,7 @@ protected:
     // main loop
     for (int iter = 0; iter < input.maxNumIters; ++iter) {
       if (outPtr != nullptr) {
-        *outPtr << "Iteration " << (iter+1) << " of " << input.maxNumIters << ":" << endl;
-        outPtr->pushTab ();
-        *outPtr << "r_norm: " << r_norm << endl;
+        *outPtr << "Iteration " << (iter+1) << " of " << input.maxNumIters << ": r_norm: " << r_norm;
       }
 
       // * all-reduce *
@@ -160,8 +160,10 @@ protected:
 
       // * check for convergence *
       req->wait ();
-      RAR = RR_RAR(1);
-      beta_new = STS::real (RR_RAR(0));
+      Kokkos::deep_copy (RR_RAR_host, RR_RAR);
+      RAR = RR_RAR_host(1);
+      beta_new = STS::real (RR_RAR_host(0));
+
       r_norm = std::sqrt( beta_new );
       if (iter == 0) {
         r_norm_orig = r_norm;
@@ -169,11 +171,12 @@ protected:
       const mag_type metric =
 	this->getConvergenceMetric (r_norm, r_norm_orig, input);
       if (outPtr != nullptr) {
-        *outPtr << "RAR: " << RAR << endl;
-        *outPtr << "r_norm: " << r_norm << endl;
-        *outPtr << "metric: " << metric << endl;
+        *outPtr << ", RAR: " << RAR << ", r_norm: " << r_norm << ", metric: " << metric;
       }
       if (metric <= input.tol) {
+        if (outPtr != nullptr) {
+          *outPtr << endl;
+        }
         output.absResid = r_norm;
         output.relResid = r_norm / r_norm_orig;
         output.numIters = iter + 1;
@@ -191,7 +194,7 @@ protected:
         // beta
         beta = beta_new / beta_old;
         if (outPtr != nullptr) {
-          *outPtr << "beta: " << beta << endl;
+          *outPtr << ", beta: " << beta;
         }
         // PAP
         PAP = RAR - beta_new * (beta / alpha);
@@ -204,9 +207,9 @@ protected:
 
         // alpha
         alpha = beta_new / STS::real (PAP);
-        if (outPtr != nullptr) {
-          *outPtr << "alpha: " << alpha << endl;
-        }
+      }
+      if (outPtr != nullptr) {
+        *outPtr << ", alpha: " << alpha << endl;
       }
       // beta_old
       beta_old = beta_new;
@@ -238,9 +241,6 @@ protected:
       AW.update (ONE, AAR, static_cast<SC> (beta));
       // w = w - alpha*n (AR is w, and AW is n)
       AR.update (static_cast<SC> (-alpha), AW, ONE);
-    }
-    if (outPtr != nullptr) {
-      outPtr->popTab ();
     }
 
     // Reached max iteration count without converging

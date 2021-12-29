@@ -54,19 +54,19 @@ namespace Xpetra {
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
     TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::TpetraCrsMatrix(const Teuchos::RCP< const Map< LocalOrdinal, GlobalOrdinal, Node > > &rowMap, size_t maxNumEntriesPerRow, const Teuchos::RCP< Teuchos::ParameterList > &params)
-      : mtx_ (Teuchos::rcp (new Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node> (toTpetra(rowMap), maxNumEntriesPerRow, Tpetra::StaticProfile, params))) {  }
+      : mtx_ (Teuchos::rcp (new Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node> (toTpetra(rowMap), maxNumEntriesPerRow, params))) {  }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
     TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::TpetraCrsMatrix(const Teuchos::RCP< const Map< LocalOrdinal, GlobalOrdinal, Node > > &rowMap, const ArrayRCP< const size_t > &NumEntriesPerRowToAlloc, const Teuchos::RCP< Teuchos::ParameterList > &params)
-      : mtx_(Teuchos::rcp(new Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node> (toTpetra(rowMap), NumEntriesPerRowToAlloc(), Tpetra::StaticProfile, params))) {  }
+      : mtx_(Teuchos::rcp(new Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node> (toTpetra(rowMap), NumEntriesPerRowToAlloc(), params))) {  }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
     TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::TpetraCrsMatrix(const Teuchos::RCP< const Map< LocalOrdinal, GlobalOrdinal, Node > > &rowMap, const Teuchos::RCP< const Map< LocalOrdinal, GlobalOrdinal, Node > > &colMap, size_t maxNumEntriesPerRow, const Teuchos::RCP< Teuchos::ParameterList > &params)
-      : mtx_(Teuchos::rcp(new Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>(toTpetra(rowMap), toTpetra(colMap), maxNumEntriesPerRow, Tpetra::StaticProfile, params))) {  }
+      : mtx_(Teuchos::rcp(new Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>(toTpetra(rowMap), toTpetra(colMap), maxNumEntriesPerRow, params))) {  }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
     TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::TpetraCrsMatrix(const Teuchos::RCP< const Map< LocalOrdinal, GlobalOrdinal, Node > > &rowMap, const Teuchos::RCP< const Map< LocalOrdinal, GlobalOrdinal, Node > > &colMap, const ArrayRCP< const size_t > &NumEntriesPerRowToAlloc, const Teuchos::RCP< Teuchos::ParameterList > &params)
-      : mtx_(Teuchos::rcp(new Tpetra::CrsMatrix< Scalar, LocalOrdinal, GlobalOrdinal, Node >(toTpetra(rowMap), toTpetra(colMap), NumEntriesPerRowToAlloc(), Tpetra::StaticProfile, params))) {  }
+      : mtx_(Teuchos::rcp(new Tpetra::CrsMatrix< Scalar, LocalOrdinal, GlobalOrdinal, Node >(toTpetra(rowMap), toTpetra(colMap), NumEntriesPerRowToAlloc(), params))) {  }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
     TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::TpetraCrsMatrix(const Teuchos::RCP< const CrsGraph< LocalOrdinal, GlobalOrdinal, Node > > &graph, const Teuchos::RCP< Teuchos::ParameterList > &params)
@@ -171,6 +171,18 @@ namespace Xpetra {
         const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& rangeMap,
         const Teuchos::RCP<Teuchos::ParameterList>& params)
     : mtx_(Teuchos::rcp(new Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>(lclMatrix, toTpetra(rowMap), toTpetra(colMap), toTpetra(domainMap), toTpetra(rangeMap), params))) {  }
+
+    template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
+    TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::TpetraCrsMatrix (
+        const local_matrix_type& lclMatrix,
+        const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& rowMap,
+        const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& colMap,
+        const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& domainMap,
+        const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& rangeMap,
+        const Teuchos::RCP<const Import<LocalOrdinal,GlobalOrdinal,Node> >& importer,
+        const Teuchos::RCP<const Export<LocalOrdinal,GlobalOrdinal,Node> >& exporter,
+        const Teuchos::RCP<Teuchos::ParameterList>& params)
+    : mtx_(Teuchos::rcp(new Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>(lclMatrix, toTpetra(rowMap), toTpetra(colMap), toTpetra(domainMap), toTpetra(rangeMap), toTpetra(importer), toTpetra(exporter), params))) {  }
 #endif
 #endif
 
@@ -219,6 +231,10 @@ namespace Xpetra {
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
     void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getAllValues(ArrayRCP<const size_t>& rowptr, ArrayRCP<const LocalOrdinal>& colind, ArrayRCP<const Scalar>& values) const
     { XPETRA_MONITOR("TpetraCrsMatrix::getAllValues"); mtx_->getAllValues(rowptr,colind,values); }
+
+    template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
+    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getAllValues(ArrayRCP<Scalar>& values)
+    { XPETRA_MONITOR("TpetraCrsMatrix::getAllValues"); mtx_->getAllValues(values); }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
     bool TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::haveGlobalConstants() const
@@ -322,16 +338,53 @@ namespace Xpetra {
     bool TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::supportsRowViews() const { XPETRA_MONITOR("TpetraCrsMatrix::supportsRowViews"); return mtx_->supportsRowViews(); }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
-    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getLocalRowCopy(LocalOrdinal LocalRow, const ArrayView< LocalOrdinal > &Indices, const ArrayView< Scalar > &Values, size_t &NumEntries) const { XPETRA_MONITOR("TpetraCrsMatrix::getLocalRowCopy"); mtx_->getLocalRowCopy(LocalRow, Indices, Values, NumEntries); }
+    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getLocalRowCopy(LocalOrdinal LocalRow, const ArrayView< LocalOrdinal > &Indices, const ArrayView< Scalar > &Values, size_t &NumEntries) const {
+      XPETRA_MONITOR("TpetraCrsMatrix::getLocalRowCopy");
+      typename Tpetra::CrsGraph<LocalOrdinal,GlobalOrdinal,Node>::nonconst_local_inds_host_view_type indices("indices",Indices.size());
+      typename Tpetra::CrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::nonconst_values_host_view_type values("values", Values.size());
+
+      mtx_->getLocalRowCopy(LocalRow, indices, values, NumEntries);
+      for (size_t i=0;i<NumEntries; ++i) {
+        Indices[i]=indices(i);
+        Values[i]=values(i);
+      }
+    }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
-    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getGlobalRowView(GlobalOrdinal GlobalRow, ArrayView< const GlobalOrdinal > &indices, ArrayView< const Scalar > &values) const { XPETRA_MONITOR("TpetraCrsMatrix::getGlobalRowView"); mtx_->getGlobalRowView(GlobalRow, indices, values); }
+    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getGlobalRowCopy(GlobalOrdinal GlobalRow, const ArrayView< GlobalOrdinal > &Indices, const ArrayView< Scalar > &Values, size_t &NumEntries) const {
+      XPETRA_MONITOR("TpetraCrsMatrix::getGlobalRowCopy");
+      typename Tpetra::CrsGraph<LocalOrdinal,GlobalOrdinal,Node>::nonconst_global_inds_host_view_type indices("indices",Indices.size());
+      typename Tpetra::CrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::nonconst_values_host_view_type values("values", Values.size());
+
+      mtx_->getGlobalRowCopy(GlobalRow, indices, values, NumEntries);
+      for (size_t i=0;i<NumEntries; ++i) {
+        Indices[i]=indices(i);
+        Values[i]=values(i);
+      }
+
+    }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
-    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getGlobalRowCopy(GlobalOrdinal GlobalRow, const ArrayView< GlobalOrdinal > &indices, const ArrayView< Scalar > &values, size_t &numEntries) const { XPETRA_MONITOR("TpetraCrsMatrix::getGlobalRowCopy"); mtx_->getGlobalRowCopy(GlobalRow, indices, values, numEntries); }
+    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getGlobalRowView(GlobalOrdinal GlobalRow, ArrayView< const GlobalOrdinal > &Indices, ArrayView< const Scalar > &Values) const {
+      XPETRA_MONITOR("TpetraCrsMatrix::getGlobalRowView");
+      typename Tpetra::CrsGraph<LocalOrdinal,GlobalOrdinal,Node>::global_inds_host_view_type indices;
+      typename Tpetra::CrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::values_host_view_type values;
+
+      mtx_->getGlobalRowView(GlobalRow, indices, values);
+      Indices = ArrayView<const GlobalOrdinal> (indices.data(), indices.extent(0));
+      Values = ArrayView<const Scalar> (reinterpret_cast<const Scalar*>(values.data()), values.extent(0));
+    }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
-    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getLocalRowView(LocalOrdinal LocalRow, ArrayView< const LocalOrdinal > &indices, ArrayView< const Scalar > &values) const { XPETRA_MONITOR("TpetraCrsMatrix::getLocalRowView"); mtx_->getLocalRowView(LocalRow, indices, values); }
+    void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::getLocalRowView(LocalOrdinal LocalRow, ArrayView< const LocalOrdinal > &Indices, ArrayView< const Scalar > &Values) const {
+      XPETRA_MONITOR("TpetraCrsMatrix::getLocalRowView");
+      typename Tpetra::CrsGraph<LocalOrdinal,GlobalOrdinal,Node>::local_inds_host_view_type indices;
+      typename Tpetra::CrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::values_host_view_type values;
+
+      mtx_->getLocalRowView(LocalRow, indices, values);
+      Indices = ArrayView<const LocalOrdinal> (indices.data(), indices.extent(0));
+      Values = ArrayView<const Scalar> (reinterpret_cast<const Scalar*>(values.data()), values.extent(0));
+    }
 
     template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
     void TpetraCrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::apply(const MultiVector &X, MultiVector &Y, Teuchos::ETransp mode, Scalar alpha, Scalar beta) const { XPETRA_MONITOR("TpetraCrsMatrix::apply"); mtx_->apply(toTpetra(X), toTpetra(Y), mode, alpha, beta); }
@@ -346,7 +399,7 @@ namespace Xpetra {
         {
           // preform communication to propagate local interface
           // values to all the processor that share interfaces.
-          RCP<MultiVector> matvecInterfaceTmp = MultiVectorFactory::Build(regionInterfaceMap, 1);
+          RCP<MultiVector> matvecInterfaceTmp = Xpetra::MultiVectorFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Build(regionInterfaceMap, 1);
           matvecInterfaceTmp->doImport(Y, *regionInterfaceImporter, INSERT);
 
           // sum all contributions to interface values

@@ -105,7 +105,7 @@ namespace MueLu {
     SET_VALID_ENTRY("aggregation: enable phase 2a");
     SET_VALID_ENTRY("aggregation: enable phase 2b");
     SET_VALID_ENTRY("aggregation: enable phase 3");
-    SET_VALID_ENTRY("aggregation: phase2a include root");
+    SET_VALID_ENTRY("aggregation: match ML phase2a");
     SET_VALID_ENTRY("aggregation: phase3 avoid singletons");
     SET_VALID_ENTRY("aggregation: error on nodes with no on-rank neighbors");
     SET_VALID_ENTRY("aggregation: preserve Dirichlet points");
@@ -191,7 +191,7 @@ namespace MueLu {
     const LO numRows = graph->GetNodeNumVertices();
 
     // construct aggStat information
-    Kokkos::View<unsigned*, typename LWGraph_kokkos::memory_space> aggStat(Kokkos::ViewAllocateWithoutInitializing("aggregation status"),
+    Kokkos::View<unsigned*, typename LWGraph_kokkos::device_type> aggStat(Kokkos::ViewAllocateWithoutInitializing("aggregation status"),
                                                                            numRows);
     Kokkos::deep_copy(aggStat, READY);
 
@@ -217,7 +217,7 @@ namespace MueLu {
     LO nDofsPerNode = Get<LO>(currentLevel, "DofsPerNode");
     GO indexBase = graph->GetDomainMap()->getIndexBase();
     if (OnePtMap != Teuchos::null) {
-      typename Kokkos::View<unsigned*,typename LWGraph_kokkos::memory_space>::HostMirror aggStatHost
+      typename Kokkos::View<unsigned*,typename LWGraph_kokkos::device_type>::HostMirror aggStatHost
         = Kokkos::create_mirror_view(aggStat);
       Kokkos::deep_copy(aggStatHost, aggStat);
 

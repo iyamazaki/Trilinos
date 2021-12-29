@@ -257,14 +257,13 @@ inline void tupleToArray(Array<T> &arr, const tuple &tup)
     RCP<const map_type> lclmap = createLocalMapWithNode<LO,GO,Node> (P, comm);
 
     // create the matrix
-    MAT A(rowmap,P,TPETRA_DEFAULT_PROFILE_TYPE);
+    MAT A(rowmap,P);
     for (GO i=0; i<static_cast<GO>(M); ++i) {
       for (GO j=0; j<static_cast<GO>(P); ++j) {
         A.insertGlobalValues( M*myImageID+i, tuple<GO>(j), tuple<Scalar>(M*myImageID+i + j*M*N) );
       }
     }
     // call fillComplete()
-    TEST_EQUALITY_CONST( A.getProfileType() == TPETRA_DEFAULT_PROFILE_TYPE, true );
     A.fillComplete(lclmap,rowmap);
     // build the input multivector X
     MV X(lclmap,numVecs);
@@ -427,7 +426,7 @@ inline void tupleToArray(Array<T> &arr, const tuple &tup)
     }
 
     // test the constructors based on 4 maps + local matri_crsx
-    RCP<MAT> tri_crs_2 = rcp(new MAT(tri_crs->getLocalMatrix(), tri_crs->getRowMap(),
+    RCP<MAT> tri_crs_2 = rcp(new MAT(tri_crs->getLocalMatrixDevice(), tri_crs->getRowMap(),
                                      tri_crs->getColMap(), tri_crs->getDomainMap(), tri_crs->getRangeMap()));
     TEST_EQUALITY(tri_crs_2->isFillComplete(), true);
     auto exporter = tri_crs_2->getGraph()->getExporter();

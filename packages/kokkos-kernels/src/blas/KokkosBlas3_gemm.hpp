@@ -49,6 +49,7 @@
 #include <KokkosKernels_Macros.hpp>
 #include <KokkosBlas3_gemm_spec.hpp>
 #include <KokkosBlas2_gemv.hpp>
+#include <KokkosBlas1_scal.hpp>
 #include <KokkosKernels_helpers.hpp>
 #include <sstream>
 #include <type_traits>
@@ -100,13 +101,13 @@ namespace Impl {
            class CViewType>
   bool
   gemv_based_gemm
-       (const char transA[],
-        const char transB[],
-        typename AViewType::const_value_type& alpha,
-        const AViewType& A,
-        const BViewType& B,
-        typename CViewType::const_value_type& beta,
-        const CViewType& C,
+       (const char /*transA*/[],
+        const char /*transB*/[],
+        typename AViewType::const_value_type& /*alpha*/,
+        const AViewType& /*A*/,
+        const BViewType& /*B*/,
+        typename CViewType::const_value_type& /*beta*/,
+        const CViewType& /*C*/,
         typename std::enable_if<
           std::is_same<typename BViewType::array_layout, Kokkos::LayoutStride>::value ||
           std::is_same<typename CViewType::array_layout, Kokkos::LayoutStride>::value>::type* = nullptr)
@@ -199,15 +200,22 @@ gemm (const char transA[],
     }
   #endif // KOKKOSKERNELS_DEBUG_LEVEL > 0
 
-  // Return if degenerated matrices are provided
-  if((A.extent(0) == 0) || (A.extent(1) == 0) || (C.extent(1) == 0))
+  // Return if C matrix is degenerated
+  if((C.extent(0) == 0) || (C.extent(1) == 0)) {
     return;
+  }
+
+  // Simply scale C if A matrix is degenerated
+  if(A.extent(1) == 0) {
+    scal(C, beta, C);
+    return;
+  }
 
   // Check if gemv code path is allowed and profitable, and if so run it.
   if(Impl::gemv_based_gemm(transA, transB, alpha, A, B, beta, C))
     return;
 
-  // Minimize the number of Impl::GEMV instantiations, by
+  // Minimize the number of Impl::GEMM instantiations, by
   // standardizing on particular View specializations for its template
   // parameters.
   typedef Kokkos::View<typename AViewType::const_value_type**,

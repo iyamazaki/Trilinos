@@ -525,7 +525,7 @@ private:
     vec_type R  (B.getMap (), zeroOut);
     vec_type Y  (B.getMap (), zeroOut);
     vec_type MP (B.getMap (), zeroOut);
-    vec_type P = * (Q.getVectorNonConst (0));
+    vec_type P0 = * (Q.getVectorNonConst (0));
 
     Teuchos::BLAS<LO ,SC> blas;
     dense_matrix_type H (restart+1, restart,   true);
@@ -551,9 +551,9 @@ private:
     if (input.precoSide == "left") {
       {
         Teuchos::TimeMonitor LocalTimer (*precTimer);
-        M.apply (R, P);
+        M.apply (R, P0);
       }
-      r_norm = P.norm2 (); // initial residual norm, left-preconditioned
+      r_norm = P0.norm2 (); // initial residual norm, left-preconditioned
     } else {
       r_norm = b0_norm;
     }
@@ -614,9 +614,9 @@ private:
       if (input.precoSide == "left") {
         {
           Teuchos::TimeMonitor LocalTimer (*precTimer);
-          M.apply (R, P);
+          M.apply (R, P0);
         }
-        r_norm = P.norm2 (); // residual norm
+        r_norm = P0.norm2 (); // residual norm
       }
       else {
         r_norm = output.absResid;
@@ -626,9 +626,9 @@ private:
 
     // initialize starting vector
     if (input.precoSide != "left") {
-      Tpetra::deep_copy (P, R);
+      Tpetra::deep_copy (P0, R);
     }
-    P.scale (one / r_norm);
+    P0.scale (one / r_norm);
     y[0] = SC {r_norm};
     const int s = getStepSize ();
     // main loop
@@ -861,20 +861,20 @@ private:
         if (iter >= restart) { // done with restart cycyle
           // Initialize starting vector for restart
           iter = 0;
-          P = * (Q.getVectorNonConst (0));
+          P0 = * (Q.getVectorNonConst (0));
           if (input.precoSide == "left") {
             {
               Teuchos::TimeMonitor LocalTimer (*precTimer);
-              M.apply (R, P);
+              M.apply (R, P0);
             }
             // FIXME (mfh 14 Aug 2018) Didn't we already compute this above?
-            r_norm = P.norm2 ();
+            r_norm = P0.norm2 ();
           }
           else {
             // set the starting vector
-            Tpetra::deep_copy (P, R);
+            Tpetra::deep_copy (P0, R);
           }
-          P.scale (one / r_norm);
+          P0.scale (one / r_norm);
           y[0] = SC {r_norm};
           for (int i=1; i < restart+1; i++) {
             y[i] = zero;

@@ -35,9 +35,11 @@
 #ifndef STKTOPOLOGY_DETAIL_FILL_CONTAINER_HPP
 #define STKTOPOLOGY_DETAIL_FILL_CONTAINER_HPP
 
+#include "stk_util/stk_config.h"
 #include <vector>
 
-namespace stk { namespace topology_detail {
+namespace stk {
+namespace topology_detail {
 
 template <typename OrdinalOutputIterator>
 struct host_fill_ordinal_container {
@@ -83,6 +85,14 @@ struct fill_ordinal_container< std::vector<T,A> >
   typename std::vector<T,A>::iterator m_itr;
 
 };
+ 
+#ifdef __GNUC__
+# if (__GNUC__ == 11)
+#   pragma GCC diagnostic push
+#   pragma GCC diagnostic ignored "-Warray-bounds"
+#   define SIERRA_GCC_POP_DIAG
+# endif
+#endif
 
 template <typename NodeArray, typename NodeOutputIterator>
 struct fill_node_container {
@@ -101,6 +111,10 @@ struct fill_node_container {
   const NodeArray    & m_nodes;
   NodeOutputIterator   m_itr;
 };
+ 
+#ifdef SIERRA_GCC_POP_DIAG
+#pragma GCC diagnostic pop
+#endif
 
 template <typename NodeArray, typename T, typename A>
 struct fill_node_container<NodeArray, std::vector<T,A> > {

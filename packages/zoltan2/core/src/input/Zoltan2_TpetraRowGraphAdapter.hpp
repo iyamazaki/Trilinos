@@ -317,11 +317,11 @@ template <typename User, typename UserCoord>
     }
   }
 
-  ArrayRCP<lno_t> nbors(maxnumentries); // Diff from CrsGraph
+  typename User::nonconst_local_inds_host_view_type  nbors("nbors", maxnumentries);
 
   offs[0] = 0;
   for (size_t v=0; v < nvtx; v++){
-    graph_->getLocalRowCopy(v, nbors(), nedges);  // Diff from CrsGraph
+    graph_->getLocalRowCopy(v, nbors, nedges);  // Diff from CrsGraph
     offs[v+1] = offs[v] + nedges;
     for (offset_t e=offs[v], i=0; e < offs[v+1]; e++) {
         adjids[e] = graph_->getColMap()->getGlobalElement(nbors[i++]);
@@ -545,7 +545,7 @@ RCP<User> TpetraRowGraphAdapter<User,UserCoord>::doMigration(
 
   // target graph
   RCP<tcrsgraph_t> G =
-    rcp(new tcrsgraph_t(tmap, nnz_size_t(), Tpetra::StaticProfile));
+    rcp(new tcrsgraph_t(tmap, nnz_size_t()));
 
   G->doImport(*pCrsGraphSrc, importer, Tpetra::INSERT);
   G->fillComplete();

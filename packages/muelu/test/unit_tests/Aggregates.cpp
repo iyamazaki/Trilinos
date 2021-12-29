@@ -283,7 +283,7 @@ public:
       aggFact->SetParameter("aggregation: enable phase 2b",              Teuchos::ParameterEntry(true));
       aggFact->SetParameter("aggregation: enable phase 3",               Teuchos::ParameterEntry(true));
 
-      aggFact->SetParameter("aggregation: phase2a include root",         Teuchos::ParameterEntry(true));
+      aggFact->SetParameter("aggregation: match ML phase2a",             Teuchos::ParameterEntry(true));
 
       // Hybrid
       level.Set("aggregationRegionType", regionType);
@@ -865,6 +865,109 @@ public:
     TEST_EQUALITY(aggregates->AggregatesCrossProcessors(),false);
   }
 
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(Aggregates, GreedyDirichlet, Scalar, LocalOrdinal, GlobalOrdinal, Node)
+  {
+#   include <MueLu_UseShortNames.hpp>
+    MUELU_TESTING_SET_OSTREAM
+    MUELU_TESTING_LIMIT_SCOPE(Scalar,GlobalOrdinal,Node);
+    out << "version: " << MueLu::Version() << std::endl;
+    out << "running greedy Dirichlet" << std::endl;
+
+    typedef typename Teuchos::ScalarTraits<Scalar> TST;
+
+    // Make a Matrix with multiple degrees of freedom per node
+    GlobalOrdinal nx = 20, ny = 20;
+
+    // Describes the initial layout of matrix rows across processors.
+    Teuchos::ParameterList galeriList;
+    galeriList.set("nx", nx);
+    galeriList.set("ny", ny);
+    RCP<const Teuchos::Comm<int> > comm = TestHelpers::Parameters::getDefaultComm();
+    RCP<const Map> map = Galeri::Xpetra::CreateMap<LocalOrdinal, GlobalOrdinal, Node>(TestHelpers::Parameters::getLib(), "Cartesian2D", comm, galeriList);
+
+    map = Xpetra::MapFactory<LocalOrdinal,GlobalOrdinal,Node>::Build(map, 2); //expand map for 2 DOFs per node
+
+    RCP<Galeri::Xpetra::Problem<Map,CrsMatrixWrap,MultiVector> > Pr =
+      Galeri::Xpetra::BuildProblem<Scalar, LocalOrdinal, GlobalOrdinal, Map, CrsMatrixWrap, MultiVector>("Elasticity2D", map, galeriList);
+    RCP<Matrix> A = Pr->BuildMatrix();
+    A->SetFixedBlockSize(2);
+
+
+    Teuchos::ArrayView<const LocalOrdinal> indices;
+    Teuchos::ArrayView<const Scalar>  values;
+
+    // Create a dirichlet boundary row.
+    LocalOrdinal localRowToZero = 5; // Corresponds to a Dof on local graph node 2
+
+    A->resumeFill();
+    A->getLocalRowView(localRowToZero, indices, values);
+    Array<Scalar> newvalues(values.size(),TST::zero());
+    for (int j = 0; j < indices.size(); j++)
+      //keep diagonal
+      if (indices[j] == localRowToZero) newvalues[j] = values[j];
+    A->replaceLocalValues(localRowToZero,indices,newvalues);
+
+    A->fillComplete();
+
+    ArrayRCP<const bool> drows = Utilities::DetectDirichletRows(*A);
+    TEST_EQUALITY(drows[localRowToZero], true);
+    TEST_EQUALITY(drows[localRowToZero-1], false);
+
+    RCP<AmalgamationInfo> amalgInfo;
+    Level level;
+    TestHelpers::TestFactory<SC,LO,GO,NO>::createSingleLevelHierarchy(level);
+    level.Set("A", A);
+
+    RCP<CoalesceDropFactory> dropFact;
+    RCP<AmalgamationFactory> amalgFact;
+    RCP<UncoupledAggregationFactory> aggFact;
+
+    amalgFact = rcp(new AmalgamationFactory());
+    dropFact = rcp(new CoalesceDropFactory());
+    dropFact->SetParameter("aggregation: greedy Dirichlet",Teuchos::ParameterEntry(false));
+    dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
+
+    // Setup aggregation factory (use default factory for graph)
+    aggFact = rcp(new UncoupledAggregationFactory());
+    aggFact->SetFactory("Graph", dropFact);
+
+    level.Request("Aggregates", aggFact.get());
+    level.Request("UnAmalgamationInfo", amalgFact.get());
+
+    level.Request(*aggFact);
+    aggFact->Build(level);
+    RCP<Aggregates> aggregates = level.Get<RCP<Aggregates> >("Aggregates",aggFact.get());
+
+    Array< LO > aggPtr;
+    Array< LO > aggNodes;
+    Array< LO > unaggregated;
+
+    aggregates->ComputeNodesInAggregate(aggPtr, aggNodes, unaggregated);
+    // Test to check that the dirichlet node is aggregated:
+    for( int i = 0; i < unaggregated.size(); i++){
+      TEST_EQUALITY( unaggregated[i] == 2, false);
+    }
+
+    // Repeat with greedy Dirichlet
+    amalgFact = rcp(new AmalgamationFactory());
+    dropFact = rcp(new CoalesceDropFactory());
+    dropFact->SetParameter("aggregation: greedy Dirichlet",Teuchos::ParameterEntry(true));
+    dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
+
+    // Setup aggregation factory (use default factory for graph)
+    aggFact = rcp(new UncoupledAggregationFactory());
+    aggFact->SetFactory("Graph", dropFact);
+
+    level.Request("Aggregates", aggFact.get());
+    level.Request("UnAmalgamationInfo", amalgFact.get());
+
+    level.Request(*aggFact);
+    aggFact->Build(level);
+    aggregates = level.Get<RCP<Aggregates> >("Aggregates",aggFact.get());
+
+    aggregates->ComputeNodesInAggregate(aggPtr, aggNodes, unaggregated);
+    TEST_EQUALITY(unaggregated[0],2);// check that the node with the Dof flagged as dirichlet is unaggregated
+  }
 
   TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(FilteredA, RootStencil, Scalar, LocalOrdinal, GlobalOrdinal, Node)
   {
@@ -882,7 +985,7 @@ public:
 
 
     RCP<Matrix> A = TestHelpers::TestFactory<SC, LO, GO, NO>::BuildMatrix(matrixParams,TestHelpers::Parameters::getLib());
-									 
+
     RCP<AmalgamationInfo> amalgInfo;
     Level level;
     TestHelpers::TestFactory<SC,LO,GO,NO>::createSingleLevelHierarchy(level);
@@ -942,7 +1045,7 @@ public:
 
 
     RCP<Matrix> A = TestHelpers::TestFactory<SC, LO, GO, NO>::BuildMatrix(matrixParams,TestHelpers::Parameters::getLib());
-									 
+
     RCP<AmalgamationInfo> amalgInfo;
     Level level;
     TestHelpers::TestFactory<SC,LO,GO,NO>::createSingleLevelHierarchy(level);
@@ -986,8 +1089,103 @@ public:
 
     // We use the full graph for the filtered matrix, so the notional nnz should be the same
     TEST_EQUALITY(A->getNodeNumRows()==Afiltered->getNodeNumRows(), true);
-  }
+  } //SpreadLumping
 
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(Aggregates, AllowDroppingToCreateAdditionalDirichletRows, Scalar, LocalOrdinal, GlobalOrdinal, Node)
+  {
+#   include <MueLu_UseShortNames.hpp>
+    MUELU_TESTING_SET_OSTREAM
+    MUELU_TESTING_LIMIT_SCOPE(Scalar,GlobalOrdinal,Node);
+    out << "version: " << MueLu::Version() << std::endl;
+    out << "Test option that allows dropping during aggregation to create new Dirichlet rows" << std::endl;
+
+    typedef typename Teuchos::ScalarTraits<Scalar> TST;
+
+    RCP<Matrix> A = TestHelpers::TestFactory<SC, LO, GO, NO>::Build1DPoisson(15);
+    A->resumeFill();
+
+    // Create one row on every processor with small off-diagonal entries that will be dropped with
+    // an appropriately chosen threshold.  Avoid domain boundaries.
+    LocalOrdinal localRowToModify = 1;
+    Teuchos::ArrayView<const LocalOrdinal> indices;
+    Teuchos::ArrayView<const Scalar>  values;
+    A->getLocalRowView(localRowToModify, indices, values);
+    Array<Scalar> newvalues(values.size(),TST::zero());
+    for (int j = 0; j < indices.size(); j++) {
+      if (indices[j] == localRowToModify)
+        newvalues[j] = values[j]; //keep diagonal unmodified
+      else
+        newvalues[j] = -TST::eps();
+    }
+    A->replaceLocalValues(localRowToModify,indices,newvalues);
+    A->fillComplete();
+
+    // Dropping connections will not lead to the creation of new Dirichlet rows.
+
+    RCP<AmalgamationInfo> amalgInfo;
+    Level level;
+    TestHelpers::TestFactory<SC,LO,GO,NO>::createSingleLevelHierarchy(level);
+    level.Set("A", A);
+
+    RCP<CoalesceDropFactory> dropFact = rcp(new CoalesceDropFactory());
+    dropFact->SetParameter("aggregation: dropping may create Dirichlet",Teuchos::ParameterEntry(false));
+    dropFact->SetParameter("aggregation: drop tol",Teuchos::ParameterEntry(-100*TST::eps()));
+    RCP<AmalgamationFactory> amalgFact = rcp(new AmalgamationFactory());
+    dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
+    level.Request("Graph",dropFact.get());
+
+    // Setup aggregation factory (use default factory for graph)
+    RCP<UncoupledAggregationFactory> aggFact = rcp(new UncoupledAggregationFactory());
+    aggFact->SetFactory("Graph", dropFact);
+
+    level.Request("Aggregates", aggFact.get());
+    level.Request("UnAmalgamationInfo", amalgFact.get());
+
+    level.Request(*aggFact);
+    aggFact->Build(level);
+    RCP<Aggregates> aggregates = level.Get<RCP<Aggregates> >("Aggregates",aggFact.get());
+    RCP<GraphBase> graph = level.Get<RCP<GraphBase>>("Graph",dropFact.get());
+    ArrayRCP<const bool> dirichletBoundaryMap = graph->GetBoundaryNodeMap();
+    int numDirichletRows=0;
+    LO numRows = graph->GetNodeNumVertices();
+    for (LO i = 0; i < numRows; i++)
+      if (dirichletBoundaryMap[i] == true)
+        numDirichletRows++;
+    TEST_EQUALITY(numDirichletRows, 0);
+
+    Array< LO > aggPtr;
+    Array< LO > aggNodes;
+    Array< LO > unaggregated;
+
+    // Repeat with "aggregation: dropping may create Dirichlet" = TRUE, i.e.,
+    // dropping connections may lead to the creation of new Dirichlet rows.
+    // The second row should be flagged as Dirichlet because all off-diagonal entries are dropped.
+    amalgFact = rcp(new AmalgamationFactory());
+    dropFact = rcp(new CoalesceDropFactory());
+    dropFact->SetParameter("aggregation: dropping may create Dirichlet",Teuchos::ParameterEntry(true));
+    dropFact->SetParameter("aggregation: drop tol",Teuchos::ParameterEntry(-100*TST::eps()));
+    dropFact->SetFactory("UnAmalgamationInfo", amalgFact);
+    level.Request("Graph",dropFact.get());
+
+    // Setup aggregation factory (use default factory for graph)
+    aggFact = rcp(new UncoupledAggregationFactory());
+    aggFact->SetFactory("Graph", dropFact);
+
+    level.Request("Aggregates", aggFact.get());
+    level.Request("UnAmalgamationInfo", amalgFact.get());
+
+    level.Request(*aggFact);
+    aggFact->Build(level);
+    aggregates = level.Get<RCP<Aggregates> >("Aggregates",aggFact.get());
+    graph = level.Get<RCP<GraphBase>>("Graph",dropFact.get());
+    dirichletBoundaryMap = graph->GetBoundaryNodeMap();
+    numDirichletRows=0;
+    for (LO i = 0; i < numRows; i++)
+      if (dirichletBoundaryMap[i] == true)
+        numDirichletRows++;
+    TEST_EQUALITY(numDirichletRows,1);
+
+  } //AllowDroppingToCreateAdditionalDirichletRows
 
 #define MUELU_ETI_GROUP(Scalar,LO,GO,Node) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Aggregates,JustAggregation,Scalar,LO,GO,Node) \
@@ -1000,6 +1198,8 @@ public:
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Aggregates,UncoupledInterface,Scalar,LO,GO,Node) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Aggregates,JustStructuredAggregationGlobal,Scalar,LO,GO,Node) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Aggregates,JustStructuredAggregationLocal,Scalar,LO,GO,Node) \
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Aggregates,GreedyDirichlet,Scalar,LO,GO,Node) \
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Aggregates,AllowDroppingToCreateAdditionalDirichletRows,Scalar,LO,GO,Node) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(FilteredA ,RootStencil,Scalar,LO,GO,Node) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(FilteredA ,SpreadLumping,Scalar,LO,GO,Node)
   //  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Aggregates,HybridAggregation,Scalar,LO,GO,Node)

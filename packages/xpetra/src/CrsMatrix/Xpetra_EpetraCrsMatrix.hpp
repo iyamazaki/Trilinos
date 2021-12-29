@@ -167,6 +167,7 @@ public:
   void allocateAllValues(size_t numNonZeros,ArrayRCP<size_t> & rowptr, ArrayRCP<LocalOrdinal> & colind, ArrayRCP<Scalar> & values) { }
   void setAllValues(const ArrayRCP<size_t> & rowptr, const ArrayRCP<LocalOrdinal> & colind, const ArrayRCP<Scalar> & values) { }
   void getAllValues(ArrayRCP<const size_t>& rowptr, ArrayRCP<const LocalOrdinal>& colind, ArrayRCP<const Scalar>& values) const { }
+  void getAllValues(ArrayRCP<Scalar>& values) { }
   bool haveGlobalConstants() const  { return true;}
   void expertStaticFillComplete(const RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> > & domainMap,
       const RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> > & rangeMap,
@@ -239,11 +240,23 @@ public:
   RCP<Epetra_CrsMatrix> getEpetra_CrsMatrixNonConst() const { return Teuchos::null; } //TODO: remove
 #ifdef HAVE_XPETRA_KOKKOS_REFACTOR
 #ifdef HAVE_XPETRA_TPETRA
+#ifdef TPETRA_ENABLE_DEPRECATED_CODE
   local_matrix_type getLocalMatrix () const {
     TEUCHOS_TEST_FOR_EXCEPTION(true, Xpetra::Exceptions::RuntimeError,
       "Xpetra::EpetraCrsMatrix only available for GO=int or GO=long long with EpetraNode (Serial or OpenMP depending on configuration)");
   }
+#endif
+local_matrix_type getLocalMatrixDevice () const {
+    TEUCHOS_TEST_FOR_EXCEPTION(true, Xpetra::Exceptions::RuntimeError,
+      "Xpetra::EpetraCrsMatrix only available for GO=int or GO=long long with EpetraNode (Serial or OpenMP depending on configuration)");
+  }
+  typename local_matrix_type::HostMirror getLocalMatrixHost () const {
+    TEUCHOS_TEST_FOR_EXCEPTION(true, Xpetra::Exceptions::RuntimeError,
+      "Xpetra::EpetraCrsMatrix only available for GO=int or GO=long long with EpetraNode (Serial or OpenMP depending on configuration)");
+  }
 
+
+  
   void setAllValues (const typename local_matrix_type::row_map_type& ptr,
                      const typename local_matrix_type::StaticCrsGraphType::entries_type::non_const_type& ind,
                      const typename local_matrix_type::values_type& val)
@@ -517,9 +530,6 @@ public:
       this->fillComplete(domainMap, rowMap, params);
     else
       this->fillComplete(rowMap, rowMap, params);
-
-    // AP (2015/10/22): Could probably be optimized using provided lclMatrix, but lets not worry about that
-    isInitializedLocalMatrix_ = false;
   }
 #endif
 #endif
@@ -668,6 +678,18 @@ public:
     // Column indices
     colind = Teuchos::arcp(mtx_->ExpertExtractIndices().Values(), lowerOffset, nnz, ownMemory);
 
+    // Values
+    values = Teuchos::arcp(mtx_->ExpertExtractValues(), lowerOffset, nnz, ownMemory);
+  }
+
+  //! Gets the 1D pointer arrays of the graph.
+  void getAllValues(ArrayRCP<Scalar>& values) {
+    XPETRA_MONITOR("EpetraCrsMatrixT::getAllValues");
+
+    int  lowerOffset = 0;
+    bool ownMemory   = false;
+
+    const size_t nnz = getNodeNumEntries();
     // Values
     values = Teuchos::arcp(mtx_->ExpertExtractValues(), lowerOffset, nnz, ownMemory);
   }
@@ -1219,10 +1241,24 @@ public:
 #ifdef HAVE_XPETRA_KOKKOS_REFACTOR
 #ifdef HAVE_XPETRA_TPETRA
   /// \brief Compatibility layer for accessing the matrix data through a Kokkos interface
-  local_matrix_type getLocalMatrix () const {
-    if (isInitializedLocalMatrix_)
-      return localMatrix_;
+#ifdef TPETRA_ENABLE_DEPRECATED_CODE
 
+local_matrix_type getLocalMatrix () const {
+  return getLocalMatrixDevice();
+}
+#endif
+
+local_matrix_type getLocalMatrixDevice () const {
+#if 0
+  TEUCHOS_TEST_FOR_EXCEPTION(true, Xpetra::Exceptions::NotImplemented,
+			     "Xpetra::EpetraCrsMatrx only available on host for GO=int or GO=long long with EpetraNode (Serial or OpenMP depending on configuration)");
+  TEUCHOS_UNREACHABLE_RETURN((local_matrix_type()));
+#endif
+  return getLocalMatrixHost();
+}
+
+
+typename local_matrix_type::HostMirror getLocalMatrixHost () const {
     RCP<Epetra_CrsMatrix> matrix = getEpetra_CrsMatrixNonConst();
 
     const int numRows = matrix->NumMyRows();
@@ -1236,7 +1272,7 @@ public:
     TEUCHOS_TEST_FOR_EXCEPTION(rv, std::runtime_error, "Xpetra::CrsMatrix<>::getLocalMatrix: failed in ExtractCrsDataPointers");
 
     // Transform int* rowptr array to size_type* array
-    typename local_matrix_type::row_map_type::non_const_type kokkosRowPtr("local row map", numRows+1);
+    typename local_matrix_type::row_map_type::non_const_type kokkosRowPtr(Kokkos::ViewAllocateWithoutInitializing("local row map"), numRows+1);
     for (size_t i = 0; i < kokkosRowPtr.size(); i++)
       kokkosRowPtr(i) = Teuchos::asSafe<typename local_matrix_type::row_map_type::value_type>(rowptr[i]);
 
@@ -1244,25 +1280,45 @@ public:
     typename local_matrix_type::index_type   kokkosColind(colind,              nnz);
     typename local_matrix_type::values_type  kokkosVals  (vals,                nnz);
 
-    localMatrix_ = local_matrix_type("LocalMatrix", numRows, numCols, nnz, kokkosVals, kokkosRowPtr, kokkosColind);
-    isInitializedLocalMatrix_ = true;
+    local_matrix_type localMatrix = local_matrix_type("LocalMatrix", numRows, numCols, nnz, kokkosVals, kokkosRowPtr, kokkosColind);
 
-    return localMatrix_;
+    return localMatrix;
   }
 
-  void setAllValues (const typename local_matrix_type::row_map_type& /* ptr */,
-                     const typename local_matrix_type::StaticCrsGraphType::entries_type::non_const_type& /* ind */,
-                     const typename local_matrix_type::values_type& /* val */)
+  void setAllValues (const typename local_matrix_type::row_map_type& ptr,
+                     const typename local_matrix_type::StaticCrsGraphType::entries_type::non_const_type& ind,
+                     const typename local_matrix_type::values_type& val)
   {
-    TEUCHOS_TEST_FOR_EXCEPTION(true, Xpetra::Exceptions::RuntimeError,
-                               "Xpetra::EpetraCrsMatrix::setAllValues is not implemented");
+
+    // Check sizes
+    TEUCHOS_TEST_FOR_EXCEPTION(Teuchos::as<size_t>(ptr.size()) != getNodeNumRows()+1, Xpetra::Exceptions::RuntimeError,
+                               "An exception is thrown to let you know that the size of your rowptr array is incorrect.");
+    TEUCHOS_TEST_FOR_EXCEPTION(val.size() != ind.size(), Xpetra::Exceptions::RuntimeError,
+                               "An exception is thrown to let you know that you mismatched your pointers.");
+
+    // Check pointers
+    if (val.size() > 0) {
+      std::cout << ind.data() << " " << mtx_->ExpertExtractIndices().Values() << std::endl;
+      TEUCHOS_TEST_FOR_EXCEPTION(ind.data() != mtx_->ExpertExtractIndices().Values(), Xpetra::Exceptions::RuntimeError,
+                                 "An exception is thrown to let you know that you mismatched your pointers.");
+      TEUCHOS_TEST_FOR_EXCEPTION(val.data() != mtx_->ExpertExtractValues(), Xpetra::Exceptions::RuntimeError,
+                                 "An exception is thrown to let you know that you mismatched your pointers.");
+    }
+
+    // We have to make a copy here, it is unavoidable
+    // See comments in allocateAllValues
+    const size_t N = getNodeNumRows();
+
+    Epetra_IntSerialDenseVector& myRowptr = mtx_->ExpertExtractIndexOffset();
+    myRowptr.Resize(N+1);
+    for (size_t i = 0; i < N+1; i++)
+      myRowptr[i] = Teuchos::as<int>(ptr(i));
+
   }
 
 
 
 private:
-  mutable local_matrix_type localMatrix_;
-  mutable bool              isInitializedLocalMatrix_ = false; // It's OK to use C++11 when Tpetra is enabled
 #else
 #ifdef __GNUC__
 #warning "Xpetra Kokkos interface for CrsMatrix is enabled (HAVE_XPETRA_KOKKOS_REFACTOR) but Tpetra is disabled. The Kokkos interface needs Tpetra to be enabled, too."
@@ -1536,9 +1592,6 @@ public:
       this->fillComplete(domainMap, rowMap, params);
     else
       this->fillComplete(rowMap, rowMap, params);
-
-    // AP (2015/10/22): Could probably be optimized using provided lclMatrix, but lets not worry about that
-    isInitializedLocalMatrix_ = false;
   }
 #endif
 #endif
@@ -1690,6 +1743,20 @@ public:
     // Values
     values = Teuchos::arcp(mtx_->ExpertExtractValues(), lowerOffset, nnz, ownMemory);
   }
+
+
+  //! Gets the 1D pointer arrays of the graph.
+  void getAllValues(ArrayRCP<Scalar>& values) {
+    XPETRA_MONITOR("EpetraCrsMatrixT::getAllValues");
+
+    int  lowerOffset = 0;
+    bool ownMemory   = false;
+
+    const size_t nnz = getNodeNumEntries();
+    // Values
+    values = Teuchos::arcp(mtx_->ExpertExtractValues(), lowerOffset, nnz, ownMemory);
+  }
+
 
   // Epetra always has global constants
   bool haveGlobalConstants() const  { return true;}
@@ -2236,8 +2303,6 @@ public:
 #ifdef HAVE_XPETRA_TPETRA
   /// \brief Compatibility layer for accessing the matrix data through a Kokkos interface
   local_matrix_type getLocalMatrix () const {
-    if (isInitializedLocalMatrix_)
-      return localMatrix_;
 
     RCP<Epetra_CrsMatrix> matrix = getEpetra_CrsMatrixNonConst();
 
@@ -2252,7 +2317,7 @@ public:
     TEUCHOS_TEST_FOR_EXCEPTION(rv, std::runtime_error, "Xpetra::CrsMatrix<>::getLocalMatrix: failed in ExtractCrsDataPointers");
 
     // Transform int* rowptr array to size_type* array
-    typename local_matrix_type::row_map_type::non_const_type kokkosRowPtr("local row map", numRows+1);
+    typename local_matrix_type::row_map_type::non_const_type kokkosRowPtr(Kokkos::ViewAllocateWithoutInitializing("local row map"), numRows+1);
     for (size_t i = 0; i < kokkosRowPtr.size(); i++)
       kokkosRowPtr(i) = Teuchos::asSafe<typename local_matrix_type::row_map_type::value_type>(rowptr[i]);
 
@@ -2260,24 +2325,43 @@ public:
     typename local_matrix_type::index_type   kokkosColind(colind,              nnz);
     typename local_matrix_type::values_type  kokkosVals  (vals,                nnz);
 
-    localMatrix_ = local_matrix_type("LocalMatrix", numRows, numCols, nnz, kokkosVals, kokkosRowPtr, kokkosColind);
-    isInitializedLocalMatrix_ = true;
+    local_matrix_type localMatrix = local_matrix_type("LocalMatrix", numRows, numCols, nnz, kokkosVals, kokkosRowPtr, kokkosColind);
 
-    return localMatrix_;
+    return localMatrix;
   }
 
-  void setAllValues (const typename local_matrix_type::row_map_type& /* ptr */,
-                     const typename local_matrix_type::StaticCrsGraphType::entries_type::non_const_type& /* ind */,
-                     const typename local_matrix_type::values_type& /* val */)
+  void setAllValues (const typename local_matrix_type::row_map_type& ptr,
+                     const typename local_matrix_type::StaticCrsGraphType::entries_type::non_const_type& ind,
+                     const typename local_matrix_type::values_type& val)
   {
-    TEUCHOS_TEST_FOR_EXCEPTION(true, Xpetra::Exceptions::RuntimeError,
-                               "Xpetra::EpetraCrsMatrix::setAllValues is not implemented");
+
+    // Check sizes
+    TEUCHOS_TEST_FOR_EXCEPTION(Teuchos::as<size_t>(ptr.size()) != getNodeNumRows()+1, Xpetra::Exceptions::RuntimeError,
+                               "An exception is thrown to let you know that the size of your rowptr array is incorrect.");
+    TEUCHOS_TEST_FOR_EXCEPTION(val.size() != ind.size(), Xpetra::Exceptions::RuntimeError,
+                               "An exception is thrown to let you know that you mismatched your pointers.");
+
+    // Check pointers
+    if (val.size() > 0) {
+      TEUCHOS_TEST_FOR_EXCEPTION(ind.data() != mtx_->ExpertExtractIndices().Values(), Xpetra::Exceptions::RuntimeError,
+                                 "An exception is thrown to let you know that you mismatched your pointers.");
+      TEUCHOS_TEST_FOR_EXCEPTION(val.data() != mtx_->ExpertExtractValues(), Xpetra::Exceptions::RuntimeError,
+                                 "An exception is thrown to let you know that you mismatched your pointers.");
+    }
+
+    // We have to make a copy here, it is unavoidable
+    // See comments in allocateAllValues
+    const size_t N = getNodeNumRows();
+
+    Epetra_IntSerialDenseVector& myRowptr = mtx_->ExpertExtractIndexOffset();
+    myRowptr.Resize(N+1);
+    for (size_t i = 0; i < N+1; i++)
+      myRowptr[i] = Teuchos::as<int>(ptr(i));
+
   }
 
  
 private:
-  mutable local_matrix_type localMatrix_;
-  mutable bool              isInitializedLocalMatrix_ = false;
 #else
 #ifdef __GNUC__
 #warning "Xpetra Kokkos interface for CrsMatrix is enabled (HAVE_XPETRA_KOKKOS_REFACTOR) but Tpetra is disabled. The Kokkos interface needs Tpetra to be enabled, too."

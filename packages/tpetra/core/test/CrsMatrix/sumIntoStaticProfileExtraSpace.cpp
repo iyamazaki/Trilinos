@@ -65,7 +65,7 @@ TEUCHOS_UNIT_TEST( CrsMatrix, sumIntoStaticProfileExtraSpace )
   int lclSuccess = 1;
   int gblSuccess = 0;
 
-  out << "CrsMatrix: Test sumIntoLocalValues, StaticProfile, "
+  out << "CrsMatrix: Test sumIntoLocalValues, "
     "not yet fill complete, extra space in each row" << endl;
   Teuchos::OSTab tab1 (out);
 
@@ -83,8 +83,7 @@ TEUCHOS_UNIT_TEST( CrsMatrix, sumIntoStaticProfileExtraSpace )
     (new map_type (gblNumInds, lclNumInds, indexBase, comm));
 
   constexpr size_t maxNumEntPerRow = 5;
-  crs_matrix_type A (rowAndColMap, rowAndColMap, maxNumEntPerRow,
-                     Tpetra::StaticProfile);
+  crs_matrix_type A (rowAndColMap, rowAndColMap, maxNumEntPerRow);
 
   for (LO lclRow = 0; lclRow < lclNumInds; ++lclRow) {
     const size_t numEnt = A.getNumEntriesInLocalRow (lclRow);
@@ -112,8 +111,8 @@ TEUCHOS_UNIT_TEST( CrsMatrix, sumIntoStaticProfileExtraSpace )
       const size_t newNumEnt = A.getNumEntriesInLocalRow (lclRow);
       TEST_ASSERT( newNumEnt == 2 );
 
-      Teuchos::ArrayView<const LO> inds_av;
-      Teuchos::ArrayView<const double> vals_av;
+      typename crs_matrix_type::local_inds_host_view_type inds_av;
+      typename crs_matrix_type::values_host_view_type vals_av;;
       A.getLocalRowView (lclRow, inds_av, vals_av);
       TEST_ASSERT( inds_av.size () == ptrdiff_t (2) );
       TEST_ASSERT( vals_av.size () == ptrdiff_t (2) );

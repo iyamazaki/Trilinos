@@ -1,4 +1,4 @@
-// Copyright(C) 1999-2020 National Technology & Engineering Solutions
+// Copyright(C) 1999-2021 National Technology & Engineering Solutions
 // of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
 // NTESS, the U.S. Government retains certain rights in this software.
 //
@@ -39,20 +39,13 @@ namespace Ioss {
     std::vector<Ioss::VariableType *> m_deleteThese;
   };
 
-#define MAX_SUFFIX 8
   struct Suffix
   {
-    explicit Suffix(const char new_data[MAX_SUFFIX]) { Ioss::Utils::copy_string(m_data, new_data); }
-    explicit Suffix(const std::string &new_data) { Ioss::Utils::copy_string(m_data, new_data); }
-    bool operator==(const std::string &str) const
-    {
-      return std::strncmp(m_data, str.c_str(), MAX_SUFFIX) == 0;
-    }
-    bool operator!=(const std::string &str) const
-    {
-      return std::strncmp(m_data, str.c_str(), MAX_SUFFIX) != 0;
-    }
-    char m_data[MAX_SUFFIX + 1]{};
+    explicit Suffix(const char *new_data) : m_data(new_data) {}
+    explicit Suffix(const std::string &new_data) : m_data(new_data) {}
+    bool        operator==(const std::string &str) const { return Utils::str_equal(m_data, str); }
+    bool        operator!=(const std::string &str) const { return !Utils::str_equal(m_data, str); }
+    std::string m_data{};
   };
 
   /** \brief A generic variable type
@@ -60,11 +53,12 @@ namespace Ioss {
   class VariableType
   {
   public:
-    static void alias(const std::string &base, const std::string &syn);
-    static int  describe(NameList *names);
-    static bool create_named_suffix_field_type(const std::string &             type_name,
-                                               const std::vector<std::string> &suffices);
-    static bool get_field_type_mapping(const std::string &field, std::string *type);
+    static void     alias(const std::string &base, const std::string &syn);
+    static int      describe(NameList *names);
+    static NameList describe();
+    static bool     create_named_suffix_field_type(const std::string              &type_name,
+                                                   const std::vector<std::string> &suffices);
+    static bool     get_field_type_mapping(const std::string &field, std::string *type);
     static bool add_field_type_mapping(const std::string &raw_field, const std::string &raw_type);
 
     VariableType(const VariableType &) = delete;

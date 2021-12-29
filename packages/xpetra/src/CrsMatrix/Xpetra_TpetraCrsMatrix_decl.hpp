@@ -59,9 +59,11 @@
 
 #include "Xpetra_CrsMatrix.hpp"
 #include "Xpetra_TpetraMap_decl.hpp"
+#include "Xpetra_TpetraImport_decl.hpp"
+#include "Xpetra_TpetraExport_decl.hpp"
 #include "Xpetra_TpetraMultiVector_decl.hpp"
 #include "Xpetra_TpetraVector_decl.hpp"
-#include "Xpetra_TpetraCrsGraph_decl.hpp"
+#include "Xpetra_TpetraCrsGraph.hpp"
 #include "Xpetra_Exceptions.hpp"
 
 namespace Xpetra {
@@ -173,6 +175,17 @@ namespace Xpetra {
         const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& domainMap = Teuchos::null,
         const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& rangeMap = Teuchos::null,
         const Teuchos::RCP<Teuchos::ParameterList>& params = null);
+
+    /// \brief Constructor specifying local matrix, four maps, import and export objects.
+    TpetraCrsMatrix (
+        const local_matrix_type& lclMatrix,
+        const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& rowMap,
+        const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& colMap,
+        const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& domainMap,
+        const Teuchos::RCP<const Map<LocalOrdinal,GlobalOrdinal,Node> >& rangeMap,
+        const Teuchos::RCP<const Import<LocalOrdinal,GlobalOrdinal,Node> >& importer,
+        const Teuchos::RCP<const Export<LocalOrdinal,GlobalOrdinal,Node> >& exporter,
+        const Teuchos::RCP<Teuchos::ParameterList>& params = null);
 #endif
 #endif
 
@@ -217,6 +230,9 @@ namespace Xpetra {
     //! Gets the 1D pointer arrays of the graph.
     void getAllValues(ArrayRCP<const size_t>& rowptr, ArrayRCP<const LocalOrdinal>& colind, ArrayRCP<const Scalar>& values) const
    ;
+
+    //! Gets the 1D pointer arrays of the graph.
+    void getAllValues(ArrayRCP<Scalar>& values);
 
     bool haveGlobalConstants() const
    ;
@@ -421,8 +437,12 @@ namespace Xpetra {
 #ifdef HAVE_XPETRA_KOKKOS_REFACTOR
 #ifdef HAVE_XPETRA_TPETRA
     /// \brief Access the local Kokkos::CrsMatrix data
-    local_matrix_type getLocalMatrix () const {
-      return getTpetra_CrsMatrixNonConst()->getLocalMatrix();
+    typename local_matrix_type::HostMirror getLocalMatrixHost () const {
+      return getTpetra_CrsMatrixNonConst()->getLocalMatrixHost();
+    }
+    /// \brief Access the local Kokkos::CrsMatrix data
+    local_matrix_type getLocalMatrixDevice () const {
+      return getTpetra_CrsMatrixNonConst()->getLocalMatrixDevice();
     }
 
     void setAllValues (const typename local_matrix_type::row_map_type& ptr,
@@ -623,6 +643,9 @@ namespace Xpetra {
 
     //! Gets the 1D pointer arrays of the graph.
     void getAllValues(ArrayRCP<const size_t>& rowptr, ArrayRCP<const LocalOrdinal>& colind, ArrayRCP<const Scalar>& values) const {  }
+
+    //! Gets the 1D pointer arrays of the graph.
+    void getAllValues(ArrayRCP<Scalar>& values){ }
 
     bool haveGlobalConstants() const  { return false;}
 
@@ -1023,6 +1046,10 @@ namespace Xpetra {
 
     //! Gets the 1D pointer arrays of the graph.
     void getAllValues(ArrayRCP<const size_t>& rowptr, ArrayRCP<const LocalOrdinal>& colind, ArrayRCP<const Scalar>& values) const {  }
+
+    //! Gets the 1D pointer arrays of the graph.
+    void getAllValues(ArrayRCP<Scalar>& values) { }
+
 
     bool haveGlobalConstants() const  { return false;}
 

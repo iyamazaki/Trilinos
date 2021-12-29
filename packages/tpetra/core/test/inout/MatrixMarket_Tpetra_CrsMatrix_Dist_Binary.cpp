@@ -100,6 +100,7 @@ public:
   using matrix_t = Tpetra::CrsMatrix<scalar_t>;
   using vector_t = Tpetra::Vector<scalar_t>;
   using reader_t = Tpetra::MatrixMarket::Reader<matrix_t>;
+  using indices_type = typename matrix_t::nonconst_global_inds_host_view_type;
 
   //////////////////////////////
   // Constructor
@@ -132,9 +133,7 @@ public:
     // Set all values in A to one: This is needed because binary readers 
     // do not currently support numeric values
     const scalar_t ONE = Teuchos::ScalarTraits<scalar_t>::one();
-    A_baseline->resumeFill();
     A_baseline->setAllToScalar(ONE);
-    A_baseline->fillComplete(A_baseline->getDomainMap(), A_baseline->getRangeMap());
 
     nRow = A_baseline->getRowMap()->getMaxAllGlobalIndex() 
          + 1;  // Since Trilinos' reader converts one-based to zero-based
@@ -429,7 +428,7 @@ private:
     // Get the CrsGraph because we do not need the values
     auto graph = AmatWrite->getCrsGraph();	
     auto rowMap = graph->getRowMap();
-    Teuchos::Array<gno_t> gblColInds;
+    indices_type gblColInds;
     size_t numEntries = 0;
 
     // Write the nonzeros
@@ -442,8 +441,8 @@ private:
       
       // Get the copy of the row with global column indices
       numEntries = graph->getNumEntriesInGlobalRow(gblRow);
-      gblColInds.resize(numEntries);
-      graph->getGlobalRowCopy(gblRow, gblColInds(), numEntries);
+      Kokkos::resize(gblColInds,numEntries);
+      graph->getGlobalRowCopy(gblRow, gblColInds, numEntries);
       
       // Write the entries in the row in COO format (i.e., in "rowId colId" pairs)
       for(size_t c = 0; c < numEntries; c++) {

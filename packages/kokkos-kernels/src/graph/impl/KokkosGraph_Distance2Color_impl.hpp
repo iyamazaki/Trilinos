@@ -60,7 +60,7 @@
 #include <KokkosSparse_spgemm.hpp>
 #include <KokkosKernels_BitUtils.hpp>
 
-#include <impl/Kokkos_Timer.hpp>
+#include <Kokkos_Timer.hpp>
 
 #include "KokkosGraph_Distance1Color.hpp"
 #include "KokkosGraph_Distance1ColorHandle.hpp"      // todo: remove this  (SCAFFOLDING - WCMCLEN)
@@ -191,13 +191,12 @@ class GraphColorDistance2
     {
         //Delegate to different coloring functions, depending on algorithm
         using_edge_filtering = false;
-        //color_view_type colors_out("Graph Colors", this->nr);
-	color_view_type colors_out;
-	if(gc_handle->get_vertex_colors().use_count() > 0){
-	  colors_out = gc_handle->get_vertex_colors();
-	} else {
-	  colors_out = color_view_type("Graph Colors", this->nr);
-	}
+        color_view_type colors_out;
+        if(gc_handle->get_vertex_colors().use_count() > 0){
+          colors_out = gc_handle->get_vertex_colors();
+        } else {
+          colors_out = color_view_type("Graph Colors", this->nr);
+        }
         switch(this->gc_handle->get_coloring_algo_type())
         {
           case COLORING_D2_VB_BIT_EF:
@@ -248,20 +247,20 @@ class GraphColorDistance2
 
         // conflictlist - store conflicts that can happen when we're coloring in parallel.
         lno_view_t current_vertexList(
-            Kokkos::ViewAllocateWithoutInitializing("vertexList"), this->nr);
+            Kokkos::view_alloc(Kokkos::WithoutInitializing, "vertexList"), this->nr);
 
         lno_t current_vertexListLength = this->nr;
-
-        // init conflictlist sequentially.
+        
         if(this->gc_handle->get_use_vtx_list()){
-	  current_vertexList = this->gc_handle->get_vertex_list();
-	  current_vertexListLength = this->gc_handle->get_vertex_list_size();
-	} else {
-	  Kokkos::parallel_for("InitList", range_policy_type(0, this->nr), functorInitList<lno_view_t>(current_vertexList));
-	}
-
+          //init conflict list from coloring handle
+          current_vertexList = this->gc_handle->get_vertex_list();
+          current_vertexListLength = this->gc_handle->get_vertex_list_size();
+        } else {
+          // init conflictlist sequentially.
+          Kokkos::parallel_for("InitList", range_policy_type(0, this->nr), functorInitList<lno_view_t>(current_vertexList));
+        }
         // Next iteratons's conflictList
-        lno_view_t next_iteration_recolorList(Kokkos::ViewAllocateWithoutInitializing("recolorList"), this->nr);
+        lno_view_t next_iteration_recolorList(Kokkos::view_alloc(Kokkos::WithoutInitializing, "recolorList"), this->nr);
 
         // Size the next iteration conflictList
         single_lno_view_t next_iteration_recolorListLength("recolorListLength");
@@ -271,7 +270,7 @@ class GraphColorDistance2
 
         double              time;
         double              total_time = 0.0;
-        Kokkos::Impl::Timer timer;
+        Kokkos::Timer timer;
 
         int iter = 0;
         for(; (iter < _max_num_iterations) && (numUncolored > 0); iter++)
@@ -292,7 +291,7 @@ class GraphColorDistance2
                 // * Allocate using lno_view_t (managed) but then access as an entries_t,
                 //   so that it has the same type as adj
                 // * on the other hand, t_adj is not actually modified by EF functor
-                lno_view_t adj_copy(Kokkos::ViewAllocateWithoutInitializing("adj copy"), this->ne);
+                lno_view_t adj_copy(Kokkos::view_alloc(Kokkos::WithoutInitializing, "adj copy"), this->ne);
                 Kokkos::deep_copy(adj_copy, this->adj);
                 this->colorGreedyEF(this->xadj, adj_copy, this->t_xadj, this->t_adj, colors_out);
             }
@@ -457,7 +456,6 @@ class GraphColorDistance2
               break;
             }
           }
-	  //make sure vertices with a valid color do not get recolored
           if(color && (colors(v) == 0 || colors(v) == CONFLICTED || colors(v) == UNCOLORABLE))
           {
             //Color v
@@ -732,10 +730,10 @@ class GraphColorDistance2
       }
       const lno_t numVerts = this->nr;
       const lno_t numCols = this->nc;
-      //note: initializing forbidden to account for previously-colored vertices
+      //note: relying on forbidden and colors_out being initialized to 0
       forbidden_view forbidden("Forbidden", batch * numCols);
       int iter = 0;
-      Kokkos::Impl::Timer timer;
+      Kokkos::Timer timer;
       lno_t currentWork = this->nr;
       batch = 1;
       double colorTime = 0;
@@ -750,8 +748,9 @@ class GraphColorDistance2
           lno_t vertsPerThread = 1;
           lno_t workBatches = (currentWork + vertsPerThread - 1) / vertsPerThread;
           timer.reset();
-	  //refresh forbidden before coloring, to ensure previously-colored vertices do not get recolored unnecessarily.
-          //This avoids using too many colors, by relying on forbidden from before conflict resolution (which is now stale).
+          //if still using this color set, refresh forbidden.
+          //This avoids using too many colors, by relying on forbidden from before previous conflict resolution (which is now stale).
+          //Refreshing forbidden before conflict resolution ensures that previously-colored vertices do not get recolored.
           switch(batch)
           {
             case 1:
@@ -772,8 +771,8 @@ class GraphColorDistance2
               break;
             default:;
           }
-	  forbiddenTime += timer.seconds();
-	  timer.reset();
+          forbiddenTime += timer.seconds();
+          timer.reset();
           switch(batch)
           {
             case 1:
@@ -883,9 +882,9 @@ class GraphColorDistance2
       Kokkos::View<const size_type*, Kokkos::HostSpace> Vrowmap = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), this->xadj);
       Kokkos::View<const lno_t*, Kokkos::HostSpace> Vcolinds = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), this->adj);
       //Create worklist
-      Kokkos::View<lno_t*, Kokkos::HostSpace> worklist(Kokkos::ViewAllocateWithoutInitializing("Worklist"), this->nr);
+      Kokkos::View<lno_t*, Kokkos::HostSpace> worklist(Kokkos::view_alloc(Kokkos::WithoutInitializing, "Worklist"), this->nr);
       int iter = 0;
-      Kokkos::Impl::Timer timer;
+      Kokkos::Timer timer;
       lno_t currentWork = this->nr;
       lno_t numCols = this->nc;
       for(color_type colorBase = 1; currentWork > 0; colorBase += 32)

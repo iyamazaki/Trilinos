@@ -29,6 +29,7 @@ APPEND_SET(SOURCES
   BlackBoxPFactory.cpp
   CoalesceDropFactory.cpp
   CoarseMapFactory.cpp
+  ClassicalPFactory.cpp
 # CoupledAggregationFactory.cpp
   FineLevelInputDataFactory.cpp
   GeneralGeometricPFactory.cpp
@@ -41,14 +42,17 @@ APPEND_SET(SOURCES
   MueLu_UnitTests.cpp
   MueLu_TestHelpers.cpp
   MultiVectorTransferFactory.cpp
+  NullspaceFactory.cpp
   ParameterList/FactoryFactory.cpp
   ParameterList/ParameterListInterpreter.cpp
   PermutedTransferFactory.cpp
   PgPFactory.cpp
   RAPFactory.cpp
   RAPShiftFactory.cpp
+  ReitzingerPFactory.cpp
   SaPFactory.cpp
   ScaledNullspaceFactory.cpp
+  SemiCoarsenPFactory.cpp
   Smoothers/SmootherFactory.cpp
   StructuredAggregationFactory.cpp
   StructuredLineDetection.cpp
@@ -57,7 +61,7 @@ APPEND_SET(SOURCES
   TransPFactory.cpp
   UnsmooshFactory.cpp
   UserData/CreateXpetraPreconditioner.cpp
-  Utilities
+  Utilities.cpp
   VariableContainer.cpp
   VariableDofLaplacianFactory.cpp
 )
@@ -149,7 +153,7 @@ IF (${PACKAGE_NAME}_ENABLE_Belos)
   APPEND_SET(SOURCES Smoothers/BelosSmoother.cpp)
 ENDIF()
 
-IF (${PACKAGE_NAME}_ENABLE_Stratimikos AND ${PACKAGE_NAME}_ENABLE_Thyra)
+IF (${PACKAGE_NAME}_ENABLE_Stratimikos AND ${PACKAGE_NAME}_ENABLE_Tpetra AND ${PACKAGE_NAME}_ENABLE_Thyra)
   APPEND_SET(SOURCES Smoothers/StratimikosSmoother.cpp)
 ENDIF()
 
