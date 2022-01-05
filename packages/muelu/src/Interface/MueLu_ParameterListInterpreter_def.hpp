@@ -458,7 +458,7 @@ namespace MueLu {
     changedImplicitTranspose_ = MUELU_TEST_AND_SET_VAR(paramList, "transpose: use implicit", bool, this->implicitTranspose_);
 
     // Detect if we use fuse prolongation and update
-    MUELU_TEST_AND_SET_VAR(paramList, "fuse prolongation and update", bool, this->fuseProlongationAndUpdate_);
+    (void)MUELU_TEST_AND_SET_VAR(paramList, "fuse prolongation and update", bool, this->fuseProlongationAndUpdate_);
 
     if (paramList.isSublist("matvec params"))
       this->matvecParams_ = Teuchos::parameterList(paramList.sublist("matvec params"));
@@ -723,9 +723,6 @@ namespace MueLu {
      bool useMaxAbsDiagonalScaling = false;
      if (defaultList.isParameter("sa: use rowsumabs diagonal scaling"))
        useMaxAbsDiagonalScaling = defaultList.get<bool>("sa: use rowsumabs diagonal scaling");
-     double chebyReplaceTol = -Teuchos::ScalarTraits<double>::one();
-     if (defaultList.isParameter("sa: rowsumabs diagonal replacement tolerance"))
-       chebyReplaceTol = defaultList.get<double>("sa: rowsumabs diagonal replacement tolerance");
 
      // === Smoothing ===
      // FIXME: should custom smoother check default list too?
@@ -797,10 +794,6 @@ namespace MueLu {
 
          if (preSmootherType == "CHEBYSHEV" && useMaxAbsDiagonalScaling)
            preSmootherParams.set("chebyshev: use rowsumabs diagonal scaling",true);
-         if (preSmootherType == "CHEBYSHEV" && chebyReplaceTol != -Teuchos::ScalarTraits<double>::one())
-           preSmootherParams.set("chebyshev: rowsumabs diagonal replacement tolerance",chebyReplaceTol);
-         if (preSmootherType == "CHEBYSHEV" && defaultList.isParameter("sa: rowsumabs diagonal replacement value"))
-           preSmootherParams.set("chebyshev: rowsumabs diagonal replacement value", defaultList.get<double>("sa: rowsumabs diagonal replacement value"));
 
  #ifdef HAVE_MUELU_INTREPID2
        // Propagate P-coarsening for Topo smoothing
@@ -1079,6 +1072,7 @@ namespace MueLu {
        MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: classical algo", std::string, dropParams);
        MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: distance laplacian directional weights",Teuchos::Array<double>,dropParams);
        MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: coloring: localize color graph", bool, dropParams);
+       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: dropping may create Dirichlet", bool, dropParams);
        if (useKokkos_) {
          MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "filtered matrix: use lumping",      bool, dropParams);
          MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "filtered matrix: reuse graph",      bool, dropParams);
@@ -1129,7 +1123,7 @@ namespace MueLu {
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: enable phase 2a",           bool, aggParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: enable phase 2b",           bool, aggParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: enable phase 3",            bool, aggParams);
-      MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: phase2a include root",      bool, aggParams);
+      MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: match ML phase2a",          bool, aggParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: phase2a agg factor",      double, aggParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: preserve Dirichlet points", bool, aggParams);
       MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "aggregation: error on nodes with no on-rank neighbors", bool, aggParams);
@@ -1777,7 +1771,7 @@ namespace MueLu {
   // =====================================================================================================
   template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
   void ParameterListInterpreter<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
-  UpdateFactoryManager_Nullspace(ParameterList& paramList, const ParameterList& /* defaultList */, FactoryManager& manager,
+  UpdateFactoryManager_Nullspace(ParameterList& paramList, const ParameterList&  defaultList, FactoryManager& manager,
                                  int /* levelID */, std::vector<keep_pair>& /* keeps */, RCP<Factory> & nullSpaceFactory) const
   {
     // Nullspace
@@ -1788,6 +1782,9 @@ namespace MueLu {
       have_userNS = true;
 
     if (!have_userNS) {
+      ParameterList newNullparams;
+      MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "nullspace: calculate rotations", bool, newNullparams);
+      nullSpace->SetParameterList(newNullparams);
       nullSpace->SetFactory("Nullspace", manager.GetFactory("Ptent"));
       manager.SetFactory("Nullspace", nullSpace);
     }
@@ -1933,6 +1930,7 @@ namespace MueLu {
     MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "sa: use rowsumabs diagonal scaling", bool, Pparams);
     MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "sa: rowsumabs diagonal replacement tolerance", double, Pparams);
     MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "sa: rowsumabs diagonal replacement value", double, Pparams);
+    MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "sa: rowsumabs use automatic diagonal tolerance", bool, Pparams);
     MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "sa: enforce constraints", bool, Pparams);
     MUELU_TEST_AND_SET_PARAM_2LIST(paramList, defaultList, "tentative: calculate qr", bool, Pparams);
 

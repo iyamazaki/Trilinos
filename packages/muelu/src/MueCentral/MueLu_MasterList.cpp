@@ -138,7 +138,9 @@ namespace MueLu {
     if (name == "sa: enforce constraints") { ss << "<Parameter name=\"sa: enforce constraints\" type=\"bool\" value=" << value << "/>"; return ss.str(); }      
     if (name == "sa: max eigenvalue") { ss << "<Parameter name=\"sa: max eigenvalue\" type=\"double\" value=" << value << "/>"; return ss.str(); }      
     if (name == "sa: rowsumabs diagonal replacement tolerance") { ss << "<Parameter name=\"sa: rowsumabs diagonal replacement tolerance\" type=\"double\" value=" << value << "/>"; return ss.str(); }      
+    if (name == "sa: rowsumabs use automatic diagonal tolerance") { ss << "<Parameter name=\"sa: rowsumabs use automatic diagonal tolerance\" type=\"bool\" value=" << value << "/>"; return ss.str(); }      
     if (name == "sa: rowsumabs diagonal replacement value") { ss << "<Parameter name=\"sa: rowsumabs diagonal replacement value\" type=\"double\" value=" << value << "/>"; return ss.str(); }      
+    if (name == "sa: rowsumabs replace single entry row with zero") { ss << "<Parameter name=\"sa: rowsumabs replace single entry row with zero\" type=\"bool\" value=" << value << "/>"; return ss.str(); }      
     if (name == "pcoarsen: element") { ss << "<Parameter name=\"pcoarsen: element\" type=\"string\" value=" << value << "/>"; return ss.str(); }      
     if (name == "pcoarsen: schedule") { ss << "<Parameter name=\"pcoarsen: schedule\" type=\"string\" value=" << value << "/>"; return ss.str(); }      
     if (name == "pcoarsen: hi basis") { ss << "<Parameter name=\"pcoarsen: hi basis\" type=\"string\" value=" << value << "/>"; return ss.str(); }      
@@ -234,12 +236,13 @@ namespace MueLu {
   "<Parameter name=\"aggregation: enable phase 2a\" type=\"bool\" value=\"true\"/>"
   "<Parameter name=\"aggregation: enable phase 2b\" type=\"bool\" value=\"true\"/>"
   "<Parameter name=\"aggregation: enable phase 3\" type=\"bool\" value=\"true\"/>"
-  "<Parameter name=\"aggregation: phase2a include root\" type=\"bool\" value=\"true\"/>"
+  "<Parameter name=\"aggregation: match ML phase2a\" type=\"bool\" value=\"false\"/>"
   "<Parameter name=\"aggregation: phase2a agg factor\" type=\"double\" value=\"0.5\"/>"
   "<Parameter name=\"aggregation: error on nodes with no on-rank neighbors\" type=\"bool\" value=\"false\"/>"
   "<Parameter name=\"aggregation: phase3 avoid singletons\" type=\"bool\" value=\"false\"/>"
   "<Parameter name=\"aggregation: allow empty prolongator columns\" type=\"bool\" value=\"false\"/>"
   "<Parameter name=\"aggregation: preserve Dirichlet points\" type=\"bool\" value=\"false\"/>"
+  "<Parameter name=\"aggregation: dropping may create Dirichlet\" type=\"bool\" value=\"true\"/>"
   "<Parameter name=\"aggregation: allow user-specified singletons\" type=\"bool\" value=\"false\"/>"
   "<Parameter name=\"aggregation: use interface aggregation\" type=\"bool\" value=\"false\"/>"
   "<Parameter name=\"aggregation: export visualization data\" type=\"bool\" value=\"false\"/>"
@@ -291,7 +294,9 @@ namespace MueLu {
   "<Parameter name=\"sa: enforce constraints\" type=\"bool\" value=\"false\"/>"
   "<Parameter name=\"sa: max eigenvalue\" type=\"double\" value=\"-1.0\"/>"
   "<Parameter name=\"sa: rowsumabs diagonal replacement tolerance\" type=\"double\" value=\"-1.0\"/>"
+  "<Parameter name=\"sa: rowsumabs use automatic diagonal tolerance\" type=\"bool\" value=\"false\"/>"
   "<Parameter name=\"sa: rowsumabs diagonal replacement value\" type=\"double\" value=\"0.0\"/>"
+  "<Parameter name=\"sa: rowsumabs replace single entry row with zero\" type=\"bool\" value=\"true\"/>"
   "<Parameter name=\"interp: build coarse coordinates\" type=\"bool\" value=\"true\"/>"
   "<ParameterList name=\"transfer: params\"/>"
   "<Parameter name=\"pcoarsen: element\" type=\"string\" value=\"\"/>"
@@ -677,7 +682,7 @@ namespace MueLu {
       
          ("aggregation: enable phase 3","aggregation: enable phase 3")
       
-         ("aggregation: phase2a include root","aggregation: phase2a include root")
+         ("aggregation: match ML phase2a","aggregation: match ML phase2a")
       
          ("aggregation: phase2a agg factor","aggregation: phase2a agg factor")
       
@@ -688,6 +693,8 @@ namespace MueLu {
          ("aggregation: allow empty prolongator columns","aggregation: allow empty prolongator columns")
       
          ("aggregation: preserve Dirichlet points","aggregation: preserve Dirichlet points")
+      
+         ("aggregation: dropping may create Dirichlet","aggregation: dropping may create Dirichlet")
       
          ("aggregation: allow user-specified singletons","aggregation: allow user-specified singletons")
       
@@ -791,7 +798,11 @@ namespace MueLu {
       
          ("not supported by ML","sa: rowsumabs diagonal replacement tolerance")
       
+         ("not supported by ML","sa: rowsumabs use automatic diagonal tolerance")
+      
          ("not supported by ML","sa: rowsumabs diagonal replacement value")
+      
+         ("not supported by ML","sa: rowsumabs replace single entry row with zero")
       
          ("interp: build coarse coordinates","interp: build coarse coordinates")
       
