@@ -51,6 +51,7 @@
 #if !defined(KOKKOSKERNELS_ETI_ONLY) || KOKKOSKERNELS_IMPL_COMPILE_LIBRARY
 #include "KokkosBlas3_gemm_impl.hpp"
 #include "KokkosBlas3_gemm_dotbased_impl.hpp"
+#include "KokkosBlas3_gemm_dotblocked_impl.hpp"
 #include "KokkosKernels_ExecSpaceUtils.hpp"
 #endif
 
@@ -156,9 +157,14 @@ struct GEMM {
 
     // call dot-based GEMM, only for C := beta * C + alpha * A^T * B, on device
     bool A_is_conj = ((transA[0]=='C') || (transA[0]=='c'));
-    DotBasedGEMM<ExecSpace, AViewType, BViewType, CViewType> dotBasedGemm(alpha, A, B, beta, C);
-    dotBasedGemm.run(A_is_conj);
-
+    bool flag = false;
+    if (flag) {
+      DotBasedGEMM<ExecSpace, AViewType, BViewType, CViewType> dotBasedGemm(alpha, A, B, beta, C);
+      dotBasedGemm.run(A_is_conj);
+    } else {
+      DotBlockedGEMM<ExecSpace, AViewType, BViewType, CViewType> dotBasedGemm(alpha, A, B, beta, C);
+      dotBasedGemm.run(A_is_conj);
+    }
   } else {
 
     // Define Blocking sizes (this will be used for scratch spaces)

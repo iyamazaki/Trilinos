@@ -63,6 +63,7 @@
 #include "Teuchos_ScalarTraits.hpp"
 #include "Teuchos_ParameterList.hpp"
 #include "Teuchos_TimeMonitor.hpp"
+#include <Kokkos_Timer.hpp>
 
 /*!
   \class Belos::BlockGmresIter
@@ -673,9 +674,15 @@ class BlockGmresIter : virtual public GmresIteration<ScalarType,MV,OP> {
     //
     // also break if our basis is full
     //
+int myRank;
+MPI_Comm_rank(MPI_COMM_WORLD, &myRank);;
+Kokkos::Timer timer;
     while (stest_->checkStatus(this) != Passed && curDim_+blockSize_ <= searchDim) {
 
       iter_++;
+double block_gmres_time = timer.seconds();
+if (myRank == 0)
+  std::cout << " > iteration: " << iter_ << ", " << curDim_ << ", " << block_gmres_time << std::endl;
 
       // F can be found at the curDim_ block, but the next block is at curDim_ + blockSize_.
       int lclDim = curDim_ + blockSize_;

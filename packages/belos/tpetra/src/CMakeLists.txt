@@ -40,6 +40,7 @@ APPEND_SET(SOURCES
   )
 
 APPEND_SET(HEADERS
+  ${CMAKE_CURRENT_SOURCE_DIR}/solvers/Belos_Tpetra_BlockGmres.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solvers/Belos_Tpetra_Cg.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solvers/Belos_Tpetra_CgPipeline.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solvers/Belos_Tpetra_CgSingleReduce.hpp

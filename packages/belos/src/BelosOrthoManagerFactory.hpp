@@ -47,6 +47,7 @@
 #  include <BelosTsqrOrthoManager.hpp>
 #endif // HAVE_BELOS_TSQR
 #include <BelosICGSOrthoManager.hpp>
+#include <BelosICGSCholQROrthoManager.hpp>
 #include <BelosIMGSOrthoManager.hpp>
 #include <BelosDGKSOrthoManager.hpp>
 #include <BelosSimpleOrthoManager.hpp>
@@ -88,9 +89,9 @@ namespace Belos {
     /// \brief Number of MatOrthoManager subclasses this factory recognizes.
     static int numOrthoManagers () {
 #ifdef HAVE_BELOS_TSQR
-      return 5; 
+      return 7;
 #else
-      return 4;
+      return 6;
 #endif // HAVE_BELOS_TSQR
     }
 
@@ -113,6 +114,7 @@ namespace Belos {
     {
       int index = 0;
       theList_[index++] = "ICGS";
+      theList_[index++] = "ICGSCholQR";
       theList_[index++] = "IMGS";
       theList_[index++] = "DGKS";
 #ifdef HAVE_BELOS_TSQR
@@ -201,6 +203,9 @@ namespace Belos {
       else if (name == "ICGS") {
 	return Belos::getICGSDefaultParameters<Scalar, MV, OP> ();
       }
+      else if (name == "ICGSCholQR") {
+	return Belos::getICGSCholQRDefaultParameters<Scalar, MV, OP> ();
+      }
       else if (name == "IMGS") {
 	return Belos::getIMGSDefaultParameters<Scalar, MV, OP> ();
       }
@@ -246,8 +251,8 @@ namespace Belos {
 	return orthoMan.getFastParameters ();
       }
 #endif // HAVE_BELOS_TSQR
-      else if (name == "ICGS") {
-	return Belos::getICGSFastParameters<Scalar, MV, OP> ();
+      else if (name == "ICGSCholQR") {
+	return Belos::getICGSCholQRFastParameters<Scalar, MV, OP> ();
       }
       else if (name == "IMGS") {
 	return Belos::getIMGSFastParameters<Scalar, MV, OP> ();
@@ -299,6 +304,7 @@ namespace Belos {
       using Belos::TsqrMatOrthoManager;
 #endif // HAVE_BELOS_TSQR
       using Belos::ICGSOrthoManager;
+      using Belos::ICGSCholQROrthoManager;
       using Belos::IMGSOrthoManager;
       using Belos::DGKSOrthoManager;
       using Belos::SimpleOrthoManager;
@@ -316,6 +322,10 @@ namespace Belos {
 #endif // HAVE_BELOS_TSQR
       else if (ortho == "ICGS") {
 	typedef ICGSOrthoManager<Scalar, MV, OP> ortho_type;
+	return rcp (new ortho_type (params, label, M));
+      }
+      else if (ortho == "ICGSCholQR") {
+	typedef ICGSCholQROrthoManager<Scalar, MV, OP> ortho_type;
 	return rcp (new ortho_type (params, label, M));
       }
       else if (ortho == "IMGS") {

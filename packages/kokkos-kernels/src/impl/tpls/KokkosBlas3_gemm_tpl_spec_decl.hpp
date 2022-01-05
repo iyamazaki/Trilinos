@@ -333,6 +333,7 @@ KOKKOSBLAS3_CGEMM_BLAS( Kokkos::LayoutRight, Kokkos::LayoutRight, Kokkos::Layout
 #ifdef KOKKOSKERNELS_ENABLE_TPL_CUBLAS
 #include<KokkosBlas_tpl_spec.hpp>
 #include<KokkosBlas3_gemm_dotbased_impl.hpp>
+#include<KokkosBlas3_gemm_dotblocked_impl.hpp>
 
 namespace KokkosBlas {
 namespace Impl {
@@ -396,7 +397,8 @@ struct GEMM< \
     constexpr int numDotsLayoutRightThreshold = 100; \
     if(   (!A_is_lr && transa != CUBLAS_OP_N && transb == CUBLAS_OP_N && M*N < numDotsLayoutLeftThreshold) \
        || ( A_is_lr && transa != CUBLAS_OP_N && transb == CUBLAS_OP_N && M*N < numDotsLayoutRightThreshold)) { \
-      DotBasedGEMM<ExecSpace,AViewType,BViewType,CViewType> gemm(alpha,A,B,beta,C); \
+      /*DotBasedGEMM<ExecSpace,AViewType,BViewType,CViewType> gemm(alpha,A,B,beta,C);*/ \
+      DotBlockedGEMM<ExecSpace,AViewType,BViewType,CViewType> gemm(alpha,A,B,beta,C); \
       gemm.run(false); \
     } \
     else { \

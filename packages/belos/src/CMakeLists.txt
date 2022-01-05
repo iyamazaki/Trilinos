@@ -45,6 +45,7 @@ APPEND_SET(HEADERS
   BelosGmresPolyOp.hpp
   BelosGmresPolySolMgr.hpp
   BelosICGSOrthoManager.hpp
+  BelosICGSCholQROrthoManager.hpp
   BelosIMGSOrthoManager.hpp
   BelosIteration.hpp
   BelosLinearProblem.hpp

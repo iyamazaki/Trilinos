@@ -968,6 +968,8 @@ ReturnType BlockGmresSolMgr<ScalarType,MV,OP>::solve() {
   else
     block_gmres_iter = Teuchos::rcp( new BlockGmresIter<ScalarType,MV,OP>(problem_,printer_,outputTest_,ortho_,plist) );
 
+Kokkos::Timer timer;
+timer.reset ();
   // Enter solve() iterations
   {
 #ifdef BELOS_TEUCHOS_TIME_MONITOR
@@ -1037,6 +1039,8 @@ ReturnType BlockGmresSolMgr<ScalarType,MV,OP>::solve() {
       while(1) {
         // tell block_gmres_iter to iterate
         try {
+double block_gmres_time = timer.seconds();
+std::cout << numRestarts << ", " << block_gmres_iter->getCurSubspaceDim() << ", " << block_gmres_time << std::endl;
           block_gmres_iter->iterate();
 
           ////////////////////////////////////////////////////////////////////////////////////
