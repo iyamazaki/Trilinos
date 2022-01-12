@@ -94,6 +94,13 @@ void Excn::SystemInterface::enroll_options()
                   nullptr);
 
   options_.enroll(
+      "verify_valid_file", GetLongOption::NoValue,
+      "Reopen the output file right after closing it to verify that the file is valid.\n"
+      "\t\tThis tries to detect file corruption immediately instead of later. Mainly useful in "
+      "large subcycle runs.",
+      nullptr);
+
+  options_.enroll(
       "add_nodal_communication_map", GetLongOption::NoValue,
       "In subcycle mode, add the `nodal communication map` data to the output files.\n"
       "\t\tThe resulting files can then be used as input to a subsequent analysis (N to M)",
@@ -176,11 +183,25 @@ void Excn::SystemInterface::enroll_options()
                   "Comma-separated list of sideset variables to be joined or ALL or NONE.",
                   nullptr);
 
+  options_.enroll("edblkvar", GetLongOption::MandatoryValue,
+                  "Comma-separated list of edgeblock variables to be joined or ALL or NONE.",
+                  nullptr);
+
+  options_.enroll("fablkvar", GetLongOption::MandatoryValue,
+                  "Comma-separated list of faceblock variables to be joined or ALL or NONE.",
+                  nullptr);
+
   options_.enroll("omit_nodesets", GetLongOption::NoValue,
                   "Don't transfer nodesets to output file.", nullptr);
 
   options_.enroll("omit_sidesets", GetLongOption::NoValue,
                   "Don't transfer sidesets to output file.", nullptr, nullptr, true);
+
+  options_.enroll("omit_edgeblocks", GetLongOption::NoValue,
+                  "Don't transfer edgeblocks to output file.", nullptr, nullptr, true);
+
+  options_.enroll("omit_faceblocks", GetLongOption::NoValue,
+                  "Don't transfer faceblocks to output file.", nullptr, nullptr, true);
 
   options_.enroll("sum_shared_nodes", GetLongOption::NoValue,
                   "The nodal results data on all shared nodes (nodes on processor boundaries)\n"
@@ -196,8 +217,10 @@ void Excn::SystemInterface::enroll_options()
                   "\t\t  8 = Check consistent nodal coordinates between processors.\n"
                   "\t\t 16 = Verbose Sideset information.\n"
                   "\t\t 32 = Verbose Nodeset information.\n"
-                  "\t\t 64 = put exodus library into verbose mode.\n"
-                  "\t\t128 = Check consistent global field values between processors.",
+                  "\t\t 64 = Verbose Edge block information.\n"
+                  "\t\t128 = Verbose Face block information.\n"
+                  "\t\t256 = put exodus library into verbose mode.\n"
+                  "\t\t512 = Check consistent global field values between processors.",
                   "0");
 
   options_.enroll(
@@ -240,9 +263,9 @@ bool Excn::SystemInterface::parse_options(int argc, char **argv)
     if (myRank_ == 0) {
       options_.usage();
       fmt::print("\n\tCan also set options via EPU_OPTIONS environment variable.\n\n"
-                 "\tWrites: current_directory/basename.suf\n"
-                 "\tReads:  root#o/sub/basename.suf.#p.0 to\n"
-                 "\t\troot(#o+#p)%#r/sub/basename.suf.#p.#p\n"
+                 "\tWrites: current_directory/basename.output_suf\n"
+                 "\tReads:  root/sub/basename.suf.#p.0 to\n"
+                 "\t\troot/sub/basename.suf.#p.#p-1\n"
                  "\n\t->->-> Send email to gdsjaar@sandia.gov for epu support.<-<-<-\n");
     }
     return false;
@@ -298,6 +321,16 @@ bool Excn::SystemInterface::parse_options(int argc, char **argv)
     parse_variable_names(temp, &ssetVarNames_);
   }
 
+  {
+    const char *temp = options_.retrieve("edblkvar");
+    parse_variable_names(temp, &edblkVarNames_);
+  }
+
+  {
+    const char *temp = options_.retrieve("fablkvar");
+    parse_variable_names(temp, &fablkVarNames_);
+  }
+
   addProcessorIdField_      = options_.retrieve("add_processor_id") != nullptr;
   addProcessorIdMap_        = options_.retrieve("add_map_processor_id") != nullptr;
   addNodalCommunicationMap_ = options_.retrieve("add_nodal_communication_map") != nullptr;
@@ -328,10 +361,11 @@ bool Excn::SystemInterface::parse_options(int argc, char **argv)
   sumSharedNodes_ = options_.retrieve("sum_shared_nodes") != nullptr;
   append_         = options_.retrieve("append") != nullptr;
 
-  subcycle_      = options_.get_option_value("subcycle", subcycle_);
-  cycle_         = options_.get_option_value("cycle", cycle_);
-  subcycleJoin_  = options_.retrieve("join_subcycles") != nullptr;
-  keepTemporary_ = options_.retrieve("keep_temporary") != nullptr;
+  subcycle_        = options_.get_option_value("subcycle", subcycle_);
+  cycle_           = options_.get_option_value("cycle", cycle_);
+  subcycleJoin_    = options_.retrieve("join_subcycles") != nullptr;
+  keepTemporary_   = options_.retrieve("keep_temporary") != nullptr;
+  verifyValidFile_ = options_.retrieve("verify_valid_file") != nullptr;
 
   if (options_.retrieve("map") != nullptr) {
     mapIds_ = true;
@@ -343,6 +377,8 @@ bool Excn::SystemInterface::parse_options(int argc, char **argv)
 
   omitNodesets_      = options_.retrieve("omit_nodesets") != nullptr;
   omitSidesets_      = options_.retrieve("omit_sidesets") != nullptr;
+  omitEdgeBlocks_    = options_.retrieve("omit_edgeblocks") != nullptr;
+  omitFaceBlocks_    = options_.retrieve("omit_faceblocks") != nullptr;
   outputSharedNodes_ = options_.retrieve("output_shared_nodes") != nullptr;
 
   if (options_.retrieve("copyright") != nullptr) {

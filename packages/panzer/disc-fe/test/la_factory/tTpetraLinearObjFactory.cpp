@@ -414,9 +414,7 @@ TEUCHOS_UNIT_TEST(tTpetraLinearObjFactory, adjustDirichlet)
    TEST_ASSERT(!Teuchos::is_null(t_sys->get_A()));
 
    t_sys->get_f()->putScalar(-3.0); // put some garbage in the systems
-   t_sys->get_A()->resumeFill();
    t_sys->get_A()->setAllToScalar(-3.0);
-   t_sys->get_A()->fillComplete();
 
    // there are 3 cases for adjustDirichlet
    //   1. Local set only for GID
@@ -457,8 +455,8 @@ TEUCHOS_UNIT_TEST(tTpetraLinearObjFactory, adjustDirichlet)
 
    std::size_t sz = t_sys->get_A()->getNodeMaxNumRowEntries();
    std::size_t numEntries = 0;
-   Teuchos::Array<double> values(sz);
-   Teuchos::Array<int> indices(sz);
+   typename CrsMatrix::nonconst_local_inds_host_view_type indices("indices", sz);
+   typename CrsMatrix::nonconst_values_host_view_type values("values", sz);
 
    if(myRank==0) {   
       TEST_EQUALITY(f_a[0],-3.0);     // case 0

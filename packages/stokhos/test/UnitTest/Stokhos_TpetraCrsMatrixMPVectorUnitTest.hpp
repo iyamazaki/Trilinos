@@ -55,6 +55,7 @@
 #include "Tpetra_Vector.hpp"
 #include "Tpetra_CrsGraph.hpp"
 #include "Tpetra_CrsMatrix.hpp"
+#include "Tpetra_Details_WrappedDualView.hpp"
 #include "Stokhos_Tpetra_CG.hpp"
 
 // Belos solver
@@ -656,7 +657,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(2), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(2)));
   Array<GlobalOrdinal> columnIndices(2);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -777,7 +778,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(2), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(2)));
   Array<GlobalOrdinal> columnIndices(2);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -914,7 +915,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(2), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(2)));
   Array<GlobalOrdinal> columnIndices(2);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -1002,6 +1003,46 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
 }
 
 //
+// Test interaction between Tpetra WrappedDualView and MP::Vector
+//
+TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
+  Tpetra_CrsMatrix_MP, WrappedDualView, Storage, LocalOrdinal, GlobalOrdinal, Node )
+{
+  //BMK 6-2021: This test is required because a View of MP::Vector has slightly different behavior than a typical Kokkos::View.
+  //If you construct a Kokkos::View with a label and 0 extent, it gets a non-null allocation.
+  //But for View<MP::Vector>, the same constructor produces a null data pointer but
+  //an active reference counting node (use_count() > 0).
+  //This test makes sure that Tpetra WrappedDualView works correctly with a View where data() == nullptr but use_count() > 0.
+  using Teuchos::RCP;
+  using Teuchos::rcp;
+  using Teuchos::ArrayView;
+  using Teuchos::Array;
+  using Teuchos::ArrayRCP;
+
+  typedef typename Storage::value_type BaseScalar;
+  typedef Sacado::MP::Vector<Storage> Scalar;
+
+  using DualViewType = Kokkos::DualView<Scalar*, typename Node::device_type>;
+  using WDV = Tpetra::Details::WrappedDualView<DualViewType>;
+  using values_view = typename DualViewType::t_dev;
+
+  // Ensure device is initialized
+  if ( !Kokkos::is_initialized() )
+    Kokkos::initialize();
+
+  WDV wdv;
+  {
+    values_view myView("emptyTestView", 0);
+    wdv = WDV(myView);
+  }
+  size_t use_h = wdv.getHostView(Tpetra::Access::ReadOnly).use_count();
+  size_t use_d = wdv.getDeviceView(Tpetra::Access::ReadOnly).use_count();
+  //The WrappedDualView is now the only object holding references to the host and device views,
+  //so they should have identical use counts.
+  TEST_EQUALITY(use_h, use_d);
+}
+
+//
 // Test simple CG solve without preconditioning for a 1-D Laplacian matrix
 //
 TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
@@ -1035,7 +1076,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(3), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(3)));
   Array<GlobalOrdinal> columnIndices(3);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -1180,7 +1221,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(3), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(3)));
   Array<GlobalOrdinal> columnIndices(3);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -1335,7 +1376,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(2), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(2)));
   Array<GlobalOrdinal> columnIndices(2);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -1477,7 +1518,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(1), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(1)));
   Array<GlobalOrdinal> columnIndices(1);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -1631,7 +1672,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(1), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(1)));
   Array<GlobalOrdinal> columnIndices(1);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -1785,7 +1826,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(1), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(1)));
   Array<GlobalOrdinal> columnIndices(1);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -1961,7 +2002,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(2), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(2)));
   Array<GlobalOrdinal> columnIndices(2);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -2123,7 +2164,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
     Tpetra::createUniformContigMapWithNode<LocalOrdinal,GlobalOrdinal,Node>(
       nrow, comm);
   RCP<Tpetra_CrsGraph> graph =
-    rcp(new Tpetra_CrsGraph(map, size_t(3), Tpetra::StaticProfile));
+    rcp(new Tpetra_CrsGraph(map, size_t(3)));
   Array<GlobalOrdinal> columnIndices(3);
   ArrayView<const GlobalOrdinal> myGIDs = map->getNodeElementList();
   const size_t num_my_row = myGIDs.size();
@@ -2448,6 +2489,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Tpetra_CrsMatrix_MP, MultiVectorDotSub, S, LO, GO, N ) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Tpetra_CrsMatrix_MP, MatrixVectorMultiply, S, LO, GO, N ) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Tpetra_CrsMatrix_MP, MatrixMultiVectorMultiply, S, LO, GO, N ) \
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Tpetra_CrsMatrix_MP, WrappedDualView, S, LO, GO, N ) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Tpetra_CrsMatrix_MP, Flatten, S, LO, GO, N ) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Tpetra_CrsMatrix_MP, SimpleCG, S, LO, GO, N ) \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(Tpetra_CrsMatrix_MP, SimplePCG_Muelu, S, LO, GO, N ) \

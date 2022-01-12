@@ -63,7 +63,7 @@ void graph_color_symbolic(
     lno_nnz_view_t_ entries,
     bool /* is_symmetric */ = true){
 
-  Kokkos::Impl::Timer timer;
+  Kokkos::Timer timer;
 
   typename KernelHandle::GraphColoringHandleType *gch = handle->get_graph_coloring_handle();
 
@@ -73,7 +73,7 @@ void graph_color_symbolic(
 
   gch->set_tictoc(handle->get_verbose());
 
-  color_view_type colors_out; //= color_view_type("Graph Colors", num_rows);
+  color_view_type colors_out;
   if(gch->get_vertex_colors().use_count() > 0){
     colors_out = gch->get_vertex_colors();
   } else {

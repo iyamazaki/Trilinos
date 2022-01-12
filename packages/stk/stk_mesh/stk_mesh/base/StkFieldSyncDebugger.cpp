@@ -60,7 +60,7 @@ StkFieldSyncDebugger::host_stale_access_entity_check(const stk::mesh::Entity& en
 }
 
 void
-StkFieldSyncDebugger::host_stale_access_entity_check(const unsigned & bucketId, const Bucket::size_type & bucketOrd,
+StkFieldSyncDebugger::host_stale_access_entity_check(const unsigned & bucketId, const unsigned & bucketOrd,
                                                      const char * fileName, int lineNumber)
 {
   BulkData & bulk = m_stkField->get_mesh();
@@ -159,10 +159,15 @@ StkFieldSyncDebugger::get_last_mod_location_field() const
 
     meta.set_mesh_on_fields(&bulk);
     const FieldBase::RestrictionVector & fieldRestrictions = m_stkField->restrictions();
-    for (const FieldBase::Restriction & restriction : fieldRestrictions) {
-      const unsigned numComponents = restriction.num_scalars_per_entity();
-      std::vector<uint8_t> initLastModLocation(numComponents, LastModLocation::HOST_OR_DEVICE);
-      put_field_on_mesh(lastModLocationField, restriction.selector(), numComponents, initLastModLocation.data());
+    if (not fieldRestrictions.empty()) {
+      for (const FieldBase::Restriction & restriction : fieldRestrictions) {
+        const unsigned numComponents = restriction.num_scalars_per_entity();
+        std::vector<uint8_t> initLastModLocation(numComponents, LastModLocation::HOST_OR_DEVICE);
+        put_field_on_mesh(lastModLocationField, restriction.selector(), numComponents, initLastModLocation.data());
+      }
+    }
+    else {
+      bulk.reallocate_field_data(lastModLocationField);
     }
 
     m_lastModLocationField = lastModLocationField.field_state(state);

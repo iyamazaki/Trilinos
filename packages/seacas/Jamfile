@@ -157,7 +157,9 @@ alias install-user-include : install-user-include0
                              install-user-include3
                              install-user-include4
                              install-user-include5
-                             install-user-include6 ;
+                             install-user-include6
+                             install-user-include7
+                             install-user-include8 ;
 
 # This rule copies all headers it finds in the include directory of the
 # source to the include directory of the install-root.
@@ -222,6 +224,21 @@ install install-user-include6
   : <location>$(install-root)/io_system/include
   ;
 
+
+explicit install-user-include7 ;
+install install-user-include7
+  : [ glob $(seacas-root)/libraries/aprepro_lib/*.h ]
+  : <location>$(install-root)/seacas/include
+  ;
+
+
+explicit install-user-include8 ;
+install install-user-include8
+  : [ glob $(seacas-root)/libraries/suplib_cpp/fmt/*.h ]
+  : <location>$(install-root)/io_system/include/fmt
+  ;
+
+
 explicit install-user-env ;
 alias install-user-env : install-user-jamfile
                           install-user-bin install-user-include install-user-lib ;
@@ -261,6 +278,7 @@ install install-user-lib
     ioinit
     ioss
     iotr
+    iotm
     iovs
   : <location>$(install-root)/seacas/lib
   ;
@@ -399,6 +417,22 @@ lib iogn
         <file>$(seacas-root)/lib/libiogn.a
     ]
   ;
+lib iotm
+  :
+    [ ifdevbuild
+    # Any parameters within this 'ifdevbuild' block apply to development
+    # builds only and will not be present for user builds.
+        [ glob $(seacas-root)/libraries/ioss/src/text_mesh/*.C ]
+    ]
+    ioss
+    /mpi//mpi
+  :
+    [ ifuserbuild
+    # Any parameters within this 'ifuserbuild' block apply to user
+    # builds only and will not be present for developer builds.
+        <file>$(seacas-root)/lib/libiotm.a
+    ]
+  ;
 
 lib iogs
   :
@@ -430,6 +464,7 @@ lib ioinit
     iohb
     iogn
     iogs
+    iotm
     iotr
     iovs
     /mpi//mpi
@@ -1472,6 +1507,7 @@ exe exo_format
 exe exo2mat
   :
   $(seacas-root)/applications/exo2mat/exo2mat.C
+    suplib_cpp
     suplib_c
     exodus
     /tpl/matio//matio
@@ -1763,7 +1799,7 @@ exe Utst_superelement
 
 exe Utst_database_io
   :
-  [ glob $(seacas-root)/libraries/ioss/src/unit_tests/*.C ]
+  [ glob $(seacas-root)/libraries/ioss/src/utest/Utst_IofxDatabaseIO.C ]
     ioinit
     /tpl/netcdf-c//netcdf
     /tpl/gtest//gtest

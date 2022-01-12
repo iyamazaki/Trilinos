@@ -78,11 +78,6 @@
 
 namespace Tpetra {
 
-#ifndef DOXYGEN_SHOULD_SKIP_THIS
-// Forward declaration of Distributor
-class Distributor;
-#endif // DOXYGEN_SHOULD_SKIP_THIS
-
 //
 // Users must never rely on anything in the Details namespace.
 //
@@ -284,22 +279,28 @@ struct UnpackCrsMatrixAndCombineFunctor {
 
     if (expected_num_bytes > num_bytes)
     {
+// FIXME_SYCL Enable again once a SYCL conforming printf implementation is available.
+#ifndef KOKKOS_ENABLE_SYCL
       printf(
         "*** Error: UnpackCrsMatrixAndCombineFunctor: "
         "At row %d, the expected number of bytes (%d) != number of unpacked bytes (%d)\n",
         (int) lid_no, (int) expected_num_bytes, (int) num_bytes
       );
+#endif
       Kokkos::atomic_compare_exchange_strong(error_code.data(), 0, 21);
       return;
     }
 
     if (offset > buf_size || offset + num_bytes > buf_size)
     {
+// FIXME_SYCL Enable again once a SYCL conforming printf implementation is available.
+#ifndef KOKKOS_ENABLE_SYCL
       printf(
         "*** Error: UnpackCrsMatrixAndCombineFunctor: "
         "At row %d, the offset (%d) > buffer size (%d)\n",
         (int) lid_no, (int) offset, (int) buf_size
       );
+#endif
       Kokkos::atomic_compare_exchange_strong(error_code.data(), 0, 22);
       return;
     }
@@ -332,11 +333,14 @@ struct UnpackCrsMatrixAndCombineFunctor {
     (void)PackTraits<LO>::unpackValue(num_ent_out, num_ent_in);
     if (static_cast<size_t>(num_ent_out) != num_entries_in_row)
     {
+// FIXME_SYCL Enable again once a SYCL conforming printf implementation is available.
+#ifndef KOKKOS_ENABLE_SYCL
       printf(
         "*** Error: UnpackCrsMatrixAndCombineFunctor: "
         "At row %d, number of entries (%d) != number of entries unpacked (%d)\n",
         (int) lid_no, (int) num_entries_in_row, (int) num_ent_out
       );
+#endif
       Kokkos::atomic_compare_exchange_strong(error_code.data(), 0, 23);
     }
 
@@ -389,10 +393,13 @@ struct UnpackCrsMatrixAndCombineFunctor {
           );
         } else {
           // should never get here
+// FIXME_SYCL Enable again once a SYCL conforming printf implementation is available.
+#ifndef KOKKOS_ENABLE_SYCL
           printf(
             "*** Error: UnpackCrsMatrixAndCombineFunctor: "
             "At row %d, an unknown error occurred during unpack\n", (int) lid_no
           );
+#endif
           Kokkos::atomic_compare_exchange_strong(error_code.data(), 0, 31);
         }
       }
@@ -1191,20 +1198,16 @@ unpackCrsMatrixAndCombine(
     const Teuchos::ArrayView<const size_t>& numPacketsPerLID,
     const Teuchos::ArrayView<const LO>& importLIDs,
     size_t /* constantNumPackets */,
-    Distributor & /* distor */,
     CombineMode combineMode)
 {
   using Kokkos::View;
   typedef typename Node::device_type device_type;
-  typedef typename CrsMatrix<ST, LO, GO, Node>::local_matrix_type local_matrix_type;
-  static_assert (std::is_same<device_type, typename local_matrix_type::device_type>::value,
+  typedef typename CrsMatrix<ST, LO, GO, Node>::local_matrix_device_type local_matrix_device_type;
+  static_assert (std::is_same<device_type, typename local_matrix_device_type::device_type>::value,
                  "Node::device_type and LocalMatrix::device_type must be the same.");
 
-  // Execution space.
-  typedef typename device_type::execution_space XS;
-
   // Convert all Teuchos::Array to Kokkos::View.
-  typename XS::device_type outputDevice;
+  device_type outputDevice;
 
   // numPacketsPerLID, importLIDs, and imports are input, so we have to copy
   // them to device.  Since unpacking is done directly in to the local matrix
@@ -1221,16 +1224,17 @@ unpackCrsMatrixAndCombine(
     create_mirror_view_from_raw_host_array(outputDevice, imports.getRawPtr(),
         imports.size(), true, "imports");
 
-  auto local_matrix = sourceMatrix.getLocalMatrix();
+  auto local_matrix = sourceMatrix.getLocalMatrixDevice();
   auto local_col_map = sourceMatrix.getColMap()->getLocalMap();
 
-  for (int i=0; i<importLIDs.size(); i++)
-  {
-    auto lclRow = importLIDs[i];
-    Teuchos::ArrayView<const LO> A_indices;
-    Teuchos::ArrayView<const ST> A_values;
-    sourceMatrix.getLocalRowView(lclRow, A_indices, A_values);
-  }
+//KDDKDD This loop doesn't appear to do anything; what is it?
+//KDDKDD  for (int i=0; i<importLIDs.size(); i++)
+//KDDKDD  {
+//KDDKDD    auto lclRow = importLIDs[i];
+//KDDKDD    Teuchos::ArrayView<const LO> A_indices;
+//KDDKDD    Teuchos::ArrayView<const ST> A_values;
+//KDDKDD    sourceMatrix.getLocalRowView(lclRow, A_indices, A_values);
+//KDDKDD  }
   // Now do the actual unpack!
   UnpackAndCombineCrsMatrixImpl::unpackAndCombineIntoCrsMatrix(
       local_matrix, local_col_map, imports_d, num_packets_per_lid_d,
@@ -1249,19 +1253,18 @@ unpackCrsMatrixAndCombineNew(
   const Kokkos::DualView<const LO*,
     typename DistObject<char, LO, GO, NT>::buffer_device_type>& importLIDs,
   const size_t /* constantNumPackets */,
-  Distributor& /* distor */,
   const CombineMode combineMode)
 {
   using Kokkos::View;
   using crs_matrix_type = CrsMatrix<ST, LO, GO, NT>;
   using dist_object_type = DistObject<char, LO, GO, NT>;
   using device_type = typename crs_matrix_type::device_type;
-  using local_matrix_type = typename crs_matrix_type::local_matrix_type;
+  using local_matrix_device_type = typename crs_matrix_type::local_matrix_device_type;
   using buffer_device_type = typename dist_object_type::buffer_device_type;
 
   static_assert
-    (std::is_same<device_type, typename local_matrix_type::device_type>::value,
-     "crs_matrix_type::device_type and local_matrix_type::device_type "
+    (std::is_same<device_type, typename local_matrix_device_type::device_type>::value,
+     "crs_matrix_type::device_type and local_matrix_device_type::device_type "
      "must be the same.");
 
   if (numPacketsPerLID.need_sync_device()) {
@@ -1277,12 +1280,12 @@ unpackCrsMatrixAndCombineNew(
   }
   auto imports_d = imports.view_device ();
 
-  auto local_matrix = sourceMatrix.getLocalMatrix ();
+  auto local_matrix = sourceMatrix.getLocalMatrixDevice ();
   auto local_col_map = sourceMatrix.getColMap ()->getLocalMap ();
   typedef decltype (local_col_map) local_map_type;
 
   UnpackAndCombineCrsMatrixImpl::unpackAndCombineIntoCrsMatrix<
-      local_matrix_type,
+      local_matrix_device_type,
       local_map_type,
       buffer_device_type
     > (local_matrix, local_col_map, imports_d, num_packets_per_lid_d,
@@ -1352,7 +1355,6 @@ unpackAndCombineWithOwningPIDsCount (
     const Teuchos::ArrayView<const char> &imports,
     const Teuchos::ArrayView<const size_t>& numPacketsPerLID,
     size_t /* constantNumPackets */,
-    Distributor &/* distor */,
     CombineMode /* combineMode */,
     size_t numSameIDs,
     const Teuchos::ArrayView<const LocalOrdinal>& permuteToLIDs,
@@ -1379,7 +1381,7 @@ unpackAndCombineWithOwningPIDsCount (
      prefix << "importLIDs.size() = " << importLIDs.size () << " != "
      "numPacketsPerLID.size() = " << numPacketsPerLID.size () << ".");
 
-  auto local_matrix = sourceMatrix.getLocalMatrix ();
+  auto local_matrix = sourceMatrix.getLocalMatrixDevice ();
   auto permute_from_lids_d =
     create_mirror_view_from_raw_host_array (DT (),
                                             permuteFromLIDs.getRawPtr (),
@@ -1423,7 +1425,6 @@ unpackAndCombineIntoCrsArrays (
     const Teuchos::ArrayView<const char>& imports,
     const Teuchos::ArrayView<const size_t>& numPacketsPerLID,
     const size_t /* constantNumPackets */,
-    Distributor& /* distor */,
     const CombineMode /* combineMode */,
     const size_t numSameIDs,
     const Teuchos::ArrayView<const LocalOrdinal>& permuteToLIDs,
@@ -1450,7 +1451,6 @@ unpackAndCombineIntoCrsArrays (
   typedef LocalOrdinal LO;
 
   typedef typename Node::device_type DT;
-  typedef typename DT::execution_space XS;
 
   typedef CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node> matrix_type;
   typedef typename matrix_type::impl_scalar_type ST;
@@ -1481,11 +1481,11 @@ unpackAndCombineIntoCrsArrays (
   TargetPids.assign (TargetNumNonzeros, -1);
 
   // Grab pointers for sourceMatrix
-  auto local_matrix = sourceMatrix.getLocalMatrix();
+  auto local_matrix = sourceMatrix.getLocalMatrixDevice();
   auto local_col_map = sourceMatrix.getColMap()->getLocalMap();
 
   // Convert input arrays to Kokkos::View
-  typename XS::device_type outputDevice;
+  DT outputDevice;
   auto import_lids_d =
     create_mirror_view_from_raw_host_array(outputDevice, importLIDs.getRawPtr(),
         importLIDs.size(), true, "import_lids");
@@ -1619,7 +1619,6 @@ unpackAndCombineIntoCrsArrays (
     const Teuchos::ArrayView<const size_t>&, \
     const Teuchos::ArrayView<const LO>&, \
     size_t, \
-    Distributor&, \
     CombineMode); \
   template void \
   Details::unpackCrsMatrixAndCombineNew<ST, LO, GO, NT> ( \
@@ -1628,7 +1627,6 @@ unpackAndCombineIntoCrsArrays (
     Kokkos::DualView<size_t*, typename DistObject<char, LO, GO, NT>::buffer_device_type>, \
     const Kokkos::DualView<const LO*, typename DistObject<char, LO, GO, NT>::buffer_device_type>&, \
     const size_t, \
-    Distributor&, \
     const CombineMode); \
   template void \
   Details::unpackAndCombineIntoCrsArrays<ST, LO, GO, NT> ( \
@@ -1637,7 +1635,6 @@ unpackAndCombineIntoCrsArrays (
     const Teuchos::ArrayView<const char>&, \
     const Teuchos::ArrayView<const size_t>&, \
     const size_t, \
-    Distributor&, \
     const CombineMode, \
     const size_t, \
     const Teuchos::ArrayView<const LO>&, \
@@ -1657,7 +1654,6 @@ unpackAndCombineIntoCrsArrays (
     const Teuchos::ArrayView<const char> &, \
     const Teuchos::ArrayView<const size_t>&, \
     size_t, \
-    Distributor &, \
     CombineMode, \
     size_t, \
     const Teuchos::ArrayView<const LO>&, \

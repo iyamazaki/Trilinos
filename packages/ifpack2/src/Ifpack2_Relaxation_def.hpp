@@ -327,6 +327,9 @@ Relaxation<MatrixType>::getValidParameters () const
     const int cluster_size = 1;
     pl->set("relaxation: mtgs cluster size", cluster_size);
 
+    const int long_row_threshold = 0;
+    pl->set("relaxation: long row threshold", long_row_threshold);
+
     validParams_ = rcp_const_cast<const ParameterList> (pl);
   }
   return validParams_;
@@ -367,6 +370,9 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
   int cluster_size = 1;
   if(pl.isParameter ("relaxation: mtgs cluster size")) //optional parameter
     cluster_size = pl.get<int> ("relaxation: mtgs cluster size");
+  int long_row_threshold = 0;
+  if(pl.isParameter ("relaxation: long row threshold")) //optional parameter
+    long_row_threshold = pl.get<int> ("relaxation: long row threshold");
 
   Teuchos::ArrayRCP<local_ordinal_type> localSmoothingIndices = pl.get<Teuchos::ArrayRCP<local_ordinal_type> >("relaxation: local smoothing indices");
 
@@ -378,6 +384,18 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
     pl.remove("relaxation: inner damping factor");
     pl.set("relaxation: inner damping factor",df);
   }
+  //If long row algorithm was requested, make sure non-cluster (point) multicolor Gauss-Seidel (aka MTGS/MTSGS) will be used.
+  if (long_row_threshold > 0) {
+    TEUCHOS_TEST_FOR_EXCEPTION(
+        cluster_size != 1, std::invalid_argument, "Ifpack2::Relaxation: "
+        "Requested long row MTGS/MTSGS algorithm and cluster GS/SGS, but those are not compatible.");
+    TEUCHOS_TEST_FOR_EXCEPTION(
+        precType != Details::RelaxationType::MTGS && precType != Details::RelaxationType::MTSGS,
+        std::invalid_argument, "Ifpack2::Relaxation: "
+        "Requested long row MTGS/MTSGS algorithm, but this is only compatible with preconditioner types "
+        "'MT Gauss-Seidel' and 'MT Symmetric Gauss-Seidel'.");
+  }
+
   const ST innerDampingFactor = pl.get<ST> ("relaxation: inner damping factor");
   const int numInnerSweeps = pl.get<int> ("relaxation: inner sweeps");
   const int numOuterSweeps = pl.get<int> ("relaxation: outer sweeps");
@@ -396,6 +414,7 @@ void Relaxation<MatrixType>::setParametersImpl (Teuchos::ParameterList& pl)
   fixTinyDiagEntries_    = fixTinyDiagEntries;
   checkDiagEntries_      = checkDiagEntries;
   clusterSize_           = cluster_size;
+  longRowThreshold_      = long_row_threshold;
   is_matrix_structurally_symmetric_ = is_matrix_structurally_symmetric;
   ifpack2_dump_matrix_ = ifpack2_dump_matrix;
   localSmoothingIndices_ = localSmoothingIndices;
@@ -726,12 +745,14 @@ void Relaxation<MatrixType>::initialize ()
       if (mtKernelHandle_->get_gs_handle () == nullptr) {
         if (PrecType_ == Details::GS2 || PrecType_ == Details::SGS2)
           mtKernelHandle_->create_gs_handle (KokkosSparse::GS_TWOSTAGE);
-        else if(this->clusterSize_ == 1)
+        else if(this->clusterSize_ == 1) {
           mtKernelHandle_->create_gs_handle ();
+          mtKernelHandle_->get_point_gs_handle()->set_long_row_threshold(longRowThreshold_);
+        }
         else
           mtKernelHandle_->create_gs_handle (KokkosSparse::CLUSTER_DEFAULT, this->clusterSize_);
       }
-      local_matrix_type kcsr = crsMat->getLocalMatrix ();
+      local_matrix_device_type kcsr = crsMat->getLocalMatrixDevice ();
       if (PrecType_ == Details::GS2 || PrecType_ == Details::SGS2) {
         // set parameters for two-stage GS
         mtKernelHandle_->set_gs_set_num_inner_sweeps (NumInnerSweeps_);
@@ -847,10 +868,9 @@ void Relaxation<MatrixType>::computeBlockCrs ()
       "computeBlockCrs: The input matrix A is null.  Please call setMatrix() "
       "with a nonnull input matrix, then call initialize(), before calling "
       "this method.");
-    const block_crs_matrix_type* blockCrsA =
-      dynamic_cast<const block_crs_matrix_type*> (A_.getRawPtr ());
+    auto blockCrsA = rcp_dynamic_cast<const block_crs_matrix_type> (A_);
     TEUCHOS_TEST_FOR_EXCEPTION(
-      blockCrsA == nullptr, std::logic_error, "Ifpack2::Relaxation::"
+      blockCrsA.is_null(), std::logic_error, "Ifpack2::Relaxation::"
       "computeBlockCrs: A_ is not a BlockCrsMatrix, but it should be if we "
       "got this far.  Please report this bug to the Ifpack2 developers.");
 
@@ -895,13 +915,14 @@ void Relaxation<MatrixType>::computeBlockCrs ()
     if (DoL1Method_ && IsParallel_) {
       const scalar_type two = one + one;
       const size_t maxLength = A_->getNodeMaxNumRowEntries ();
-      Array<LO> indices (maxLength);
-      Array<scalar_type> values (maxLength * blockSize * blockSize);
+      nonconst_local_inds_host_view_type indices ("indices",maxLength);
+      nonconst_values_host_view_type values_ ("values",maxLength * blockSize * blockSize);
       size_t numEntries = 0;
 
       for (LO i = 0; i < lclNumMeshRows; ++i) {
         // FIXME (mfh 16 Dec 2015) Get views instead of copies.
-        blockCrsA->getLocalRowCopy (i, indices (), values (), numEntries);
+        blockCrsA->getLocalRowCopy (i, indices, values_, numEntries);
+        scalar_type * values = reinterpret_cast<scalar_type*>(values_.data());
 
         auto diagBlock = Kokkos::subview (blockDiag, i, ALL (), ALL ());
         for (LO subRow = 0; subRow < blockSize; ++subRow) {
@@ -955,7 +976,7 @@ void Relaxation<MatrixType>::computeBlockCrs ()
        "Tpetra::BlockCrsMatrix, one or more diagonal block LU factorizations "
        "failed on one or more (MPI) processes.");
 #endif // HAVE_IFPACK2_DEBUG
-    serialGaussSeidel_ = rcp(new SerialGaussSeidel(*blockCrsA, blockDiag_, localSmoothingIndices_, DampingFactor_));
+    serialGaussSeidel_ = rcp(new SerialGaussSeidel(blockCrsA, blockDiag_, localSmoothingIndices_, DampingFactor_));
   } // end TimeMonitor scope
 
   ComputeTime_ += (timer->wallTime() - startTime);
@@ -1174,10 +1195,9 @@ void Relaxation<MatrixType>::compute ()
 
     bool debugAgainstSlowPath = false;
 
-    const crs_matrix_type* crsMat =
-      dynamic_cast<const crs_matrix_type*> (A_.get());
+    auto crsMat = rcp_dynamic_cast<const crs_matrix_type> (A_);
 
-    if (crsMat != nullptr && crsMat->isFillComplete ()) {
+    if (crsMat.get() && crsMat->isFillComplete ()) {
       // The invDiagKernel object computes diagonal offsets if
       // necessary. The "compute" call extracts diagonal enties,
       // optionally applies the L1 method and replacement of small
@@ -1198,7 +1218,7 @@ void Relaxation<MatrixType>::compute ()
 #endif
     }
 
-    if (crsMat == nullptr || ! crsMat->isFillComplete () || debugAgainstSlowPath) {
+    if (crsMat.is_null() || ! crsMat->isFillComplete () || debugAgainstSlowPath) {
       // We could not call the CrsMatrix version above, or want to
       // debug by comparing against the slow path.
 
@@ -1226,12 +1246,12 @@ void Relaxation<MatrixType>::compute ()
         auto diag = Diagonal->getLocalViewHost(Tpetra::Access::ReadWrite);
         const magnitude_type two = STM::one () + STM::one ();
         const size_t maxLength = A_row.getNodeMaxNumRowEntries ();
-        Array<local_ordinal_type> indices (maxLength);
-        Array<scalar_type> values (maxLength);
+        nonconst_local_inds_host_view_type indices("indices",maxLength);
+        nonconst_values_host_view_type values("values",maxLength);
         size_t numEntries;
 
         for (LO i = 0; i < numMyRows; ++i) {
-          A_row.getLocalRowCopy (i, indices (), values (), numEntries);
+          A_row.getLocalRowCopy (i, indices, values, numEntries);
           magnitude_type diagonal_boost = STM::zero ();
           for (size_t k = 0 ; k < numEntries; ++k) {
             if (indices[k] >= numMyRows) {
@@ -1301,10 +1321,10 @@ void Relaxation<MatrixType>::compute ()
       //KokkosKernels GaussSeidel Initialization.
 
       TEUCHOS_TEST_FOR_EXCEPTION
-        (crsMat == nullptr, std::logic_error, methodName << ": "
+        (crsMat.is_null(), std::logic_error, methodName << ": "
          "Multithreaded Gauss-Seidel methods currently only work "
          "when the input matrix is a Tpetra::CrsMatrix.");
-      local_matrix_type kcsr = crsMat->getLocalMatrix ();
+      local_matrix_device_type kcsr = crsMat->getLocalMatrixDevice ();
 
       //TODO BMK: This should be ReadOnly, and KokkosKernels should accept a
       //const-valued view for user-provided D^-1. OK for now, Diagonal_ is nonconst.
@@ -1325,9 +1345,9 @@ void Relaxation<MatrixType>::compute ()
     }
     else if(PrecType_ == Ifpack2::Details::GS || PrecType_ == Ifpack2::Details::SGS) {
       if(crsMat)
-        serialGaussSeidel_ = rcp(new SerialGaussSeidel(*crsMat, Diagonal_, localSmoothingIndices_, DampingFactor_));
+        serialGaussSeidel_ = rcp(new SerialGaussSeidel(crsMat, Diagonal_, localSmoothingIndices_, DampingFactor_));
       else
-        serialGaussSeidel_ = rcp(new SerialGaussSeidel(*A_, Diagonal_, localSmoothingIndices_, DampingFactor_));
+        serialGaussSeidel_ = rcp(new SerialGaussSeidel(A_, Diagonal_, localSmoothingIndices_, DampingFactor_));
     }
   } // end TimeMonitor scope
 
@@ -1552,14 +1572,12 @@ ApplyInverseSerialGS (const Tpetra::MultiVector<scalar_type,local_ordinal_type,g
   // declaration in Ifpack2_Relaxation_decl.hpp header file.  The code
   // will still be correct if the cast fails, but it will use an
   // unoptimized kernel.
-  const block_crs_matrix_type* blockCrsMat =
-    dynamic_cast<const block_crs_matrix_type*> (A_.getRawPtr ());
-  const crs_matrix_type* crsMat =
-    dynamic_cast<const crs_matrix_type*> (A_.getRawPtr ());
-  if (blockCrsMat != nullptr)  {
+  auto blockCrsMat = Teuchos::rcp_dynamic_cast<const block_crs_matrix_type> (A_);
+  auto crsMat = Teuchos::rcp_dynamic_cast<const crs_matrix_type> (A_);
+  if (blockCrsMat.get())  {
     const_cast<this_type&> (*this).ApplyInverseSerialGS_BlockCrsMatrix (*blockCrsMat, X, Y, direction);
   }
-  else if (crsMat != nullptr) {
+  else if (crsMat.get()) {
     ApplyInverseSerialGS_CrsMatrix (*crsMat, X, Y, direction);
   }
   else {
@@ -2080,7 +2098,7 @@ ApplyInverseMTGS_CrsMatrix(
       */
   }
 
-  local_matrix_type kcsr = crsMat->getLocalMatrix ();
+  local_matrix_device_type kcsr = crsMat->getLocalMatrixDevice ();
 
   bool update_y_vector = true;
   //false as it was done up already, and we dont want to zero it in each sweep.

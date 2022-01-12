@@ -401,8 +401,8 @@ sumIntoGlobalValues (const GO globalRowIndex,
 #ifdef TPETRA_ENABLE_DEPRECATED_CODE
 
 template<class Scalar, class LO, class GO, class Node>
+TPETRA_DEPRECATED
 bool
-// TPETRA_DEPRECATED
 BlockMultiVector<Scalar, LO, GO, Node>::
 getLocalRowView (const LO localRowIndex, const LO colIndex, Scalar*& vals)
 {
@@ -416,8 +416,8 @@ getLocalRowView (const LO localRowIndex, const LO colIndex, Scalar*& vals)
 }
 
 template<class Scalar, class LO, class GO, class Node>
+TPETRA_DEPRECATED
 bool
-// TPETRA_DEPRECATED
 BlockMultiVector<Scalar, LO, GO, Node>::
 getGlobalRowView (const GO globalRowIndex, const LO colIndex, Scalar*& vals)
 {
@@ -432,8 +432,8 @@ getGlobalRowView (const GO globalRowIndex, const LO colIndex, Scalar*& vals)
 }
 
 template<class Scalar, class LO, class GO, class Node>
+TPETRA_DEPRECATED
 typename BlockMultiVector<Scalar, LO, GO, Node>::little_host_vec_type
-// TPETRA_DEPRECATED
 BlockMultiVector<Scalar, LO, GO, Node>::
 getLocalBlock (const LO localRowIndex,
                const LO colIndex)
@@ -571,8 +571,7 @@ packAndPrepare
  buffer_device_type>& exports,
  Kokkos::DualView<size_t*,
  buffer_device_type> numPacketsPerLID,
- size_t& constantNumPackets,
- Distributor& distor)
+ size_t& constantNumPackets)
 {
   TEUCHOS_TEST_FOR_EXCEPTION
     (true, std::logic_error,
@@ -590,7 +589,6 @@ unpackAndCombine
  Kokkos::DualView<size_t*,
  buffer_device_type> numPacketsPerLID,
  const size_t constantNumPackets,
- Distributor& distor,
  const CombineMode combineMode)
 {
   TEUCHOS_TEST_FOR_EXCEPTION
@@ -823,7 +821,6 @@ blockWiseMultiply (const Scalar& alpha,
 {
   using Kokkos::ALL;
   typedef typename device_type::execution_space execution_space;
-  typedef typename device_type::memory_space memory_space;
   const LO lclNumMeshRows = meshMap_.getNodeNumElements ();
 
   if (alpha == STS::zero ()) {
@@ -857,7 +854,6 @@ blockJacobiUpdate (const Scalar& alpha,
 {
   using Kokkos::ALL;
   using Kokkos::subview;
-  typedef typename device_type::memory_space memory_space;
   typedef impl_scalar_type IST;
 
   const IST alphaImpl = static_cast<IST> (alpha);

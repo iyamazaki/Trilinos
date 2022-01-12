@@ -84,8 +84,7 @@ namespace { // (anonymous)
     const GO gblNumCols = static_cast<GO> (rowMap->getGlobalNumElements ());
     // Create the graph structure of the sparse matrix.
     RCP<graph_type> G =
-      rcp (new graph_type (rowMap, numEntPerRow,
-                           Tpetra::StaticProfile));
+      rcp (new graph_type (rowMap, numEntPerRow));
     // Fill in the sparse graph.
     Teuchos::Array<GO> gblColInds (numEntPerRow);
     for (LO lclRow = 0; lclRow < lclNumRows; ++lclRow) { // for each of my rows
@@ -144,7 +143,7 @@ namespace { // (anonymous)
 
     // Fill in the block sparse matrix.
     for (LO lclRow = 0; lclRow < lclNumRows; ++lclRow) { // for each of my rows
-      Teuchos::ArrayView<const LO> lclColInds;
+      typename matrix_type::local_inds_host_view_type lclColInds;
       graph->getLocalRowView (lclRow, lclColInds);
 
       // Put some entries in the matrix.

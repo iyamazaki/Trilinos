@@ -1,36 +1,22 @@
 /*
- * Copyright(C) 1999-2020 National Technology & Engineering Solutions
+ * Copyright(C) 1999-2021 National Technology & Engineering Solutions
  * of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
  * NTESS, the U.S. Government retains certain rights in this software.
  *
  * See packages/seacas/LICENSE for details
  */
 #include "Ioss_CodeTypes.h"
-#include "Ioss_FileInfo.h"
 #include "Ioss_GetLongOpt.h" // for GetLongOption, etc
+#include "Ioss_Utils.h"
 #include "fmt/ostream.h"
 #include "info_interface.h"
+
 #include <cstddef>  // for nullptr
 #include <cstdlib>  // for exit, EXIT_SUCCESS, getenv
 #include <iostream> // for operator<<, basic_ostream, etc
 #include <string>   // for char_traits, string
 
 namespace {
-  std::string get_type_from_file(const std::string &filename)
-  {
-    Ioss::FileInfo file(filename);
-    auto           extension = file.extension();
-    if (extension == "e" || extension == "g" || extension == "gen" || extension == "exo") {
-      return "exodus";
-    }
-    else if (extension == "cgns") {
-      return "cgns";
-    }
-    else {
-      // "exodus" is default...
-      return "exodus";
-    }
-  }
 } // namespace
 
 Info::Interface::Interface() { enroll_options(); }
@@ -95,7 +81,7 @@ void Info::Interface::enroll_options()
 
   options_.enroll("surface_split_scheme", Ioss::GetLongOption::MandatoryValue,
                   "Method used to split sidesets into homogeneous blocks\n"
-                  "\t\tOptions are: TOPOLOGY, BLOCK, NOSPLIT",
+                  "\t\tOptions are: TOPOLOGY, BLOCK, NO_SPLIT",
                   "TOPOLOGY", nullptr, true);
 
 #if defined(SEACAS_HAVE_MPI)
@@ -224,7 +210,8 @@ bool Info::Interface::parse_options(int argc, char **argv)
       else if (std::strcmp(temp, "BLOCK") == 0) {
         surfaceSplitScheme_ = 2;
       }
-      else if (std::strcmp(temp, "NO_SPLIT") == 0) {
+      else if (std::strcmp(temp, "NO_SPLIT") == 0 || std::strcmp(temp, "NOSPLIT") == 0) {
+        // Backward compatibility using "NOSPLIT" after bug fix...
         surfaceSplitScheme_ = 3;
       }
     }
@@ -323,7 +310,7 @@ bool Info::Interface::parse_options(int argc, char **argv)
     }
 
     if (filetype_ == "unknown") {
-      filetype_ = get_type_from_file(filename_);
+      filetype_ = Ioss::Utils::get_type_from_file(filename_);
     }
   }
 

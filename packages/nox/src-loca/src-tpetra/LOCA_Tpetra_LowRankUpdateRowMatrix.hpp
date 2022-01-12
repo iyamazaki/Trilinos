@@ -92,6 +92,25 @@ namespace LOCA {
       virtual bool supportsRowViews() const override;
       virtual void
       getGlobalRowCopy (NOX::GlobalOrdinal GlobalRow,
+                        NOX::TRowMatrix::nonconst_global_inds_host_view_type &Indices,
+                        NOX::TRowMatrix::nonconst_values_host_view_type &Values,
+                        size_t &NumEntries) const override;
+      virtual void
+      getLocalRowCopy (NOX::LocalOrdinal LocalRow,
+                        NOX::TRowMatrix::nonconst_local_inds_host_view_type &Indices,
+                        NOX::TRowMatrix::nonconst_values_host_view_type &Values,
+                       size_t &NumEntries) const override;
+      virtual void
+      getGlobalRowView (NOX::GlobalOrdinal GlobalRow,
+                        NOX::TRowMatrix::global_inds_host_view_type &Indices,
+                        NOX::TRowMatrix::values_host_view_type &Values) const override;
+      virtual void
+      getLocalRowView (NOX::LocalOrdinal LocalRow,
+                       NOX::TRowMatrix::local_inds_host_view_type &Indices,
+                       NOX::TRowMatrix::values_host_view_type &Values) const override;
+#ifdef TPETRA_ENABLE_DEPRECATED_CODE 
+      virtual void
+      getGlobalRowCopy (NOX::GlobalOrdinal GlobalRow,
                         const Teuchos::ArrayView<NOX::GlobalOrdinal> &Indices,
                         const Teuchos::ArrayView<NOX::Scalar> &Values,
                         size_t &NumEntries) const override;
@@ -108,6 +127,7 @@ namespace LOCA {
       getLocalRowView (NOX::LocalOrdinal LocalRow,
                        Teuchos::ArrayView<const NOX::LocalOrdinal>& indices,
                        Teuchos::ArrayView<const NOX::Scalar>& values) const override;
+#endif
 
       // Use the default implementation!
       // virtual NOX::LocalOrdinal
@@ -133,13 +153,13 @@ namespace LOCA {
       //***************************************
       // Derived from Tpetra::Operator interface
       //***************************************
-      virtual Teuchos::RCP<const NOX::TMap> getDomainMap() const;
-      virtual Teuchos::RCP<const NOX::TMap> getRangeMap() const;
+      virtual Teuchos::RCP<const NOX::TMap> getDomainMap() const override;
+      virtual Teuchos::RCP<const NOX::TMap> getRangeMap() const override;
       virtual void apply(const NOX::TMultiVector &X,
                          NOX::TMultiVector &Y,
                          Teuchos::ETransp mode = Teuchos::NO_TRANS,
                          NOX::Scalar alpha = Teuchos::ScalarTraits<NOX::Scalar>::one(),
-                         NOX::Scalar beta = Teuchos::ScalarTraits<NOX::Scalar>::zero()) const;
+                         NOX::Scalar beta = Teuchos::ScalarTraits<NOX::Scalar>::zero()) const override;
 
     protected:
 
@@ -158,12 +178,6 @@ namespace LOCA {
 
       //! Stores pointer to non-const V
       Teuchos::RCP<NOX::TMultiVector> nonconst_V;
-
-      //! View of U
-      const typename NOX::TMultiVector::dual_view_type::t_dev U_DeviceView;
-
-      //! View of V
-      const typename NOX::TMultiVector::dual_view_type::t_dev V_DeviceView;
 
       //! Flag indicating whether to include U*V^T terms
       bool includeUV;

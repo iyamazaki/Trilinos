@@ -34,6 +34,7 @@
 #include "stk_util/parallel/ParallelComm.hpp"
 #include "stk_util/parallel/ParallelReduce.hpp"  // for Reduce, ReduceEnd, ReduceMax, ReduceBitOr
 #include "stk_util/util/SimpleArrayOps.hpp"      // for Max, BitOr, Min
+#include "stk_util/util/ReportHandler.hpp"
 #include <cstdlib>                               // for free, malloc
 #include <iostream>                              // for operator<<, basic_ostream::operator<<
 #include <new>                                   // for operator new
@@ -51,19 +52,6 @@ namespace stk {
 enum { STK_MPI_TAG_SIZING = 0 , STK_MPI_TAG_DATA = 1 };
 
 #endif
-
-//----------------------------------------------------------------------
-
-namespace {
-
-inline
-size_t align_quad( size_t n )
-{
-  enum { Size = 4 * sizeof(int) };
-  return n + CommBufferAlign<Size>::align(n);
-}
-
-}
 
 //----------------------------------------------------------------------
 
@@ -98,61 +86,6 @@ void CommBuffer::set_buffer_ptrs(unsigned char* begin, unsigned char* ptr, unsig
   m_end = end;
 }
 
-#ifndef STK_HIDE_DEPRECATED_CODE // Delete after June 2021
-STK_DEPRECATED void CommBuffer::deallocate( const unsigned number , CommBuffer * buffers )
-{
-  if ( nullptr != buffers ) {
-    for ( unsigned i = 0 ; i < number ; ++i ) {
-      ( buffers + i )->~CommBuffer();
-    }
-    free( buffers );
-  }
-}
-
-STK_DEPRECATED CommBuffer * CommBuffer::allocate(
-  const unsigned number , const unsigned * const size )
-{
-  const size_t n_base = align_quad( number * sizeof(CommBuffer) );
-  size_t n_size = n_base ;
-
-  if ( nullptr != size ) {
-    for ( unsigned i = 0 ; i < number ; ++i ) {
-      n_size += align_quad( size[i] );
-    }
-  }
-
-  // Allocate space for buffers
-
-  void * const p_malloc = malloc( n_size );
-
-  CommBuffer * const b_base =
-    p_malloc != nullptr ? reinterpret_cast<CommBuffer*>(p_malloc)
-                        : reinterpret_cast<CommBuffer*>( NULL );
-
-  if ( p_malloc != nullptr ) {
-
-    for ( unsigned i = 0 ; i < number ; ++i ) {
-      new( b_base + i ) CommBuffer();
-    }
-
-    if ( nullptr != size ) {
-
-      ucharp ptr = reinterpret_cast<ucharp>( p_malloc );
-
-      ptr += n_base ;
-
-      for ( unsigned i = 0 ; i < number ; ++i ) {
-        CommBuffer & b = b_base[i] ;
-        b.set_buffer_ptrs(ptr, ptr, ptr + size[i]);
-        ptr += align_quad( size[i] );
-      }
-    }
-  }
-
-  return b_base ;
-}
-#endif
-
 //----------------------------------------------------------------------
 //----------------------------------------------------------------------
 
@@ -178,12 +111,7 @@ bool CommBroadcast::allocate_buffer( const bool local_flag )
                        ReduceMax<1>( & root_send_size ) &
                        ReduceBitOr<1>( & flag ) );
 
-  if ( root_rank_min != root_rank_max ) {
-    std::string msg ;
-    msg.append( method );
-    msg.append( " FAILED: inconsistent root processor" );
-    throw std::runtime_error( msg );
-  }
+  ThrowRequireMsg(root_rank_min == root_rank_max, method << " FAILED: inconsistent root processor");
 
   unsigned char* ptr = static_cast<CommBuffer::ucharp>( malloc( root_send_size ) );
   m_buffer.set_buffer_ptrs(ptr, ptr, ptr + root_send_size);
@@ -208,12 +136,7 @@ CommBuffer & CommBroadcast::send_buffer()
 {
   static const char method[] = "stk::CommBroadcast::send_buffer" ;
 
-  if ( m_root_rank != m_rank ) {
-    std::string msg ;
-    msg.append( method );
-    msg.append( " FAILED: is not root processor" );
-    throw std::runtime_error( msg );
-  }
+  ThrowRequireMsg(m_root_rank == m_rank, method << " FAILED: is not root processor");
 
   return m_buffer ;
 }
@@ -227,12 +150,7 @@ void CommBroadcast::communicate()
 
     const int result = MPI_Bcast( buf, count, MPI_BYTE, m_root_rank, m_comm);
 
-    if ( MPI_SUCCESS != result ) {
-      std::ostringstream msg ;
-      msg << "stk::CommBroadcast::communicate ERROR : "
-          << result << " == MPI_Bcast" ;
-      throw std::runtime_error( msg.str() );
-    }
+    ThrowRequireMsg(MPI_SUCCESS == result, "stk::CommBroadcast::communicate ERROR: " << result << " from MPI_Bcast");
   }
 #endif
 

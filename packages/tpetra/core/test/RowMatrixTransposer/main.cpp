@@ -48,16 +48,13 @@
 
 template<class CrsMatrix_t>
 typename CrsMatrix_t::scalar_type getNorm(CrsMatrix_t& matrix){
-  typedef typename CrsMatrix_t::local_ordinal_type LO;
   typedef typename CrsMatrix_t::scalar_type Scalar;
   Scalar mySum = 0;
 
-  Teuchos::Array<LO> inds(matrix.getNodeMaxNumRowEntries());
-  Teuchos::Array<Scalar> vals(matrix.getNodeMaxNumRowEntries());
   for(int i =0; ((size_t)i)<matrix.getNodeNumRows(); ++i){
     size_t numRowEnts = matrix.getNumEntriesInLocalRow(i);
-    Teuchos::ArrayView<const LO> indsView = inds();
-    Teuchos::ArrayView<const Scalar> valsView = vals();
+    typename CrsMatrix_t::local_inds_host_view_type indsView;
+    typename CrsMatrix_t::values_host_view_type valsView;
     matrix.getLocalRowView(i, indsView, valsView);
     for(size_t j=0; ((size_t)j)<numRowEnts; ++j){
       mySum += valsView[j]*valsView[j];
@@ -135,8 +132,8 @@ main (int argc, char* argv[])
   }
 
   // Create a Tpetra::CrsMatrix using the Map, with a static allocation dictated by NumNz
-  crs_matrix_type A (map, NumNz (), Tpetra::StaticProfile);
-  crs_matrix_type AT(map, NumNz (), Tpetra::StaticProfile);
+  crs_matrix_type A (map, NumNz ());
+  crs_matrix_type AT(map, NumNz ());
   RCP< crs_matrix_type > TestMatrix = Teuchos::null;
 
   // We are done with NumNZ

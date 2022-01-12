@@ -1,4 +1,4 @@
-// Copyright(C) 1999-2020 National Technology & Engineering Solutions
+// Copyright(C) 1999-2021 National Technology & Engineering Solutions
 // of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
 // NTESS, the U.S. Government retains certain rights in this software.
 //
@@ -82,6 +82,17 @@ namespace Ioss {
     return count;
   }
 
+  /** \brief Get the names of variable types known to IOSS.
+   *
+   *  \returns The list of known variable type names.
+   */
+  Ioss::NameList VariableType::describe()
+  {
+    Ioss::NameList names;
+    describe(&names);
+    return names;
+  }
+
   bool VariableType::add_field_type_mapping(const std::string &raw_field,
                                             const std::string &raw_type)
   {
@@ -96,7 +107,7 @@ namespace Ioss {
     return registry().customFieldTypes.insert(std::make_pair(field, type)).second;
   }
 
-  bool VariableType::create_named_suffix_field_type(const std::string &             type_name,
+  bool VariableType::create_named_suffix_field_type(const std::string              &type_name,
                                                     const std::vector<std::string> &suffices)
   {
     size_t count = suffices.size();
@@ -165,10 +176,8 @@ namespace Ioss {
 
   const VariableType *VariableType::factory(const std::vector<Suffix> &suffices)
   {
-    size_t size = suffices.size();
-    // Maximum suffix size is currently 5.
-    assert(size < 100000);
-    const VariableType *ivt = nullptr;
+    size_t              size = suffices.size();
+    const VariableType *ivt  = nullptr;
     if (size <= 1) {
       return nullptr; // All storage types must have at least 2 components.
     }
@@ -193,7 +202,7 @@ namespace Ioss {
       size_t width = Ioss::Utils::number_width(size);
       for (size_t i = 0; i < size; i++) {
         std::string digits = fmt::format("{:0{}}", i + 1, width);
-        if (!Ioss::Utils::str_equal(&suffices[i].m_data[0], digits)) {
+        if (!Ioss::Utils::str_equal(suffices[i].m_data, digits)) {
           match = false;
           break;
         }
@@ -297,7 +306,7 @@ namespace Ioss {
 
   std::string VariableType::numeric_label(int which, int ncomp, const std::string &name)
   {
-    if (ncomp >= 100000) {
+    if (ncomp >= 100'000) {
       std::ostringstream errmsg;
       fmt::print(errmsg,
                  "ERROR: Variable '{}' has {:L} components which is larger than the current maximum"

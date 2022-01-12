@@ -393,7 +393,10 @@ void process_edges(stk::mesh::BulkData& bulk, std::vector<INT>& edge_ids, std::v
             }
             bulk.declare_relation(edge, node, j, perm, scratch1, scratch2, scratch3);
         }
-        stk::mesh::impl::connect_edge_to_elements(bulk, edge);
+        bool connectedElems = stk::mesh::impl::connect_edge_to_elements(bulk, edge);
+        if (!connectedElems) {
+          bulk.destroy_entity(edge);
+        }
     }
 }
 
@@ -676,12 +679,12 @@ void populate_hidden_nodesets(Ioss::Region &io, const stk::mesh::MetaData & meta
     }
 }
 
-stk::mesh::Part* get_part_from_alias(const Ioss::Region &region, const stk::mesh::MetaData &meta, const std::string &name)
+stk::mesh::Part* get_part_from_alias(const Ioss::Region &region, const stk::mesh::MetaData &meta, const std::string &name, Ioss::EntityType type)
 {
     stk::mesh::Part* part = nullptr;
 
     std::vector<std::string> aliases;
-    region.get_aliases(name, aliases);
+    region.get_aliases(name, type, aliases);
 
     for(std::string &alias : aliases)
     {
@@ -702,9 +705,10 @@ stk::mesh::Part* get_part_for_grouping_entity(const Ioss::Region &region, const 
 {
     const std::string &name = entity->name();
     stk::mesh::Part* part = meta.get_part(name);
+    auto type = entity->type();
 
     if(nullptr == part) {
-        part = get_part_from_alias(region, meta, name);
+      part = get_part_from_alias(region, meta, name, type);
     }
     return part;
 }

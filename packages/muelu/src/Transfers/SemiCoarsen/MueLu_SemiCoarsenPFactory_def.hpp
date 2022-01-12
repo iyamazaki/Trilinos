@@ -74,11 +74,11 @@ namespace MueLu {
 #undef  SET_VALID_ENTRY
     validParamList->set< RCP<const FactoryBase> >("A",               Teuchos::null, "Generating factory of the matrix A");
     validParamList->set< RCP<const FactoryBase> >("Nullspace",       Teuchos::null, "Generating factory of the nullspace");
-    validParamList->set< RCP<const FactoryBase> >("Coordinates",     Teuchos::null, "Generating factory for coorindates");
+    validParamList->set< RCP<const FactoryBase> >("Coordinates",     Teuchos::null, "Generating factory for coordinates");
 
-    validParamList->set< RCP<const FactoryBase> >("LineDetection_VertLineIds", Teuchos::null, "Generating factory for LineDetection information");
-    validParamList->set< RCP<const FactoryBase> >("LineDetection_Layers",      Teuchos::null, "Generating factory for LineDetection information");
-    validParamList->set< RCP<const FactoryBase> >("CoarseNumZLayers",          Teuchos::null, "Generating factory for LineDetection information");
+    validParamList->set< RCP<const FactoryBase> >("LineDetection_VertLineIds", Teuchos::null, "Generating factory for LineDetection vertical line ids");
+    validParamList->set< RCP<const FactoryBase> >("LineDetection_Layers",      Teuchos::null, "Generating factory for LineDetection layer ids");
+    validParamList->set< RCP<const FactoryBase> >("CoarseNumZLayers",          Teuchos::null, "Generating factory for number of coarse z-layers");
 
     return validParamList;
   }
@@ -108,7 +108,6 @@ namespace MueLu {
       if (myCoordsFact == Teuchos::null) { myCoordsFact = fineLevel.GetFactoryManager()->GetFactory("Coordinates"); }
       if (fineLevel.IsAvailable("Coordinates", myCoordsFact.get())) {
         fineLevel.DeclareInput("Coordinates", myCoordsFact.get(), this);
-        bTransferCoordinates_ = true;
       }
     }
   }
@@ -174,7 +173,6 @@ namespace MueLu {
 
     // transfer coordinates
     if(bTransferCoordinates_) {
-      //Teuchos::FancyOStream> out = Teuchos::fancyOStream(Teuchos::rcpFromRef(std::cout));
       typedef Xpetra::MultiVector<typename Teuchos::ScalarTraits<Scalar>::coordinateType,LO,GO,NO> xdMV;
       RCP<xdMV>    fineCoords = Teuchos::null;
       if (fineLevel.GetLevelID() == 0 &&
@@ -221,12 +219,6 @@ namespace MueLu {
       // number of vertical lines on current node:
       LO numVertLines = Nnodes / FineNumZLayers;
       LO numLocalCoarseNodes = numVertLines * myCoarseZLayers;
-
-      //std::cout << "rowMap elements: " << rowMap->getNodeNumElements() << std::endl;
-      //std::cout << "fineCoords: " << fineCoords->getNodeNumElements() << std::endl;
-      //std::cout << "TVertLineId.size(): " << TVertLineId.size() << std::endl;
-      //std::cout << "numVertLines=" << numVertLines << std::endl;
-      //std::cout << "numLocalCoarseNodes=" << numLocalCoarseNodes << std::endl;
 
       RCP<const Map>   coarseCoordMap =
           MapFactory::Build (fineCoords->getMap()->lib(),
@@ -416,6 +408,7 @@ namespace MueLu {
 
     for (i = 0; i < Ntotal*DofsPerNode; i++)
       valptr[i]= LayerId[i/DofsPerNode];
+    valptr=ArrayRCP<LO>();
 
     RCP< const Import> importer;
     importer = Amat->getCrsGraph()->getImporter();
@@ -428,9 +421,12 @@ namespace MueLu {
     for (i = 0; i < Ntotal*DofsPerNode+Nghost; i++) Layerdofs[i]= valptr[i];
     valptr= localdtemp->getDataNonConst(0);
     for (i = 0; i < Ntotal*DofsPerNode;        i++) valptr[i]= i%DofsPerNode;
+    valptr=ArrayRCP<LO>();
     dtemp->doImport(*localdtemp, *(importer), Xpetra::INSERT);
+
     valptr= dtemp->getDataNonConst(0);
     for (i = 0; i < Ntotal*DofsPerNode+Nghost; i++) Col2Dof[i]= valptr[i];
+    valptr=ArrayRCP<LO>();
 
     if (Ntotal != 0) {
       NLayers   = LayerId[0];
@@ -814,12 +810,12 @@ namespace MueLu {
       if (nnz != 0) vals = ArrayView<Scalar>(const_cast<Scalar*>(vals1.getRawPtr()), nnz);
 
       LO largestIndex = -1;
-      Scalar largestValue = 0.0;
+      Scalar largestValue = ZERO;
       /* find largest value in row and change that one to a 1 while the others are set to 0 */
 
       LO rowDof = i%BlkSize;
       for (size_t j =0; j < nnz; j++) {
-        if (Teuchos::ScalarTraits<SC>::magnitude(vals[ j ]) > Teuchos::ScalarTraits<SC>::magnitude(largestValue)) {
+        if (Teuchos::ScalarTraits<SC>::magnitude(vals[ j ]) >= Teuchos::ScalarTraits<SC>::magnitude(largestValue)) {
           if ( inds[j]%BlkSize == rowDof ) {
             largestValue = vals[j]; 
             largestIndex = (int) j;
@@ -828,8 +824,10 @@ namespace MueLu {
         vals[j] = ZERO;
       }
       if (largestIndex != -1) vals[largestIndex] = ONE; 
-      else 
+      else
         TEUCHOS_TEST_FOR_EXCEPTION(nnz > 0, Exceptions::RuntimeError, "no nonzero column associated with a proper dof within node.");
+
+      if (Teuchos::ScalarTraits<SC>::magnitude(largestValue) == Teuchos::ScalarTraits<SC>::magnitude(ZERO)) vals[largestIndex] = ZERO;
     }
   }
 

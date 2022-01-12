@@ -103,8 +103,7 @@ namespace {
     const GO gblNumCols = static_cast<GO> (rowMap->getGlobalNumElements ());
 
     RCP<graph_type> G =
-      rcp (new graph_type (rowMap, numEntPerRow,
-                           Tpetra::StaticProfile));
+      rcp (new graph_type (rowMap, numEntPerRow));
 
     Teuchos::Array<GO> gblColInds (numEntPerRow);
     for (LO lclRow = 0; lclRow < NumRows; ++lclRow) {
@@ -148,7 +147,7 @@ namespace {
 
     // Fill in the block sparse matrix.
     for (LO lclRow = 0; lclRow < lclNumRows; ++lclRow) { // for each of my rows
-      Teuchos::ArrayView<const LO> lclColInds;
+      typename graph_type::local_inds_host_view_type lclColInds;
       G->getLocalRowView (lclRow, lclColInds);
 
       // Put some entries in the matrix.

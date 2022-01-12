@@ -73,7 +73,7 @@ namespace MueLu {
   BuildAggregates(const Teuchos::ParameterList& params,
                   const LWGraph_kokkos& graph,
                   Aggregates_kokkos& aggregates,
-                  Kokkos::View<unsigned*, typename LWGraph_kokkos::memory_space>& aggStat,
+                  Kokkos::View<unsigned*, typename LWGraph_kokkos::device_type>& aggStat,
                   LO& numNonAggregatedNodes) const {
 
     int minNodesPerAggregate    = params.get<int>        ("aggregation: min agg size");
@@ -106,20 +106,20 @@ namespace MueLu {
   BuildAggregatesRandom(const LO maxAggSize,
                         const LWGraph_kokkos& graph,
                         Aggregates_kokkos& aggregates,
-                        Kokkos::View<unsigned*, typename LWGraph_kokkos::memory_space>& aggStat,
+                        Kokkos::View<unsigned*, typename LWGraph_kokkos::device_type>& aggStat,
                         LO& numNonAggregatedNodes) const
   {
     const LO  numRows = graph.GetNodeNumVertices();
     const int myRank  = graph.GetComm()->getRank();
 
     // Extract data from aggregates
-    auto vertex2AggId = aggregates.GetVertex2AggId()->getDeviceLocalView();
-    auto procWinner   = aggregates.GetProcWinner()  ->getDeviceLocalView();
+    auto vertex2AggId = aggregates.GetVertex2AggId()->getDeviceLocalView(Xpetra::Access::ReadWrite);
+    auto procWinner   = aggregates.GetProcWinner()  ->getDeviceLocalView(Xpetra::Access::ReadWrite);
     auto colors       = aggregates.GetGraphColors();
 
     LO numAggregatedNodes = 0;
     LO numLocalAggregates = aggregates.GetNumAggregates();
-    Kokkos::View<LO, memory_space> aggCount("aggCount");
+    Kokkos::View<LO, device_type> aggCount("aggCount");
     Kokkos::deep_copy(aggCount, numLocalAggregates);
     Kokkos::parallel_for("Aggregation Phase 1: initial reduction over color == 1",
                          Kokkos::RangePolicy<LO, execution_space>(0, numRows),
@@ -142,7 +142,7 @@ namespace MueLu {
     // Note lbv 12-21-17: I am pretty sure that the aggregates will always be of size 1
     //                    at this point so we could simplify the code below a lot if this
     //                    assumption is correct...
-    Kokkos::View<LO*, memory_space> aggSizesView("aggSizes", numLocalAggregates);
+    Kokkos::View<LO*, device_type> aggSizesView("aggSizes", numLocalAggregates);
     {
       // Here there is a possibility that two vertices assigned to two different threads contribute
       // to the same aggregate if somethings happened before phase 1?
@@ -207,26 +207,26 @@ namespace MueLu {
   BuildAggregatesDeterministic(const LO maxAggSize,
                                const LWGraph_kokkos& graph,
                                Aggregates_kokkos& aggregates,
-                               Kokkos::View<unsigned*, typename LWGraph_kokkos::memory_space>& aggStat,
+                               Kokkos::View<unsigned*, typename LWGraph_kokkos::device_type>& aggStat,
                                LO& numNonAggregatedNodes) const
   {
     const LO  numRows = graph.GetNodeNumVertices();
     const int myRank  = graph.GetComm()->getRank();
 
-    auto vertex2AggId = aggregates.GetVertex2AggId()->getDeviceLocalView();
-    auto procWinner   = aggregates.GetProcWinner()  ->getDeviceLocalView();
+    auto vertex2AggId = aggregates.GetVertex2AggId()->getDeviceLocalView(Xpetra::Access::ReadWrite);
+    auto procWinner   = aggregates.GetProcWinner()  ->getDeviceLocalView(Xpetra::Access::ReadWrite);
     auto colors       = aggregates.GetGraphColors();
 
     LO numLocalAggregates = aggregates.GetNumAggregates();
-    Kokkos::View<LO, memory_space> numLocalAggregatesView("Num aggregates");
+    Kokkos::View<LO, device_type> numLocalAggregatesView("Num aggregates");
     {
       auto h_nla = Kokkos::create_mirror_view(numLocalAggregatesView);
       h_nla() = numLocalAggregates;
       Kokkos::deep_copy(numLocalAggregatesView, h_nla);
     }
 
-    Kokkos::View<LO*, memory_space> newRoots("New root LIDs", numNonAggregatedNodes);
-    Kokkos::View<LO, memory_space> numNewRoots("Number of new aggregates of current color");
+    Kokkos::View<LO*, device_type> newRoots("New root LIDs", numNonAggregatedNodes);
+    Kokkos::View<LO, device_type> numNewRoots("Number of new aggregates of current color");
     auto h_numNewRoots = Kokkos::create_mirror_view(numNewRoots);
 
     //first loop build the set of new roots

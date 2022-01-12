@@ -128,6 +128,7 @@
 #include "SetupRegionVector_def.hpp"
 #include "SetupRegionMatrix_def.hpp"
 #include "SetupRegionHierarchy_def.hpp"
+#include "SolveRegionHierarchy_def.hpp"
 
 
 template<class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
@@ -700,7 +701,7 @@ int main_(Teuchos::CommandLineProcessor &clp, Xpetra::UnderlyingLib& lib, int ar
                         keepCoarseCoords);
 
   hierarchyData->print();
-  
+
 
 
   comm->barrier();
@@ -830,7 +831,7 @@ int main_(Teuchos::CommandLineProcessor &clp, Xpetra::UnderlyingLib& lib, int ar
       regCorrect->putScalar(SC_ZERO);
     // Get Stuff out of Hierarchy
     RCP<MueLu::Level> level = regHierarchy->GetLevel(0);
-    RCP<Xpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal> > regInterfaceScalings = level->Get<RCP<Xpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal> > >("regInterfaceScalings");
+    RCP<Xpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node> > regInterfaceScalings = level->Get<RCP<Xpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node> > >("regInterfaceScalings");
       // check for convergence
       {
         ////////////////////////////////////////////////////////////////////////
