@@ -370,6 +370,7 @@ protected:
       if (orthoType == "TSQR") {
         params = Teuchos::rcp (new Teuchos::ParameterList());
         params->set ("forceNonnegativeDiagonal", true);
+        params->set ("relativeRankTolerance", STS::zero ());
       }
       else if (this->input_.maxOrthoSteps > 0) {
         params = Teuchos::rcp (new Teuchos::ParameterList());

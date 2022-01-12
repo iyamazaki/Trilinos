@@ -57,6 +57,9 @@ private:
   using blas_type = Teuchos::BLAS<LO, SC>;
   using lapack_type = Teuchos::LAPACK<LO, SC>;
 
+  bool useSVQR;
+  int numReFacto;
+
 public:
   /// \typedef FactorOutput
   /// \brief Return value of \c factor().
@@ -70,13 +73,27 @@ public:
   using mag_type = typename STS::magnitudeType;
   using STM = Teuchos::ScalarTraits<mag_type>;
   using dense_matrix_type = Teuchos::SerialDenseMatrix<LO, SC>;
+  using dense_vector_type = Teuchos::SerialDenseVector<LO, SC>;
+
+  /// \brief Default constructor
+  ///
+  CholQR () :
+  numReFacto (0),
+  useSVQR (false)
+  {}
 
   /// \brief Constructor
   ///
-  /// \param theCacheSizeHint [in] Cache size hint in bytes.  If 0,
-  ///   the implementation will pick a reasonable size, which may be
-  ///   queried by calling cache_size_hint().
-  CholQR () = default;
+  CholQR (bool useSVQR_) :
+  numReFacto (0),
+  useSVQR (useSVQR_)
+  { std::cout << " CholQR (" << (useSVQR ? "SVQR)" : "CHOLQR)") << std::endl; }
+
+  /// \brief Return number of reecursive CholQR
+  int
+  getNumReFacto () {
+    return numReFacto;
+  }
 
   /// \brief Compute the QR factorization of the matrix A.
   ///
@@ -119,7 +136,98 @@ public:
       auto R_h = R_mv.getLocalViewHost (Tpetra::Access::ReadWrite);
       int ldr = int (R_h.extent (0));
       SC *Rdata = reinterpret_cast<SC*> (R_h.data ());
-      lapack.POTRF ('U', ncols, Rdata, ldr, &info);
+      std::cout << " G = [" << std::endl;
+      for (size_t i=0; i<ncols; i++) {
+        for (size_t j=0; j<ncols; j++) {
+          //std::cout << R_h(i,j) << " ";
+          printf("%.16e ",R_h(i,j));
+        }
+        std::cout << std::endl;
+        printf("\n");
+      }
+      std::cout << "];" << std::endl;
+      if (useSVQR) {
+        dense_vector_type S (ncols);
+        dense_matrix_type VT (ncols, ncols);
+        SC *Sdata = S.values();
+        SC *VTdata = VT.values();
+
+        // figure out workspace size
+        SC temp;
+        int ione = 1;
+        int ldvt = int (VT.stride());
+        lapack.GESVD('N', 'A', ncols, ncols, Rdata, ldr, Sdata, &temp, 1, 
+                     VTdata, ldvt, &temp, -ione, &temp, &info);
+        int lwork = int (temp);
+        lapack.GEQRF(ncols, ncols, Rdata, ldr, &temp, &temp, -ione, &info);
+        lwork = (lwork > int (temp) ? lwork : int (temp));
+
+        // diagonal scaling
+        dense_vector_type D (ncols);
+        bool diag_scale = true;
+        if (diag_scale) {
+          for (size_t i=0; i<ncols; i++) {
+            D(i) = std::sqrt(R_h(i,i));
+            for (size_t j=0; j<ncols; j++) {
+              R_h(i,j) /= D(i);
+              R_h(j,i) /= D(i);
+            }
+          }
+        }
+
+        // compute SVD
+        dense_vector_type W (lwork);
+        SC *Wdata = W.values();
+        lapack.GESVD('N', 'A', ncols, ncols, Rdata, ldr, Sdata, &temp, 1,
+                     VTdata, ldvt, Wdata, lwork, &temp, &info);
+        if (info != 0) std::cout << " ERROR : GESVD returned info = " << info << std::endl;
+        std::cout << " VT = [" << std::endl;
+        for (size_t i=0; i<ncols; i++) {
+          for (size_t j=0; j<ncols; j++) {
+            std::cout << VT(i,j) << " ";
+            //printf("%.16e ",VT(i,j));
+          }
+          //std::cout << std::endl;
+          printf("\n");
+        }
+        std::cout << "];" << std::endl;
+        std::cout << " S = [" << std::endl;
+        for (size_t i=0; i<ncols; i++) {
+          std::cout << S(i) << std::endl;
+          //printf("%.16e\n",S(i));
+        }
+        std::cout << "];" << std::endl;
+        for (size_t j=0; j<ncols; j++) {
+          for (size_t i=0; i<ncols; i++) {
+            R_h(i,j) = std::sqrt(S(i)) * VT(i, j);
+          }
+        }
+        // compute QR
+        dense_vector_type TAU (ncols);
+        SC *TAUdata = TAU.values ();
+        lapack.GEQRF(ncols, ncols, Rdata, ldr, TAUdata, Wdata, lwork, &info);
+        // zero-out lower-triangular part, and make sure positive diagonals
+        for (size_t i=0; i<ncols; i++) {
+          // zero-out lower-triangular part
+          for (size_t j=0; j<i; j++) {
+            R_h(i, j) = zero;
+          }
+          // make sure positive diagonals
+          if (R_h(i,i) < zero) {
+            for (size_t j=i; j<ncols; j++) {
+              R_h(i,j) = -R_h(i, j);
+            }
+          }
+          // apply-back diagonal scaling
+          if (diag_scale) {
+            for (size_t j=i; j<ncols; j++) {
+              R_h(i,j) *= D(j);
+            }
+          }
+        }
+      } else {
+        lapack.POTRF ('U', ncols, Rdata, ldr, &info);
+      }
       if (info > 0) {
         // FIXME (mfh 17 Sep 2018) Don't throw; report an error code.
         //ncols = info;
@@ -132,6 +240,14 @@ public:
           }
         }
       }
+      std::cout << " R = [" << std::endl;
+      for (size_t i=0; i<ncols; i++) {
+        for (size_t j=0; j<ncols; j++) {
+          std::cout << R_h(i,j) << " ";
+        }
+        std::cout << std::endl;
+      }
+      std::cout << "];" << std::endl;
     }
     // Copy to the output R
     Tpetra::deep_copy (R, R_mv);
@@ -148,12 +264,10 @@ public:
     // triangle of R.
 
     // Compute A_cur / R (Matlab notation for A_cur * R^{-1}) in place.
-    {
-      auto A_d = A.getLocalViewDevice (Tpetra::Access::ReadWrite);
-      auto R_d = R_mv.getLocalViewDevice (Tpetra::Access::ReadOnly);
-      KokkosBlas::trsm ("R", "U", "N", "N",
-                        one, R_d, A_d);
-    }
+    auto A_d = A.getLocalViewDevice (Tpetra::Access::ReadWrite);
+    auto R_d = R_mv.getLocalViewDevice (Tpetra::Access::ReadOnly);
+    KokkosBlas::trsm ("R", "U", "N", "N",
+                      one, R_d, A_d);
     return (info > 0 ? info-1 : ncols);
   }
 
@@ -166,6 +280,11 @@ public:
     int old_rank = -1;
 
     // recursively call factor while cols remaining and has made progress
+    // note: When Chol fails, CholQR puts identity on the remaining submatrix
+    //                        and performs TRSM. Hence, the remaining columns
+    //                        are orthogonalized against the columns, for which
+    //                        Chol succeeded.
+    numReFacto = 0;
     while (rank < ncols && old_rank != rank) {
       Teuchos::Range1D next_index(rank, ncols-1);
       MV nextA = * (A.subView(next_index));
@@ -175,6 +294,7 @@ public:
       auto new_rank = factor (outPtr, nextA, nextR);
       if (outPtr != nullptr) {
         if (rank > 0) {
+          numReFacto ++;
           *outPtr << "  ++ reCholQR(";
         } else {
           *outPtr << "  >>   CholQR(";
@@ -210,13 +330,16 @@ private:
 public:
   GmresSstep () :
     base_type::Gmres (),
-    useCholQR2_ (false),
+    numOrthoSteps_ (0),
+    useTSQR_1st_step_ (false),
     cholqr_ (Teuchos::null),
     tsqr_ (Teuchos::null)
   {}
 
   GmresSstep (const Teuchos::RCP<const OP>& A) :
     base_type::Gmres (A),
+    numOrthoSteps_ (0),
+    useTSQR_1st_step_ (false),
     cholqr_ (Teuchos::null),
     tsqr_ (Teuchos::null)
   {}
@@ -243,27 +366,67 @@ public:
       = params.get<bool> ("Compute Ritz Values on Fly", this->input_.computeRitzValuesOnFly);
     this->input_.computeRitzValuesOnFly = computeRitzValuesOnFly;
 
+    // intra block ortho option (CholQR is default)
     constexpr bool useCholQR_default = true;
     bool useCholQR = params.get<bool> ("CholeskyQR", useCholQR_default);
 
-    bool useCholQR2 = params.get<bool> ("CholeskyQR2", useCholQR2_);
+    constexpr bool useCholQR2_default = false;
+    bool useCholQR2 = params.get<bool> ("CholeskyQR2", useCholQR2_default);
+    if (useCholQR2) {
+      useCholQR = true;
+      numOrthoSteps_ = 2;
+    }
+
+    constexpr bool useSVQR_default = false;
+    bool useSVQR = params.get<bool> ("SVQR", useSVQR_default);
+
+    constexpr bool useSVQR2_default = false;
+    bool useSVQR2 = params.get<bool> ("SVQR2", useSVQR2_default);
+    if (useSVQR2) {
+      useSVQR = true;
+      numOrthoSteps_ = 2;
+    }
+    if (useSVQR || useSVQR2) {
+      useCholQR = false;
+      useCholQR2 = false;
+      if (!cholqr_.is_null ()) {
+        cholqr_ = Teuchos::null;
+      }
+    }
+    std::cout << std::endl << " === " << std::endl 
+              << (useCholQR ? " useCholQR" : "") << (useCholQR2 ? " useCholQR2" : "") << (useSVQR ? " useSVQR" : "") << (useSVQR2 ? " useSVQR2" : "")
+              << std::endl;
+
+    bool useTSQR_1st_step = params.get<bool> ("TSQR for initial step", useTSQR_1st_step_);
 
     std::string tsqrType
       = params.get<std::string> ("TSQR", this->input_.tsqrType);
     if (tsqrType != "none") {
       useCholQR = false;
       useCholQR2 = false;
-      this->setOrthogonalizer (tsqrType, tsqr_);
-    } else if (!tsqr_.is_null ()) {
-      tsqr_ = Teuchos::null;
-    }
 
-    if ((!useCholQR && !useCholQR2) && !cholqr_.is_null ()) {
-      cholqr_ = Teuchos::null;
-    } else if ((useCholQR || useCholQR2) && cholqr_.is_null ()) {
-      cholqr_ = Teuchos::rcp (new CholQR<SC, MV, OP> ());
+      useSVQR = false;
+      useSVQR2 = false;
+      this->setOrthogonalizer (tsqrType, tsqr_);
+    } else {
+      if (useTSQR_1st_step) {
+        this->setOrthogonalizer ("TSQR", tsqr_);
+      } else if (!tsqr_.is_null ()) {
+        tsqr_ = Teuchos::null;
+      }
     }
-    useCholQR2_ = useCholQR2;
+    useTSQR_1st_step_ = useTSQR_1st_step;
+
+    if (!useCholQR && !useSVQR) {
+      if (!cholqr_.is_null ()) {
+        cholqr_ = Teuchos::null;
+      }
+    } else if (useCholQR || useSVQR) {
+      if (cholqr_.is_null ()) {
+        cholqr_ = Teuchos::rcp (new CholQR<SC, MV, OP> (useSVQR));
+      }
+    }
+    std::cout << " === " << std::endl << std::endl;
     this->input_.tsqrType = tsqrType;
   }
 
@@ -484,9 +647,9 @@ private:
         int rank = 0;
         {
           Teuchos::TimeMonitor LocalTimer (*tsqrTimer);
-          rank = recursiveCholQR (outPtr, iter, step, Q, G);
-          if (useCholQR2_) {
-            rank = recursiveCholQR (outPtr, iter, step, Q, G2);
+          rank = recursiveCholQR (outPtr, iter, step, Q, G, output.numIters);
+          if (numOrthoSteps_ > 1 && (iter > 0 || !useTSQR_1st_step_)) {
+            rank = recursiveCholQR (outPtr, iter, step, Q, G2, output.numIters);
             // merge R 
             dense_matrix_type Rfix (Teuchos::View, G2, step+1, step+1, iter, 0);
             dense_matrix_type Rold (Teuchos::View, G,  step+1, step+1, iter, 0);
@@ -542,6 +705,10 @@ private:
           }
         }
         else {
+          if (outPtr != nullptr) {
+            *outPtr << " >  H(" << iter+step << ", " << iter+step-1 << ") = zero"
+                    << " (rank = " << rank << ")" << endl;
+          }
           metric = STM::zero ();
         }
 
@@ -757,7 +924,8 @@ protected:
                    const int n,
                    const int s,
                    MV& Q,
-                   dense_matrix_type& R)
+                   dense_matrix_type& R,
+                   const int iters)
   {
     // vector to be orthogonalized
     Teuchos::Range1D index_prev(n, n+s);
@@ -766,10 +934,18 @@ protected:
     dense_matrix_type r_new (Teuchos::View, R, s+1, s+1, n, 0);
 
     int rank = 0;
-    if (cholqr_ != Teuchos::null) {
+    if (cholqr_ != Teuchos::null && (n > 0 || !useTSQR_1st_step_)) {
       rank = cholqr_->reFactor (outPtr, Qnew, r_new);
+      if (outPtr != nullptr) {
+        *outPtr << " ** CholQR (iter = " << iters << ") ** " << std::endl;
+        int numReFacto = cholqr_->getNumReFacto();
+        if (numReFacto > 0) {
+          *outPtr << " x CholQR(" << iters << "): numReFacto = " << numReFacto << std::endl;
+        }
+      }
     }
     else {
+      *outPtr << " ** TSQR (iter = " << iters << ") ** " << std::endl;
       rank = this->normalizeBelosOrthoManager (Qnew, r_new);
     }
     return rank;
@@ -791,7 +967,8 @@ protected:
   }
 
 private:
-  bool useCholQR2_;
+  int numOrthoSteps_;
+  bool useTSQR_1st_step_;
   Teuchos::RCP<CholQR<SC, MV, OP> > cholqr_;
   Teuchos::RCP<ortho_type> tsqr_;
 };
