@@ -355,7 +355,7 @@ public:
 
 protected:
   //! Create Belos::OrthoManager instance.
-  void
+  virtual void
   setOrthogonalizer (const std::string& orthoType, Teuchos::RCP<ortho_type> &ortho)
   {
     if (ortho.get () == nullptr || this->input_.orthoType != orthoType) {
@@ -386,7 +386,7 @@ protected:
   }
 
   //! Setup orthogonalizer
-  void
+  virtual void
   setOrthogonalizer (const std::string& orthoType)
   {
     setOrthogonalizer (orthoType, ortho_);
