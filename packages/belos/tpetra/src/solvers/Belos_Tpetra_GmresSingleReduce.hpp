@@ -13,6 +13,7 @@ template<class SC = Tpetra::Operator<>::scalar_type,
 class GmresSingleReduce : public Gmres<SC, MV, OP> {
 private:
   using base_type = Gmres<SC, MV, OP>;
+  using ortho_type = typename base_type::ortho_type;
   using MVT = Belos::MultiVecTraits<SC, MV>;
   using LO = typename MV::local_ordinal_type;
   using STS = Teuchos::ScalarTraits<SC>;
@@ -79,6 +80,13 @@ protected:
       this->input_.orthoType = "MGS";
       //base_type::setOrthogonalizer (ortho);
     }
+  }
+
+  //! Create Belos::OrthoManager instance.
+  virtual void
+  setOrthogonalizer (const std::string& orthoType, Teuchos::RCP<ortho_type> &ortho)
+  {
+    base_type::setOrthogonalizer (orthoType, ortho);
   }
 
 private:
