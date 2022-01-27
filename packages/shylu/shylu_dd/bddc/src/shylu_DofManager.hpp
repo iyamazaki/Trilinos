@@ -70,6 +70,9 @@ public:
   typedef Tpetra::CrsMatrix<GO,LO,GO>                        CrsMatrixGO;
   typedef Tpetra::Export<LO,GO>                              Export;
   typedef Tpetra::Import<LO,GO>                              Import;
+  typedef typename CrsMatrixGO::nonconst_values_host_view_type       LocalValsView;
+  typedef typename CrsMatrixGO::values_host_view_type                LocalValsViewConst;
+  typedef typename CrsGraph::local_inds_host_view_type               LocalIndsViewConst;
 
   DofManager()
   {
@@ -123,15 +126,16 @@ public:
     GO baseGID = numDofSS - numDof;
     // The matrix nodeMatrix1to1 is the counterpart of the graph nodeGraph1to1
     // with globalIDs as entries
-    Teuchos::ArrayView<const LO> Indices;
-    std::vector<GO> Values;
+    LocalIndsViewConst Indices;
+    LocalValsView Values;
     CrsMatrixGO nodeMatrix1to1(nodeGraph1to1);
     for (size_t i=0; i<nodeMap1to1->getNodeNumElements(); i++) {
       nodeGraph1to1->getLocalRowView(i, Indices);
-      Values.resize(Indices.size());
-      for (LO j=0; j<Indices.size(); j++) Values[j] = baseGID++;
+      LO n = Indices.extent(0);
+      Kokkos::resize(Values, n);
+      for (LO j=0; j<n; j++) Values[j] = baseGID++;
       nodeMatrix1to1.replaceLocalValues
-        (i, Indices, Teuchos::ArrayView<GO>(Values));
+        (i,Indices, Values);
     }
     nodeMatrix1to1.fillComplete(domainMap, nodeMap1to1);
     CrsMatrixGO nodeMatrix(nodeMap, 0);
@@ -176,15 +180,16 @@ public:
     GO baseGID = numDofSS - numDof;
     // The matrix nodeMatrix1to1 is the counterpart of the graph nodeGraph1to1
     // with globalIDs as entries
-    Teuchos::ArrayView<const LO> Indices;
-    std::vector<GO> Values;
+    LocalIndsViewConst Indices;
+    LocalValsView Values;
     nodeMatrix1to1 = rcp( new CrsMatrixGO(nodeGraph1to1) );
     for (size_t i=0; i<nodeMap1to1->getNodeNumElements(); i++) {
       nodeGraph1to1->getLocalRowView(i, Indices);
-      Values.resize(Indices.size());
-      for (LO j=0; j<Indices.size(); j++) Values[j] = baseGID++;
+      LO n = Indices.extent(0);
+      Kokkos::resize(Values, n);
+      for (LO j=0; j<n; j++) Values[j] = baseGID++;
       nodeMatrix1to1->replaceLocalValues
-        (i, Indices, Teuchos::ArrayView<GO>(Values));
+        (i, Indices, Values);
     }
     nodeMatrix1to1->fillComplete(domainMap, nodeMap1to1);
     nodeMatrix = rcp( new CrsMatrixGO(nodeMap, 0) );
@@ -235,12 +240,12 @@ public:
     RCP<const Teuchos::Comm<int> > Comm = A.getRowMap()->getComm();
     LO numDof = A.getNodeNumEntries();
     std::vector<GO> globalIDs(numDof);
-    Teuchos::ArrayView<const LO> Indices;
-    Teuchos::ArrayView<const GO> Values;
+    LocalIndsViewConst Indices;
+    LocalValsViewConst Values;
     numDof = 0;
     for (size_t i=0; i<A.getNodeNumRows(); i++) {
       A.getLocalRowView(i, Indices, Values);
-      for (LO j=0; j<Indices.size(); j++) {
+      for (LO j=0; j<Indices.extent(0); j++) {
         globalIDs[numDof++] = Values[j];
       }
     }

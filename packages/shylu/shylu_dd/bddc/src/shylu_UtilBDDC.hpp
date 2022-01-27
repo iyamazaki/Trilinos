@@ -251,6 +251,7 @@ namespace bddc {
     typedef Tpetra::CrsGraph<LO,GO>                            CrsGraph;
     typedef Tpetra::Export<LO,GO>                              Export;
     typedef Tpetra::Import<LO,GO>                              Import;
+    typedef typename CrsGraph::local_inds_host_view_type       LocalIndsView;
     RCP<const Teuchos::Comm<int> > Comm = 
       rcp( new Teuchos::MpiComm<int>(mpiComm) );
     const int myPID = Comm->getRank();
@@ -279,7 +280,7 @@ namespace bddc {
     nodeProcsAll.fillComplete(colMap, nodeMap1to1);
     RCP<const Map> colMap2 = nodeProcsAll.getColMap();
     nodeSend.resize(numNode);
-    Teuchos::ArrayView<const LO> indices;
+    LocalIndsView indices;
     for (LO i=0; i<numNode; i++) {
       nodeProcsAll.getLocalRowView(i, indices);
       int minProc = myPID;
@@ -303,6 +304,7 @@ namespace bddc {
     typedef Tpetra::CrsGraph<LO,GO>                            CrsGraph;
     typedef Tpetra::Export<LO,GO>                              Export;
     typedef Tpetra::Import<LO,GO>                              Import;
+    typedef typename CrsGraph::local_inds_host_view_type       LocalIndsView;
     int myPID;
     MPI_Comm_rank(mpiComm, &myPID);
     RCP<const Teuchos::Comm<int> > Comm = 
@@ -330,7 +332,7 @@ namespace bddc {
     CrsGraph nodeProcsAll(nodeMap, 0);
     nodeProcsAll.doImport(nodeProcs1to1, Importer, Tpetra::INSERT);
     nodeProcsAll.fillComplete(colMap, nodeMap1to1);
-    Teuchos::ArrayView<const LO> Indices;
+    LocalIndsView Indices;
     RCP<const Map> colMap2 = nodeProcsAll.getColMap();
     const LO numProcAll = colMap2->getNodeNumElements();
     adjProcs.resize(std::max(0, numProcAll-1)); // don't include self

@@ -73,6 +73,8 @@ public:
   typedef Tpetra::Export<LO,GO>                              Export;
   typedef Tpetra::Import<LO,GO>                              Import;
   typedef Tpetra::MultiVector<SX,LO,GO>                      MV;
+  typedef typename CrsMatrix::values_host_view_type                LocalValsViewConst;
+  typedef typename CrsGraph::local_inds_host_view_type             LocalIndsViewConst;
 
   WeightsBDDC()
   {
@@ -262,8 +264,8 @@ private:
 	LO numEquivDofs = m_Subdomain[i]->getNumEquivDofs(j);
 	std::vector<SX> & ScSub = deluxeWeights[i][j];
 	if (ScSub.size() > 0) {
-	  Teuchos::ArrayView<const LO> Indices;
-	  Teuchos::ArrayView<const SX> Values;
+	  LocalIndsViewConst Indices;
+	  LocalValsViewConst Values;
 	  ScEquiv.resize(numEquivDofs*numEquivDofs);
 	  for (LO k=0; k<numEquivDofs; k++) {
 	    globalToLocalMap[equivDofsGlobal[k]] = k;
@@ -271,7 +273,7 @@ private:
 	  for (LO k=0; k<numEquivDofs; k++) {
 	    LO row = equivDofsGlobal[k];
 	    ScSum.getLocalRowView(row, Indices, Values);
-	    BDDC_TEST_FOR_EXCEPTION(Indices.size() != numEquivDofs, 
+	    BDDC_TEST_FOR_EXCEPTION(Indices.extent(0) != numEquivDofs, 
 				    std::runtime_error, "Indices size error");
 	    for (LO m=0; m<numEquivDofs; m++) {
 	      LO localCol = globalToLocalMap[Indices[m]];
