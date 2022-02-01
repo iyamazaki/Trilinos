@@ -91,6 +91,11 @@
 #include "Thyra_FROSchFactory_def.hpp"
 #include <FROSch_Tools_def.hpp>
 
+// Zoltan2 includes
+#include "Zoltan2_PartitioningProblem.hpp"
+#include "Zoltan2_XpetraCrsMatrixAdapter.hpp"
+#include "Zoltan2_XpetraMultiVectorAdapter.hpp"
+
 
 using UN    = unsigned;
 using SC    = double;
@@ -103,39 +108,6 @@ using namespace Teuchos;
 using namespace Xpetra;
 using namespace FROSch;
 using namespace Thyra;
-
-// --------------------------------------------------------------------- //
-static GO
-min3(GO a, GO b, GO c) {
-  return std::min(a, std::min(b, c));
-}
-
-static GO
-max3(GO a, GO b, GO c) {
-  return std::max(a, std::max(b, c));
-}
-
-static void
-cubic_radical_search(GO n, GO & x, GO & y, GO & z) {
-  double best = 0.0;
-
-  for (GO f1 = (GO)(pow(n,1.0/3.0)+0.5); f1 > 0; --f1)
-    if (n % f1 == 0) {
-      GO n1 = n/f1;
-      for (GO f2 = (GO)(pow(n1,0.5)+0.5); f2 > 0; --f2)
-        if (n1 % f2 == 0) {
-          GO f3 = n1 / f2;
-          double current = (double)min3(f1, f2, f3)/max3(f1, f2, f3);
-          if (current > best) {
-            best = current;
-            x = f1;
-            y = f2;
-            z = f3;
-          }
-        }
-    }
-}
-// --------------------------------------------------------------------- //
 
 int main(int argc, char *argv[])
 {
@@ -160,8 +132,8 @@ int main(int argc, char *argv[])
     My_CLP.setOption("USEEPETRA","USETPETRA",&useepetra,"Use Epetra infrastructure for the linear algebra.");
     bool useGeoMap = false;
     My_CLP.setOption("useGeoMap","useAlgMap",&useGeoMap,"Use Geometric Map");
-    bool useIrregularGrid = false;
-    My_CLP.setOption("useIrregularGrid","useRegularGrid",&useIrregularGrid,"Use Irregular Process Grid");
+    bool useZoltan2 = false;
+    My_CLP.setOption("useZoltan2","noZoltan2",&useZoltan2,"Use Zoltan2");
     My_CLP.recogniseAllOptions(true);
     My_CLP.throwExceptions(false);
     CommandLineProcessor::EParseCommandLineReturn parseReturn = My_CLP.parse(argc,argv);
@@ -173,36 +145,21 @@ int main(int argc, char *argv[])
     RCP<StackedTimer> stackedTimer = rcp(new StackedTimer("Thyra Elasticity Test"));
     TimeMonitor::setStackedTimer(stackedTimer);
 
-    int color=1;
     int N = 0;
-    GO Nx = 0, Ny = 0, Nz = 0;
-    GO Mx = 0, My = 0, Mz = 0;
-    if (useIrregularGrid) {
-        if (Dimension == 3) {
+    int color=1;
+    if (Dimension == 2) {
+        N = (int) (pow(CommWorld->getSize(),1/2.) + 100*numeric_limits<double>::epsilon()); // 1/H
+        if (CommWorld->getRank()<N*N || useZoltan2) {
             color=0;
-            cubic_radical_search(CommWorld->getSize(), Nx, Ny, Nz);
-            Mx = (M+Nx-1)/Nx; 
-            My = (M+Ny-1)/Ny; 
-            Mz = (M+Nz-1)/Nz; 
-        } else {
-            assert(false);
+        }
+    } else if (Dimension == 3) {
+        N = (int) (pow(CommWorld->getSize(),1/3.) + 100*numeric_limits<double>::epsilon()); // 1/H
+        if (CommWorld->getRank()<N*N*N || useZoltan2) {
+            color=0;
         }
     } else {
-        if (Dimension == 2) {
-            N = (int) (pow(CommWorld->getSize(),1/2.) + 100*numeric_limits<double>::epsilon()); // 1/H
-            if (CommWorld->getRank()<N*N) {
-                color=0;
-            }
-        } else if (Dimension == 3) {
-            N = (int) (pow(CommWorld->getSize(),1/3.) + 100*numeric_limits<double>::epsilon()); // 1/H
-            if (CommWorld->getRank()<N*N*N) {
-                color=0;
-            }
-        } else {
-            assert(false);
-        }
+        assert(false);
     }
-
 
     UnderlyingLib xpetraLib = UseTpetra;
     if (useepetra) {
@@ -211,60 +168,144 @@ int main(int argc, char *argv[])
         xpetraLib = UseTpetra;
     }
 
-    RCP<const Comm<int> > Comm = CommWorld->split(color,CommWorld->getRank());
+    RCP<const Comm<int> > comm = CommWorld->split(color,CommWorld->getRank());
 
     if (color==0) {
 
         RCP<ParameterList> parameterList = getParametersFromXmlFile(xmlFile);
 
-        Comm->barrier();
-        if (Comm->getRank()==0) {
+        comm->barrier();
+        if (comm->getRank()==0) {
             cout << "##################\n# Parameter List #\n##################" << endl;
             parameterList->print(cout);
             cout << endl;
         }
 
-        Comm->barrier(); if (Comm->getRank()==0) cout << "##############################\n# Assembly Laplacian #\n##############################\n" << endl;
+        comm->barrier(); if (comm->getRank()==0) cout << "##############################\n# Assembly Laplacian #\n##############################\n" << endl;
 
         ParameterList GaleriList;
-        if (useIrregularGrid) {
+
+        RCP<const Map<LO,GO,NO> > UniqueMap;
+        RCP<MultiVector<SC,LO,GO,NO> > Coordinates;
+
+        RCP<Matrix<SC,LO,GO,NO> > K;
+
+        #if 1
+        // Re-partition using Zoltan2
+        if (useZoltan2) {
+          GO nGlobalElements = 3*M*M*M;
+
+          // Create a map just for Rank-0
+          int rank0 = (comm->getRank() == 0 ? 0 : 1);
+          RCP<const Comm<int> > comm0 = CommWorld->split(rank0, CommWorld->getRank());
+comm->barrier();
+std::cout << " done 0" << std::endl << std::flush;
+comm->barrier();
+          #if 0
+          using tpetra_map_type = Tpetra::Map<LO,GO,NO>;
+          RCP<const tpetra_map_type> Tmap0 = rcp(new tpetra_map_type(nGlobalElements, 0, comm0));
+          RCP<const Map<LO,GO,NO> >UniqueMap0 = rcp (new const TpetraMap<LO,GO,NO>(Tmap0));
+          #else
+          RCP<const Map<LO,GO,NO> > UniqueMap0 = MapFactory<LO,GO,NO>::Build(xpetraLib, nGlobalElements, 0, comm0);
+          #endif
+
+comm->barrier();
+std::cout << " done 1" << std::endl << std::flush;
+comm->barrier();
+          // build K0 on Rank-0
+          auto out = getFancyOStream (rcpFromRef (std::cout));
+          RCP<Matrix<SC,LO,GO,NO> > K0;
+comm->barrier();
+std::cout << " done 2" << std::endl << std::flush;
+comm->barrier();
+          if (comm->getRank() == 0) 
+          {
             GaleriList.set("nx", GO(M));
             GaleriList.set("ny", GO(M));
             GaleriList.set("nz", GO(M));
-            GaleriList.set("mx", GO(Nx));
-            GaleriList.set("my", GO(Ny));
-            GaleriList.set("mz", GO(Nz));
-            if (Comm->getRank()==0) {
-              std::cout << Comm->getSize() << " MPIs with M = " << M << " : " 
-                        << " #  (nx * ny * nz) = (" << Nx << "x" << Ny << "x" << Nz << "), (mx * my * mz) = (" << Mx << "x" << My << "x" << Mz << ")"
-                        << std::endl << std::endl;
-            }
-        } else {
-            GaleriList.set("nx", GO(N*M));
-            GaleriList.set("ny", GO(N*M));
-            GaleriList.set("nz", GO(N*M));
-            GaleriList.set("mx", GO(N));
-            GaleriList.set("my", GO(N));
-            GaleriList.set("mz", GO(N));
-        }
-        RCP<const Map<LO,GO,NO> > UniqueNodeMap;
-        RCP<const Map<LO,GO,NO> > UniqueMap;
-        RCP<MultiVector<SC,LO,GO,NO> > Coordinates;
-        RCP<Matrix<SC,LO,GO,NO> > K;
-        if (Dimension==2) {
-            UniqueNodeMap = Galeri::Xpetra::CreateMap<LO,GO,NO>(xpetraLib,"Cartesian2D",Comm,GaleriList); // RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); nodeMap->describe(*fancy,VERB_EXTREME);
+            GaleriList.set("mx", GO(1));
+            GaleriList.set("my", GO(1));
+            GaleriList.set("mz", GO(1));
+            std::cout << " M = " << M << " nGlobalElements = " << nGlobalElements << std::endl << std::flush;
+
+            RCP<Galeri::Xpetra::Problem<Map<LO,GO,NO>,CrsMatrixWrap<SC,LO,GO,NO>,MultiVector<SC,LO,GO,NO> > >
+              Problem = Galeri::Xpetra::BuildProblem<SC,LO,GO,Map<LO,GO,NO>,CrsMatrixWrap<SC,LO,GO,NO>,MultiVector<SC,LO,GO,NO> >("Elasticity3D", UniqueMap0, GaleriList);
+            K0 = Problem->BuildMatrix();
+            K0->describe(*out);
+          } else {
+            K0 = MatrixFactory<SC,LO,GO,NO>::Build (UniqueMap0);
+          }
+          comm->barrier();
+comm->barrier();
+std::cout << " done 3" << std::endl;
+comm->barrier();
+
+          // Export K0 to K in uniform 1D block row
+          #if 0
+          RCP<const tpetra_map_type> Tmap  = rcp(new tpetra_map_type(nGlobalElements, 0, comm));
+          UniqueMap = rcp (new const TpetraMap<LO,GO,NO>(Tmap));
+          #else
+          UniqueMap = MapFactory<LO,GO,NO>::Build(xpetraLib, nGlobalElements, 0, comm);
+          #endif
+          K = MatrixFactory<SC,LO,GO,NO>::Build (UniqueMap);
+          #if 1
+          auto exporter = Xpetra::ExportFactory<LO, GO>::Build(UniqueMap0, UniqueMap);
+          K->doExport (*K0, *exporter, Xpetra::INSERT);
+          #else
+          auto importer = Xpetra::ImportFactory<LO, GO>::Build(UniqueMap0, UniqueMap);
+          K->doImport (*K0, *importer, Xpetra::INSERT);
+          #endif
+          K->fillComplete();
+          K->describe(*out);
+
+          // wrap K into Zoltan2 matrix
+          CrsMatrixWrap<SC,LO,GO,NO>& crsWrapK = dynamic_cast<CrsMatrixWrap<SC,LO,GO,NO>&>(*K);
+          Zoltan2::XpetraCrsMatrixAdapter<Xpetra::CrsMatrix<SC, LO, GO>>
+            zoltan_matrix(crsWrapK.getCrsMatrix());
+
+          // Specify partitioning parameters
+          Teuchos::ParameterList zoltan_params;
+          zoltan_params.set("partitioning_approach", "partition");
+          zoltan_params.set("symmetrize_input", "transpose");
+          zoltan_params.set("partitioning_objective", "minimize_cut_edge_weight");
+
+          // Create and solve partitioning problem
+          Zoltan2::PartitioningProblem<Zoltan2::XpetraCrsMatrixAdapter<Xpetra::CrsMatrix<SC, LO, GO>>> 
+          problem(&zoltan_matrix, &zoltan_params);
+          problem.solve();
+
+          // Redistribute matrix
+          RCP<Xpetra::CrsMatrix<SC, LO, GO>> zoltan_K;
+          zoltan_matrix.applyPartitioningSolution (*(crsWrapK.getCrsMatrix()), zoltan_K, problem.getSolution());
+
+          // Set it as coefficient matrix
+          K = rcp (new CrsMatrixWrap<SC,LO,GO,NO>(zoltan_K));
+          UniqueMap = K->getMap();
+        } else
+        #endif
+        {
+          GaleriList.set("nx", GO(N*M));
+          GaleriList.set("ny", GO(N*M));
+          GaleriList.set("nz", GO(N*M));
+          GaleriList.set("mx", GO(N));
+          GaleriList.set("my", GO(N));
+          GaleriList.set("mz", GO(N));
+
+          RCP<const Map<LO,GO,NO> > UniqueNodeMap;
+          if (Dimension==2) {
+            UniqueNodeMap = Galeri::Xpetra::CreateMap<LO,GO,NO>(xpetraLib,"Cartesian2D",comm,GaleriList); // RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); nodeMap->describe(*fancy,VERB_EXTREME);
             UniqueMap = Xpetra::MapFactory<LO,GO,NO>::Build(UniqueNodeMap,2);
             Coordinates = Galeri::Xpetra::Utils::CreateCartesianCoordinates<SC,LO,GO,Map<LO,GO,NO>,MultiVector<SC,LO,GO,NO> >("2D",UniqueMap,GaleriList);
             RCP<Galeri::Xpetra::Problem<Map<LO,GO,NO>,CrsMatrixWrap<SC,LO,GO,NO>,MultiVector<SC,LO,GO,NO> > > Problem = Galeri::Xpetra::BuildProblem<SC,LO,GO,Map<LO,GO,NO>,CrsMatrixWrap<SC,LO,GO,NO>,MultiVector<SC,LO,GO,NO> >("Elasticity2D",UniqueMap,GaleriList);
             K = Problem->BuildMatrix();
-        } else if (Dimension==3) {
-            UniqueNodeMap = Galeri::Xpetra::CreateMap<LO,GO,NO>(xpetraLib,"Cartesian3D",Comm,GaleriList); // RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); nodeMap->describe(*fancy,VERB_EXTREME);
+          } else if (Dimension==3) {
+            UniqueNodeMap = Galeri::Xpetra::CreateMap<LO,GO,NO>(xpetraLib,"Cartesian3D",comm,GaleriList); // RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); nodeMap->describe(*fancy,VERB_EXTREME);
             UniqueMap = Xpetra::MapFactory<LO,GO,NO>::Build(UniqueNodeMap,3);
             Coordinates = Galeri::Xpetra::Utils::CreateCartesianCoordinates<SC,LO,GO,Map<LO,GO,NO>,MultiVector<SC,LO,GO,NO> >("3D",UniqueMap,GaleriList);
             RCP<Galeri::Xpetra::Problem<Map<LO,GO,NO>,CrsMatrixWrap<SC,LO,GO,NO>,MultiVector<SC,LO,GO,NO> > > Problem = Galeri::Xpetra::BuildProblem<SC,LO,GO,Map<LO,GO,NO>,CrsMatrixWrap<SC,LO,GO,NO>,MultiVector<SC,LO,GO,NO> >("Elasticity3D",UniqueMap,GaleriList);
             K = Problem->BuildMatrix();
+          }
         }
-
 
         RCP<Map<LO,GO,NO> > FullRepeatedMap;
         RCP<Map<LO,GO,NO> > RepeatedMap;
@@ -283,7 +324,6 @@ int main(int argc, char *argv[])
             RepeatedMap = BuildRepeatedMapNonConst<LO,GO,NO>(K->getCrsGraph());
         }
 
-
         RCP<MultiVector<SC,LO,GO,NO> > xSolution = MultiVectorFactory<SC,LO,GO,NO>::Build(UniqueMap,1);
         RCP<MultiVector<SC,LO,GO,NO> > xRightHandSide = MultiVectorFactory<SC,LO,GO,NO>::Build(UniqueMap,1);
 
@@ -300,24 +340,24 @@ int main(int argc, char *argv[])
         sublist(plList,"FROSch")->set("Dimension",Dimension);
         sublist(plList,"FROSch")->set("Overlap",Overlap);
         sublist(plList,"FROSch")->set("DofOrdering","NodeWise");
-        sublist(plList,"FROSch")->set("DofsPerNode",Dimension);
-
         sublist(plList,"FROSch")->set("Repeated Map",RepeatedMap);
-        sublist(plList,"FROSch")->set("Coordinates List",Coordinates);
-
-        Comm->barrier();
-        if (Comm->getRank()==0) {
+        if (!useZoltan2) {
+          sublist(plList,"FROSch")->set("DofsPerNode",Dimension);
+          sublist(plList,"FROSch")->set("Coordinates List",Coordinates);
+        }
+        comm->barrier();
+        if (comm->getRank()==0) {
             cout << "##################\n# Parameter List #\n##################" << endl;
             parameterList->print(cout);
             cout << endl;
         }
 
-        Comm->barrier(); if (Comm->getRank()==0) cout << "###################################\n# Stratimikos LinearSolverBuilder #\n###################################\n" << endl;
+        comm->barrier(); if (comm->getRank()==0) cout << "###################################\n# Stratimikos LinearSolverBuilder #\n###################################\n" << endl;
         Stratimikos::DefaultLinearSolverBuilder linearSolverBuilder;
         Stratimikos::enableFROSch<LO,GO,NO>(linearSolverBuilder);
         linearSolverBuilder.setParameterList(parameterList);
 
-        Comm->barrier(); if (Comm->getRank()==0) cout << "######################\n# Thyra PrepForSolve #\n######################\n" << endl;
+        comm->barrier(); if (comm->getRank()==0) cout << "######################\n# Thyra PrepForSolve #\n######################\n" << endl;
 
         RCP<LinearOpWithSolveFactoryBase<SC> > lowsFactory =
         linearSolverBuilder.createLinearSolveStrategy("");
@@ -325,16 +365,16 @@ int main(int argc, char *argv[])
         lowsFactory->setOStream(out);
         lowsFactory->setVerbLevel(VERB_HIGH);
 
-        Comm->barrier(); if (Comm->getRank()==0) cout << "###########################\n# Thyra LinearOpWithSolve #\n###########################" << endl;
+        comm->barrier(); if (comm->getRank()==0) cout << "###########################\n# Thyra LinearOpWithSolve #\n###########################" << endl;
 
         RCP<LinearOpWithSolveBase<SC> > lows =
         linearOpWithSolve(*lowsFactory, K_thyra);
 
-        Comm->barrier(); if (Comm->getRank()==0) cout << "\n#########\n# Solve #\n#########" << endl;
+        comm->barrier(); if (comm->getRank()==0) cout << "\n#########\n# Solve #\n#########" << endl;
         SolveStatus<double> status =
         solve<double>(*lows, Thyra::NOTRANS, *thyraB, thyraX.ptr());
 
-        Comm->barrier(); if (Comm->getRank()==0) cout << "\n#############\n# Finished! #\n#############" << endl;
+        comm->barrier(); if (comm->getRank()==0) cout << "\n#############\n# Finished! #\n#############" << endl;
     }
 
     CommWorld->barrier();
