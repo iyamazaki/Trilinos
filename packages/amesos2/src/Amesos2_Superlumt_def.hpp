@@ -102,6 +102,8 @@ namespace Amesos2 {
     , rowind_()
     , colptr_()
     , is_contiguous_(true)
+    , use_metis_(false)
+    , symmetrize_metis_(true)
   {
     Teuchos::RCP<Teuchos::ParameterList> default_params
       = Teuchos::parameterList( *(this->getValidParameters()) );
@@ -188,7 +190,22 @@ namespace Amesos2 {
       Teuchos::TimeMonitor preOrderTimer(this->timers_.preOrderTime_);
 #endif
 
-      SLUMT::S::get_perm_c(perm_spec, &(data_.A), data_.perm_c.getRawPtr());
+      if (use_metis_) {
+        size_t n  = this->globalNumRows_;
+        size_t nz = this->globalNumNonZeros_;
+
+        for (size_t i = 0; i < n; i++) {
+          data_.perm_r(i) = i; //metis_iperm(i);
+          data_.perm_c(i) = i; //metis_iperm(i);
+        }
+
+        // SLU will use user-specified METIS ordering
+        data_.options.ColPerm = SLU::MY_PERMC;
+        data_.options.RowPerm = SLU::MY_PERMR;
+      }
+      else {
+        SLUMT::S::get_perm_c(perm_spec, &(data_.A), data_.perm_c.getRawPtr());
+      }
     }
     // Ordering will be applied directly before numeric factorization
 
@@ -496,6 +513,10 @@ namespace Amesos2 {
       data_.options.ColPerm = getIntegralValue<SLUMT::colperm_t>(*parameterList, "ColPerm");
     }
 
+    // call METIS before SuperLU_MT
+    use_metis_ = parameterList->get<bool>("UseMetis", false);
+    symmetrize_metis_ = parameterList->get<bool>("SymmetrizeMetis", true);
+
     // TODO: until we support retrieving col/row permutations from the user
     data_.options.usepr = SLUMT::NO;
 
@@ -586,6 +607,10 @@ namespace Amesos2 {
       pl->set("PrintStat", false, "Specifies whether to print the solver's statistics");
 
       pl->set("IsContiguous", true, "Whether GIDs contiguous");
+
+      // call METIS before SuperLU
+      pl->set("UseMetis", false, "Whether to call METIS before SuperLU");
+      pl->set("SymmetrizeMetis", true, "Whether to symmetrize matrix before METIS");
 
       valid_params = pl;
     }
