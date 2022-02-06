@@ -328,7 +328,7 @@ private:
     {
       // fix the norm
       H (n+1, n) = T (n+1, n+1);
-      real_type oldNorm = STS::real (H(n+1, n));
+      oldNorm = STS::real (H(n+1, n));
       for (int i = 0; i <= n; ++i) {
         H(n+1, n) -= (H(i, n)*H(i, n));
       }

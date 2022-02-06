@@ -469,7 +469,10 @@ protected:
   }
 
   virtual int
-  normalizeBelosOrthoManager (MV& Q, dense_matrix_type& R)
+  normalizeBelosOrthoManager (Teuchos::FancyOStream* outPtr,
+                              MV& Q,
+                              dense_matrix_type& R,
+                              const int iters)
   {
     if (ortho_.get () == nullptr) {
       setOrthogonalizer (this->input_.orthoType);
@@ -961,7 +964,7 @@ protected:
       /*printf("Y=[\n");
       for (int i = 0; i < check+2; i++) {
         for (int j = 0; j < check+2; j++) {
-          printf("%e ",T (i, j));
+          printf("%.16e ",T (i, j));
         }
         printf("\n");
       }
@@ -1001,9 +1004,34 @@ protected:
 
         // > compute H - Q'*A*Q
         MVT::MvTransMv(one, *Q_prev, AQ, HH);
+        std::cout << std::endl << " checkNumericalError" << std::endl;
+        /*std::cout << "H1 = [" << std::endl;
+        for (int i = 0; i < check+2 ; i++) {
+          for (int j = 0; j < check+1; j++) {
+            std::cout << HH(i,j) << " ";
+          }
+          std::cout << std::endl;
+        }
+        std::cout << "];" << std::endl;
+        std::cout << "H2 = [" << std::endl;
+        for (int i = 0; i < check+2 ; i++) {
+          for (int j = 0; j < check+1; j++) {
+            std::cout << H2(i,j) << " ";
+          }
+          std::cout << std::endl;
+        }
+        std::cout << "];" << std::endl;*/
         for (int j = 0; j < check+1; j++) {
           blas.AXPY (check+2, -one, &(H2(0, j)), 1, &(HH(0, j)), 1);
         }
+        std::cout << "HH = [" << std::endl;
+        for (int i = 0; i < check+2 ; i++) {
+          for (int j = 0; j < check+1; j++) {
+            std::cout << HH(i,j) << " ";
+          }
+          std::cout << std::endl;
+        }
+        std::cout << "];" << std::endl << std::endl;
 
         // > compute AQ = Q*H - AQ
         MVT::MvTimesMatAddMv (one, *Q_prev, *H_new, -one, AQ);
