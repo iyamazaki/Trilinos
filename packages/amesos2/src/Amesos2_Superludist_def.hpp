@@ -69,11 +69,6 @@ namespace Amesos2 {
                                           Teuchos::RCP<Vector> X,
                                           Teuchos::RCP<const Vector> B)
     : SolverCore<Amesos2::Superludist,Matrix,Vector>(A, X, B)
-    #ifdef TPETRA_ENABLE_DEPRECATED_CODE
-    , nzvals_()                 // initialization to empty arrays
-    , colind_()
-    , rowptr_()
-    #endif
     , bvals_()
     , xvals_()
     , in_grid_(false)
@@ -443,11 +438,7 @@ namespace Amesos2 {
 
       // Apply the column ordering, so that AC is the column-permuted A, and compute etree
       size_t nnz_loc = ((SLUD::NRformat_loc*)data_.A.Store)->nnz_loc;
-      #ifdef TPETRA_ENABLE_DEPRECATED_CODE
-      for( size_t i = 0; i < nnz_loc; ++i ) colind_[i] = data_.perm_c[colind_[i]];
-      #else
       for( size_t i = 0; i < nnz_loc; ++i ) colind_view_(i) = data_.perm_c[colind_view_(i)];
-      #endif
 
       // Distribute data from the symbolic factorization
       if( same_symbolic_ ){
@@ -863,31 +854,15 @@ namespace Amesos2 {
     g_cols = g_rows;            // we deal with square matrices
     fst_global_row = as<int_t>(superlu_rowmap_->getMinGlobalIndex());
 
-    #ifdef TPETRA_ENABLE_DEPRECATED_CODE
-    nzvals_.resize(l_nnz);
-    colind_.resize(l_nnz);
-    rowptr_.resize(l_rows + 1);
-    #else
     Kokkos::resize(nzvals_view_, l_nnz);
     Kokkos::resize(colind_view_, l_nnz);
     Kokkos::resize(rowptr_view_, l_rows + 1);
-    #endif
     int_t nnz_ret = 0;
     {
 #ifdef HAVE_AMESOS2_TIMERS
       Teuchos::TimeMonitor mtxRedistTimer( this->timers_.mtxRedistTime_ );
 #endif
 
-      #ifdef TPETRA_ENABLE_DEPRECATED_CODE
-      Util::get_crs_helper<
-      MatrixAdapter<Matrix>,
-        slu_type, int_t, int_t >::do_get(redist_mat.ptr(),
-                                         nzvals_(), colind_(), rowptr_(),
-                                         nnz_ret,
-                                         ptrInArg(*superlu_rowmap_),
-                                         ROOTED,
-                                         ARBITRARY);
-      #else
       Util::get_crs_helper_kokkos_view<MatrixAdapter<Matrix>,
         host_value_type_array,host_ordinal_type_array, host_size_type_array >::do_get(
                                          redist_mat.ptr(),
@@ -896,7 +871,6 @@ namespace Amesos2 {
                                          ptrInArg(*superlu_rowmap_),
                                          ROOTED,
                                          ARBITRARY);
-      #endif
   }
 
     TEUCHOS_TEST_FOR_EXCEPTION( nnz_ret != l_nnz,
@@ -910,15 +884,9 @@ namespace Amesos2 {
     function_map::create_CompRowLoc_Matrix(&(data_.A),
                                            g_rows, g_cols,
                                            l_nnz, l_rows, fst_global_row,
-                                           #ifdef TPETRA_ENABLE_DEPRECATED_CODE
-                                           nzvals_.getRawPtr(),
-                                           colind_.getRawPtr(),
-                                           rowptr_.getRawPtr(),
-					   #else
                                            nzvals_view_.data(),
                                            colind_view_.data(),
                                            rowptr_view_.data(),
-					   #endif
                                            SLUD::SLU_NR_loc,
                                            dtype, SLUD::SLU_GE);
   }
