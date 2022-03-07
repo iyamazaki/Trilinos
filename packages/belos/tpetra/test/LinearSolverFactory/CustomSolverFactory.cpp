@@ -229,7 +229,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL( CustomSolverFactory, AddFactory, SC, LO, GO, 
   TEST_ASSERT( ! fooSolver.is_null () );
 
   factory.clear();
-  //delete fooFactory;
+  delete fooFactory;
 }
 
 // Define typedefs that make the Tpetra macros work.
