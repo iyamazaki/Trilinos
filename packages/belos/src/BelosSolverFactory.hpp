@@ -223,6 +223,10 @@ public:
     get_solverManagers()[solverName] = instance;
   }
 
+  void clear() {
+    factories_.clear ();
+  }
+
   /// \brief is solver registered for Inverted Injection (DII).
   static bool
   isSolverRegistered (const std::string & solverName)
