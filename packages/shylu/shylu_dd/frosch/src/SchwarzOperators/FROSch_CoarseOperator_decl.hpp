@@ -199,6 +199,10 @@ namespace FROSch {
         XMatrixPtr Phi_;
         XMatrixPtr CoarseMatrix_;
 
+	// result of ExtractLocalSubdomainMatrix_Symbolic
+        XMatrixPtr subdomainMatrix_;
+        XMatrixPtr localSubdomainMatrix_;
+
         // Temp Vectors for apply()
         mutable XMultiVectorPtr XTmp_;
         mutable XMultiVectorPtr XCoarse_;

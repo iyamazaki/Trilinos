@@ -63,11 +63,19 @@ namespace FROSch {
     template <class SC,class LO,class GO,class NO>
     typename HarmonicCoarseOperator<SC,LO,GO,NO>::XMapPtr HarmonicCoarseOperator<SC,LO,GO,NO>::computeCoarseSpace(CoarseSpacePtr coarseSpace)
     {
+#if FROSCH_TIMER_DETAILS > 1
+  MPI_Barrier(MPI_COMM_WORLD);
+#endif
         FROSCH_DETAILTIMER_START_LEVELID(computeCoarseSpaceTime,"HarmonicCoarseOperator::computeCoarseSpace");
         XMapPtr repeatedMap = AssembleSubdomainMap(NumberOfBlocks_,DofsMaps_,DofsPerNode_);
 
         // Build local saddle point problem
+        #if 0
         ConstXMatrixPtr repeatedMatrix = ExtractLocalSubdomainMatrix(this->K_.getConst(),repeatedMap.getConst()); // AH 12/11/2018: Should this be in initalize?
+        #else
+        //XMatrixPtr localSubMatrix = ExtractLocalSubdomainMatrix_Symbolic(this->K_.getConst(),repeatedMap.getConst()); // AH 12/11/2018: Should this be in initalize?
+        ConstXMatrixPtr repeatedMatrix = ExtractLocalSubdomainMatrix_Compute(this->K_.getConst(),repeatedMap.getConst(),this->localSubdomainMatrix_); // AH 12/11/2018: Should this be in initalize?
+        #endif
 
         // Remove coupling blocks
         if (this->ParameterList_->get("Extensions: Remove Coupling",false)) {
@@ -99,6 +107,25 @@ namespace FROSch {
         XMatrixPtr kGammaGamma;
 
         BuildSubmatrices(repeatedMatrix,indicesIDofsAll(),kII,kIGamma,kGammaI,kGammaGamma);
+
+#if FROSCH_TIMER_DETAILS > 1
+{
+int nKii = kII->getGlobalNumCols();
+int mKii = kII->getGlobalNumRows();
+int nKig = kIGamma->getGlobalNumCols();
+int mKig = kIGamma->getGlobalNumRows();
+int nKgi = kGammaI->getGlobalNumCols();
+int mKgi = kGammaI->getGlobalNumRows();
+int nKgg = kGammaGamma->getGlobalNumCols();
+int mKgg = kGammaGamma->getGlobalNumRows();
+std::cout << this->MpiComm_->getRank() << " : " << repeatedMatrix->getGlobalNumRows() << " x " << repeatedMatrix->getGlobalNumCols() << ", "
+                                       << repeatedMatrix->getNodeNumRows() << " x " << repeatedMatrix->getGlobalNumCols() << " -> "
+                                       << " A11(" << mKii << " x " << nKii << "), "
+                                       << " A12(" << mKig << " x " << nKig << "), "
+                                       << " A21(" << mKgi << " x " << nKgi << "), "
+                                       << " A22(" << mKgg << " x " << nKgg << ")" << std::endl;
+}
+#endif
 
         //Detect linear dependencies
         if (!this->ParameterList_->get("Skip DetectLinearDependencies",false)) {
