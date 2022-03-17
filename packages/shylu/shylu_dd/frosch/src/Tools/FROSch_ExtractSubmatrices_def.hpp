@@ -89,20 +89,19 @@ namespace FROSch {
 
 
     template <class SC,class LO,class GO,class NO>
-    void ExtractLocalSubdomainMatrix_Symbolic(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,    // input
-                                              RCP<const Map<LO,GO,NO> > map,                   // input
-                                              RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix,       // output : globalMatrix, re-distributed with map
-                                              RCP<Matrix<SC,LO,GO,NO> > localSubdomainMatrix)  // output : local submatrix
+    RCP<Matrix<SC,LO,GO,NO> > ExtractLocalSubdomainMatrix_Symbolic(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,    // input
+                                                                   RCP<const Map<LO,GO,NO> > map)                   // input
     {
-        FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime,"ExtractLocalSubdomainMatrix_Symbolic");
+        FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_symbolic, "ExtractLocalSubdomainMatrix_Symbolic");
         RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(),map);
-        subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(map,globalMatrix->getGlobalMaxNumRowEntries());
+        RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(map,globalMatrix->getGlobalMaxNumRowEntries());
         subdomainMatrix->doImport(*globalMatrix,*scatter,ADD);
         //cout << *subdomainMatrix << endl;
         RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
         RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(map->lib(),map->getNodeNumElements(),0,SerialComm);
-        localSubdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap,globalMatrix->getGlobalMaxNumRowEntries());
+        RCP<Matrix<SC,LO,GO,NO> > localSubdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap,globalMatrix->getGlobalMaxNumRowEntries());
 
+	const SC zero = ScalarTraits<SC>::zero();
         for (unsigned i=0; i<localSubdomainMap->getNodeNumElements(); i++) {
             ArrayView<const GO> indices;
             ArrayView<const SC> values;
@@ -114,31 +113,85 @@ namespace FROSch {
                 Array<SC> valuesLocal;
                 for (LO j=0; j<size; j++) {
                     GO localIndex = map->getLocalElement(indices[j]);
+		    //std::cout << i << ", " << indices[j] << " -> " << localIndex << std::endl;
                     if (localIndex>=0) {
                         indicesLocal.push_back(localIndex);
-                        valuesLocal.push_back(values[j]);
+                        valuesLocal.push_back(zero);
                     }
                 }
                 localSubdomainMatrix->insertGlobalValues(i,indicesLocal(),valuesLocal());
             }
         }
+	//std::cout << std::endl << " calling fill complete " << std::endl;
         localSubdomainMatrix->fillComplete();
+	//std::cout << " done calling fill complete " << std::endl << std::endl;
+        return localSubdomainMatrix;
+    }
+
+    template <class SC,class LO,class GO,class NO>
+    void ExtractLocalSubdomainMatrix_Symbolic(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,    // input
+                                              RCP<const Map<LO,GO,NO> > map,                   // input
+                                              RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix,       // output : globalMatrix, re-distributed with map
+                                              RCP<Matrix<SC,LO,GO,NO> > localSubdomainMatrix)  // output : local submatrix
+    {
+        FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_symbolic, "ExtractLocalSubdomainMatrix_Symbolic");
+        //RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(),map);
+        //RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(map,globalMatrix->getGlobalMaxNumRowEntries());
+        //subdomainMatrix->doImport(*globalMatrix,*scatter,ADD);
+        //cout << *subdomainMatrix << endl;
+        //RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
+        //RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(map->lib(),map->getNodeNumElements(),0,SerialComm);
+        //RCP<Matrix<SC,LO,GO,NO> > localSubdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap,globalMatrix->getGlobalMaxNumRowEntries());
+        auto localSubdomainMap = localSubdomainMatrix->getRowMap();
+
+	const SC zero = ScalarTraits<SC>::zero();
+        for (unsigned i=0; i<localSubdomainMap->getNodeNumElements(); i++) {
+            ArrayView<const GO> indices;
+            ArrayView<const SC> values;
+            subdomainMatrix->getGlobalRowView(map->getGlobalElement(i),indices,values);
+
+            LO size = indices.size();
+            if (size>0) {
+                Array<GO> indicesLocal;
+                Array<SC> valuesLocal;
+                for (LO j=0; j<size; j++) {
+                    GO localIndex = map->getLocalElement(indices[j]);
+		    //std::cout << i << ", " << indices[j] << " -> " << localIndex << std::endl;
+                    if (localIndex>=0) {
+                        indicesLocal.push_back(localIndex);
+                        valuesLocal.push_back(zero);
+                    }
+                }
+                localSubdomainMatrix->insertGlobalValues(i,indicesLocal(),valuesLocal());
+            }
+        }
+	//std::cout << std::endl << " calling fill complete " << std::endl;
+        localSubdomainMatrix->fillComplete();
+	//std::cout << " done calling fill complete " << std::endl << std::endl;
+
+        // swap the contents of outputs with just-created submatrices
+        //std::cout << std::endl << " localSub_ : " << localSubdomainMatrix->description() << std::endl << std::endl;
+	RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); localSubdomainMatrix->describe(*fancy);
+        //subdomainMatrix_.swap(subdomainMatrix);
+        //localSubdomainMatrix_.swap(localSubdomainMatrix);
         return;
     }
 
     template <class SC,class LO,class GO,class NO>
     RCP<const Matrix<SC,LO,GO,NO> > ExtractLocalSubdomainMatrix_Compute(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
                                                                         RCP<const Map<LO,GO,NO> > map,
+                                                                        RCP<      Matrix<SC,LO,GO,NO> > subdomainMatrix,
                                                                         RCP<      Matrix<SC,LO,GO,NO> > localSubdomainMatrix /*repeatedMatrix*/)
     {
-        FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime,"ExtractLocalSubdomainMatrix_Compute");
-        RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(map,globalMatrix->getGlobalMaxNumRowEntries());
+        FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_compute, "ExtractLocalSubdomainMatrix_Compute");
+        RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(),map);
+        //RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(map,globalMatrix->getGlobalMaxNumRowEntries());
+        //subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(map,globalMatrix->getGlobalMaxNumRowEntries());
+        subdomainMatrix->doImport(*globalMatrix,*scatter,ADD);
         auto localSubdomainMap = localSubdomainMatrix->getRowMap();
+        localSubdomainMatrix->resumeFill();
 
-        size_t nrows = localSubdomainMatrix->getNodeNumRows();
-        GO nnz = localSubdomainMatrix->getNodeNumEntries();
-
-        nnz = 0;
+        GO nnz = 0;
         for (unsigned i=0; i<localSubdomainMap->getNodeNumElements(); i++) {
             ArrayView<const GO> global_indices;
             ArrayView<const SC> global_values;
@@ -157,18 +210,22 @@ namespace FROSch {
                 nnz = 0;
                 for (LO j=0; j<size; j++) {
                     GO localIndex = map->getLocalElement(global_indices[j]);
+		    //std::cout << i << ", " << global_indices[j] << " -> " << localIndex << std::endl;
                     if (localIndex>=0) {
-                        //indicesLocal.push_back(localIndex);
-                        //valuesLocal.push_back(values[j]);
+                        //std::cout << " >> " << local_cols[nnz] << ", " << global_values[j] << std::endl;
                         local_vals[nnz] = global_values[j];
                         nnz ++;
                     }
                 }
-                localSubdomainMatrix->replaceLocalValues(i, local_cols, local_vals);
+		//std::cout << " " << local_cols.size() << " vs " << const_vals.size() << " -> " << local_vals.size() << std::endl << std::endl;
+		localSubdomainMatrix->replaceLocalValues(i, local_cols, local_vals);
+		//localSubdomainMatrix->replaceGlobalValues(i, local_cols, local_vals);
             }
         }
         //localCrsMatrix->setAllValues(local_rowptr, local_colind, local_values);
-        //localSubdomainMatrix->fillComplete();
+        RCP<ParameterList> fillCompleteParams(new ParameterList);
+        fillCompleteParams->set("No Nonlocal Changes", true);
+        localSubdomainMatrix->fillComplete(fillCompleteParams);
         return localSubdomainMatrix.getConst();
     }
 

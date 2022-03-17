@@ -187,6 +187,7 @@ namespace FROSch {
 
         int buildCoarseSolveMap(ConstXMapPtr coarseMapUnique);
 
+        virtual void extractLocalSubdomainMatrix_Symbolic() = 0;
 
         CommPtr CoarseSolveComm_;
 

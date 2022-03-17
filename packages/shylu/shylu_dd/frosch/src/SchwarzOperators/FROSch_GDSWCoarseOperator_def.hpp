@@ -128,9 +128,13 @@ namespace FROSch {
         this->assembleInterfaceCoarseSpace();
         this->buildCoarseSolveMap(this->AssembledInterfaceCoarseSpace_->getBasisMapUnique());
 #if 1
-        XMapPtr repeatedMap = AssembleSubdomainMap(this->NumberOfBlocks_, this->DofsMaps_, this->DofsPerNode_);
-        ExtractLocalSubdomainMatrix_Symbolic(this->K_.getConst(), repeatedMap.getConst(), // input
-                                             this->subdomainMatrix_, this->localSubdomainMatrix_);
+        //ExtractLocalSubdomainMatrix_Symbolic(this->K_.getConst(), repeatedMap.getConst(), // input
+        //                                     this->subdomainMatrix_, this->localSubdomainMatrix_);
+        this->extractLocalSubdomainMatrix_Symbolic();
+        //XMapPtr repeatedMap = AssembleSubdomainMap(this->NumberOfBlocks_, this->DofsMaps_, this->DofsPerNode_);
+        //this->localSubdomainMatrix_ = ExtractLocalSubdomainMatrix_Symbolic(this->K_.getConst(), repeatedMap.getConst());
+        //std::cout << std::endl << " localSub_ : " << this->localSubdomainMatrix_->description() << std::endl << std::endl;
+	//if (this->localSubdomainMatrix_->isFillComplete()) std::cout << " localSubdomainMatrix_->isFillComplete" << std::endl;
 #endif
         this->IsInitialized_ = true;
         this->IsComputed_ = false;
