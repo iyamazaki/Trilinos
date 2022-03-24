@@ -70,6 +70,9 @@ namespace FROSch {
     template <class SC,class LO,class GO,class NO>
     int CoarseOperator<SC,LO,GO,NO>::compute()
     {
+#if FROSCH_TIMER_DETAILS > 1
+  MPI_Barrier(MPI_COMM_WORLD);
+#endif
         FROSCH_TIMER_START_LEVELID(computeTime,"CoarseOperator::compute");
         FROSCH_ASSERT(this->IsInitialized_,"FROSch::CoarseOperator: CoarseOperator has to be initialized before calling compute()");
         // This is not optimal yet... Some work could be moved to Initialize
@@ -91,7 +94,13 @@ namespace FROSch {
                 FROSCH_ASSERT(CoarseSpace_->hasAssembledBasis(),"FROSch::CoarseOperator : !CoarseSpace_->hasAssembledBasis()");
                 CoarseSpace_->buildGlobalBasisMatrix(this->K_->getRowMap(),this->K_->getRangeMap(),subdomainMap,this->ParameterList_->get("Phi: Dropping Threshold",1.e-8));
                 FROSCH_ASSERT(CoarseSpace_->hasGlobalBasisMatrix(),"FROSch::CoarseOperator : !CoarseSpace_->hasGlobalBasisMatrix()");
+{
+#if FROSCH_TIMER_DETAILS > 1
+Teuchos::RCP< Teuchos::Time > timer = Teuchos::TimeMonitor::getNewCounter (" > FROSCH::CoarseOperator::compute::getGlobalBasisMatrix");
+Teuchos::TimeMonitor LocalTimer (*timer);
+#endif
                 Phi_ = CoarseSpace_->getGlobalBasisMatrix();
+}
             }
         }
         if (!reuseCoarseMatrix) {
@@ -568,12 +577,40 @@ namespace FROSch {
         FROSCH_DETAILTIMER_START_LEVELID(buildCoarseMatrixTime,"CoarseOperator::buildCoarseMatrix");
         XMatrixPtr k0;
         if (this->ParameterList_->get("Use Triple MatrixMultiply",false)) {
+#if FROSCH_TIMER_DETAILS > 1
+Teuchos::RCP< Teuchos::Time > timer = Teuchos::TimeMonitor::getNewCounter (" > FROSCH::CoarseOperator::buildCoarseMatrix::MultiplyRAP");
+Teuchos::TimeMonitor LocalTimer (*timer);
+//std::cout << " ** Use Triple MatrixMultiply " << std::endl;
+#endif
             k0 = MatrixFactory<SC,LO,GO,NO>::Build(CoarseSpace_->getBasisMapUnique(),as<LO>(0));
             TripleMatrixMultiply<SC,LO,GO,NO>::MultiplyRAP(*Phi_,true,*this->K_,false,*Phi_,false,*k0);
         } else {
+#if FROSCH_TIMER_DETAILS > 1
+Teuchos::RCP< Teuchos::Time > timer = Teuchos::TimeMonitor::getNewCounter (" > FROSCH::CoarseOperator::buildCoarseMatrix::MultiplyMM");
+Teuchos::TimeMonitor LocalTimer (*timer);
+size_t mlocal = Phi_->getNodeNumRows();
+size_t n = Phi_->getGlobalNumCols();
+size_t nnz = Phi_->getNodeNumEntries();
+int mp = this->K_->getRowMap()->getComm()->getSize();
+int np = this->K_->getColMap()->getComm()->getSize();
+std::cout << " ** Use Standard MatrixMultiply (" << mlocal << " x " << n << ", nnz = " << nnz << "), K on " << mp << " x " << np << " grid" << std::endl;
+#endif
             RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); //Phi_->describe(*fancy,VERB_EXTREME);
-            XMatrixPtr tmp = MatrixMatrix<SC,LO,GO,NO>::Multiply(*this->K_,false,*Phi_,false,*fancy);
+            XMatrixPtr tmp;
+{
+#if FROSCH_TIMER_DETAILS > 1
+Teuchos::RCP< Teuchos::Time > timer = Teuchos::TimeMonitor::getNewCounter (" > FROSCH::CoarseOperator::buildCoarseMatrix::MultiplyMM (NN)");
+Teuchos::TimeMonitor LocalTimer (*timer);
+#endif
+            tmp = MatrixMatrix<SC,LO,GO,NO>::Multiply(*this->K_,false,*Phi_,false,*fancy);
+}
+{
+#if FROSCH_TIMER_DETAILS > 1
+Teuchos::RCP< Teuchos::Time > timer = Teuchos::TimeMonitor::getNewCounter (" > FROSCH::CoarseOperator::buildCoarseMatrix::MultiplyMM (TN)");
+Teuchos::TimeMonitor LocalTimer (*timer);
+#endif
             k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true,*tmp,false,*fancy); //k0->describe(*fancy,VERB_EXTREME);
+}
         }
         return k0;
     }
@@ -982,6 +1019,26 @@ namespace FROSch {
         return 0;
     }
 
+
+    template <class SC,class LO,class GO,class NO>
+    void CoarseOperator<SC,LO,GO,NO>::extractLocalSubdomainMatrix_Symbolic(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
+                                                                           RCP<const Map<LO,GO,NO> > map)
+    {
+        FROSCH_DETAILTIMER_START_LEVELID(extractLocalSubdomainMatrix_SymbolicTime,"CoarseOperator::extractLocalSubdomainMatrix_Symbolic");
+
+        // create subdomain
+        RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(), map);
+        this->coarseSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(map, globalMatrix->getGlobalMaxNumRowEntries());
+        this->coarseSubdomainMatrix_->doImport(*globalMatrix, *scatter,ADD);
+
+        // create local subdomain
+        RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
+        RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(map->lib(), map->getNodeNumElements(), 0, SerialComm);
+        this->coarseLocalSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap, globalMatrix->getGlobalMaxNumRowEntries());
+
+        ExtractLocalSubdomainMatrix_Symbolic(globalMatrix, map.getConst(),                                      // inputs
+                                             this->coarseSubdomainMatrix_, this->coarseLocalSubdomainMatrix_);  // outputs
+    }
 }
 
 #endif
