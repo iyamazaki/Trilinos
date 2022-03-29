@@ -2860,10 +2860,12 @@ cudaProfilerStart();
           spmv(tran, one, digmat,
                           lhs,
                      one, work);
+Kokkos::fence();
           // copy from work to lhs corresponding to diagonal blocks
           SparseTriSupernodalSpMVFunctor<TriSolveHandle, LHSType, NGBLType>
             sptrsv_init_functor (-1, node_count, nodes_grouped_by_level, supercols, supercols, lhs, work);
           Kokkos::parallel_for ("parfor_lsolve_supernode", team_policy_type(lvl_nodes, Kokkos::AUTO), sptrsv_init_functor);
+Kokkos::fence();
         } else {
           // copy lhs corresponding to diagonal blocks to work and zero out in lhs
           SparseTriSupernodalSpMVFunctor<TriSolveHandle, LHSType, NGBLType>
@@ -2876,11 +2878,13 @@ cudaProfilerStart();
         spmv(tran, one, submat,
                         work,
                    one, lhs);
+Kokkos::fence();
 
         // reinitialize workspace
         SparseTriSupernodalSpMVFunctor<TriSolveHandle, LHSType, NGBLType>
           sptrsv_finalize_functor (0, node_count, nodes_grouped_by_level, supercols, supercols, lhs, work);
         Kokkos::parallel_for ("parfor_lsolve_supernode", team_policy_type(lvl_nodes, Kokkos::AUTO), sptrsv_finalize_functor);
+Kokkos::fence();
 
         #ifdef profile_supernodal_etree
         Kokkos::fence();

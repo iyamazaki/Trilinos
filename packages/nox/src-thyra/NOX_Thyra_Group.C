@@ -70,6 +70,8 @@
 #include "NOX_Assert.H"
 #include "NOX_SolverStats.hpp"
 
+#include "Kokkos_Core.hpp"
+
 NOX::Thyra::Group::
 Group(const NOX::Thyra::Vector& initial_guess,
       const Teuchos::RCP< const ::Thyra::ModelEvaluator<double> >& model,
@@ -813,6 +815,7 @@ applyJacobianInverseMultiVector(Teuchos::ParameterList& p,
 
   this->scaleResidualAndJacobian();
 
+  Kokkos::fence(); MPI_Barrier(MPI_COMM_WORLD);
   ::Thyra::SolveStatus<double> solve_status;
   {
     NOX_FUNC_TIME_MONITOR("NOX Total Linear Solve");
@@ -936,6 +939,7 @@ void NOX::Thyra::Group::updateLOWS() const
 
   this->scaleResidualAndJacobian();
 
+  Kokkos::fence(); MPI_Barrier(MPI_COMM_WORLD);
   {
     NOX_FUNC_TIME_MONITOR("NOX Total Preconditioner Construction");
 

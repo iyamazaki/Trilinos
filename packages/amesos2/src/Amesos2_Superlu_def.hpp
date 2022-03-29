@@ -403,6 +403,10 @@ Superlu<Matrix,Vector>::numericFactorization_impl()
 #endif
 
       if(ILU_Flag_==false) {
+#ifdef HAVE_AMESOS2_TIMERS
+      Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("Time for SuperLU::gstrf");
+      Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+#endif
         function_map::gstrf(&(data_.options), &(data_.AC),
             data_.relax, data_.panel_size, data_.etree.data(),
             NULL, 0, data_.perm_c.data(), data_.perm_r.data(),
@@ -459,10 +463,9 @@ Superlu<Matrix,Vector>::numericFactorization_impl()
   data_.options.Fact = SLU::FACTORED;
   same_symbolic_ = true;
 
-  if(use_triangular_solves_) {
-#ifdef HAVE_AMESOS2_VERBOSE_DEBUG
+#if 1//def HAVE_AMESOS2_VERBOSE_DEBUG
     #if defined(KOKKOSKERNELS_ENABLE_SUPERNODAL_SPTRSV) && defined(KOKKOSKERNELS_ENABLE_TPL_SUPERLU)
-    if (this->getComm()->getRank()) {
+    if (this->getComm()->getRank() == 0) {
       std::cout << " > Metis           : " << (use_metis_ ? "YES" : "NO") << std::endl;
       std::cout << " > Equil           : " << (data_.options.Equil == SLU::YES ? "YES" : "NO") << std::endl;
       std::cout << " > Cond Number     : " << (data_.options.ConditionNumber == SLU::YES ? "YES" : "NO") << std::endl;
@@ -472,12 +475,13 @@ Superlu<Matrix,Vector>::numericFactorization_impl()
       std::cout << " > Merge           : " << sptrsv_merge_supernodes_ << std::endl;
       std::cout << " > Use SpMV        : " << sptrsv_use_spmv_ << std::endl;
     }
-    //std::cout << myRank << " : siize(A) " << (data_.A.nrow) << " x " << (data_.A.ncol) << std::endl;
-    //std::cout << myRank << " : nnz(A)   " << ((SLU::NCformat*)data_.A.Store)->nnz << std::endl;
-    //std::cout << myRank << " : nnz(L)   " << ((SLU::SCformat*)data_.L.Store)->nnz << std::endl;
-    //std::cout << myRank << " : nnz(U)   " << ((SLU::SCformat*)data_.U.Store)->nnz << std::endl;
+    std::cout << " : size(A)  " << (data_.A.nrow) << " x " << (data_.A.ncol);
+    std::cout << " : nnz(A)   " << ((SLU::NCformat*)data_.A.Store)->nnz;
+    std::cout << " : nnz(L)   " << ((SLU::SCformat*)data_.L.Store)->nnz;
+    std::cout << " : nnz(U)   " << ((SLU::SCformat*)data_.U.Store)->nnz << std::endl;
     #endif
 #endif
+  if(use_triangular_solves_) {
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::RCP< Teuchos::Time > SpTrsvTimer_ = Teuchos::TimeMonitor::getNewCounter ("Time for SpTrsv setup");
     Teuchos::TimeMonitor numFactTimer(*SpTrsvTimer_);

@@ -968,6 +968,7 @@ ReturnType BlockGmresSolMgr<ScalarType,MV,OP>::solve() {
   else
     block_gmres_iter = Teuchos::rcp( new BlockGmresIter<ScalarType,MV,OP>(problem_,printer_,outputTest_,ortho_,plist) );
 
+  MPI_Barrier(MPI_COMM_WORLD);
   // Enter solve() iterations
   {
 #ifdef BELOS_TEUCHOS_TIME_MONITOR
