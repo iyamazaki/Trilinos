@@ -50,6 +50,7 @@
 #include <Xpetra_MatrixFactory_fwd.hpp>
 #include <Xpetra_ImportFactory_fwd.hpp>
 
+#include <KokkosKernels_Utils.hpp>
 
 namespace FROSch {
 
