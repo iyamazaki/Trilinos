@@ -293,9 +293,13 @@ namespace FROSch {
             this->OverlappingMatrix_ = this->K_;
         }
         if (this->ExtractLocalSubdomainMatrix_Symbolic_Done_) {
+            #if 0
+            this->OverlappingMatrix_ = ExtractLocalSubdomainMatrix(this->OverlappingMatrix_,this->OverlappingMap_);
+            #else
             ExtractLocalSubdomainMatrix_Compute(this->OverlappingMatrix_,
                                                 this->subdomainMatrix_,this->localSubdomainMatrix_);
             this->OverlappingMatrix_ = this->localSubdomainMatrix_.getConst();
+            #endif
         } else {
             this->OverlappingMatrix_ = ExtractLocalSubdomainMatrix(this->OverlappingMatrix_,this->OverlappingMap_);
         }
@@ -326,7 +330,7 @@ namespace FROSch {
         // build local subdomain matrix
         RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
         RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(this->OverlappingMap_->lib(), this->OverlappingMap_->getLocalNumElements(), 0, SerialComm);
-        this->localSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap, this->OverlappingMatrix_->getGlobalMaxNumRowEntries());
+        this->localSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap, localSubdomainMap, this->OverlappingMatrix_->getGlobalMaxNumRowEntries());
 
         // fill in column indexes
         ExtractLocalSubdomainMatrix_Symbolic(this->OverlappingMatrix_, // input

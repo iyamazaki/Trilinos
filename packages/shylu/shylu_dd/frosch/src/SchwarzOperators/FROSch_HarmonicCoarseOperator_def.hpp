@@ -61,19 +61,26 @@ namespace FROSch {
     }
 
     template <class SC,class LO,class GO,class NO>
-    typename HarmonicCoarseOperator<SC,LO,GO,NO>::XMapPtr HarmonicCoarseOperator<SC,LO,GO,NO>::computeCoarseSpace(CoarseSpacePtr coarseSpace)
+    typename HarmonicCoarseOperator<SC,LO,GO,NO>::ConstXMapPtr HarmonicCoarseOperator<SC,LO,GO,NO>::computeCoarseSpace(CoarseSpacePtr coarseSpace)
     {
         FROSCH_DETAILTIMER_START_LEVELID(computeCoarseSpaceTime,"HarmonicCoarseOperator::computeCoarseSpace");
-        XMapPtr repeatedMap = AssembleSubdomainMap(NumberOfBlocks_,DofsMaps_,DofsPerNode_);
 
         // Build local saddle point problem
+        ConstXMapPtr repeatedMap;
         ConstXMatrixPtr repeatedMatrix;
         if (this->coarseExtractLocalSubdomainMatrix_Symbolic_Done_) {
+            #if 0
+            repeatedMap = AssembleSubdomainMap(NumberOfBlocks_,DofsMaps_,DofsPerNode_);
+            repeatedMatrix = ExtractLocalSubdomainMatrix(this->K_.getConst(),repeatedMap.getConst());
+            #else
             ExtractLocalSubdomainMatrix_Compute(this->K_.getConst(),
                                                 this->coarseSubdomainMatrix_,
                                                 this->coarseLocalSubdomainMatrix_);
-            repeatedMatrix = this->coarseLocalSubdomainMatrix_.getConst();
+            repeatedMap = this->coarseSubdomainMatrix_->getRowMap();
+            repeatedMatrix = this->coarseLocalSubdomainMatrix_;
+            #endif
         } else {
+            repeatedMap = AssembleSubdomainMap(NumberOfBlocks_,DofsMaps_,DofsPerNode_);
             repeatedMatrix = ExtractLocalSubdomainMatrix(this->K_.getConst(),repeatedMap.getConst());
         }
 
@@ -106,7 +113,27 @@ namespace FROSch {
         XMatrixPtr kGammaI;
         XMatrixPtr kGammaGamma;
 
-        BuildSubmatrices(repeatedMatrix,indicesIDofsAll(),kII,kIGamma,kGammaI,kGammaGamma);
+        BuildSubmatrices(repeatedMatrix.getConst(),indicesIDofsAll(),kII,kIGamma,kGammaI,kGammaGamma);
+ /*{
+    int myRank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    char filename[200];
+    sprintf(filename,"kII%d_%d.dat",myRank,kII->getLocalNumRows());
+    FILE *fp = fopen(filename,"w");
+    if (myRank == 10) printf(" Tii (%d) = [\n",kII->getLocalNumRows() );
+    for (size_t i = 0; i < kII->getLocalNumRows(); i++) {
+      ArrayView<const LO> indices;
+      ArrayView<const SC> values;
+      kII->getLocalRowView(i,indices,values);
+      for(size_t k = 0; k < indices.size(); k++) {
+        //fprintf(fp,"%d %d %e\n",i, indices[k], values[k] );
+        if (myRank == 10 && i == 0) printf("%d %d %e\n",i, indices[k], values[k] );
+      }
+    }
+    if (myRank == 10) printf(" ];\n" );
+    fclose(fp);
+ }*/
+
 
         //Detect linear dependencies
         if (!this->ParameterList_->get("Skip DetectLinearDependencies",false)) {
@@ -1064,14 +1091,14 @@ namespace FROSch {
         XMapPtr repeatedMap = AssembleSubdomainMap(this->NumberOfBlocks_, this->DofsMaps_, this->DofsPerNode_);
 
         // buid sudomain matrix
-        this->coarseSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(repeatedMap, this->K_->getGlobalMaxNumRowEntries());
+        this->coarseSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(repeatedMap, repeatedMap, this->K_->getGlobalMaxNumRowEntries());
         RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(this->K_->getRowMap(), repeatedMap);
         this->coarseSubdomainMatrix_->doImport(*(this->K_.getConst()), *scatter,ADD);
 
         // build local subdomain matrix
         RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
         RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(repeatedMap->lib(), repeatedMap->getLocalNumElements(), 0, SerialComm);
-        this->coarseLocalSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap, this->K_->getGlobalMaxNumRowEntries());
+        this->coarseLocalSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap, localSubdomainMap, this->K_->getGlobalMaxNumRowEntries());
 
         // fill in column indexes
         ExtractLocalSubdomainMatrix_Symbolic(this->K_.getConst(), // input
