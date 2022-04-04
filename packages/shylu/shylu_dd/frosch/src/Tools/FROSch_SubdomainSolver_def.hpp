@@ -61,6 +61,9 @@ namespace FROSch {
     IsInitialized_ (false),
     IsComputed_ (false)
     {
+int myRank;
+MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+if (myRank == 10) printf("\n > SubdomainSolver::constructor <\n" );
         FROSCH_TIMER_START_SUBDOMAINSOLVER(subdomainSolverTime,"SubdomainSolver::SubdomainSolver");
         FROSCH_ASSERT(!K_.is_null(),"FROSch::SubdomainSolver: K_ is null.");
         if (!ParameterList_->get("SolverType","Amesos2").compare("Amesos")) {
@@ -646,6 +649,9 @@ namespace FROSch {
                                                    bool reuseInitialize)
     {
         FROSCH_TIMER_START_SUBDOMAINSOLVER(resetMatrixTime,"SubdomainSolver::resetMatrix");
+int myRank;
+MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+if (myRank == 10) printf("\n > SubdomainSolver::resetMatrix <\n" );
         K_ = k;
         FROSCH_ASSERT(!K_.is_null(),"FROSch::SubdomainSolver: K_ is null.");
         if (!ParameterList_->get("SolverType","Amesos2").compare("Amesos")) {

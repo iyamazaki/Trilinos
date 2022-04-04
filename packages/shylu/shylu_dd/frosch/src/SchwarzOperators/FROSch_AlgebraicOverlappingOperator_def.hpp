@@ -112,7 +112,7 @@ namespace FROSch {
         if (repeatedMap.is_null()) repeatedMap = this->K_->getRangeMap();
         this->buildOverlappingMatrices(overlap,repeatedMap);
         this->initializeOverlappingOperator();
-        this->updateLocalOverlappingMatrices_Symbolic();
+        //this->updateLocalOverlappingMatrices_Symbolic();
 
         this->IsInitialized_ = true;
         this->IsComputed_ = false;
@@ -293,7 +293,7 @@ namespace FROSch {
             this->OverlappingMatrix_ = this->K_;
         }
         if (this->ExtractLocalSubdomainMatrix_Symbolic_Done_) {
-            #if 0
+            #if 1
             this->OverlappingMatrix_ = ExtractLocalSubdomainMatrix(this->OverlappingMatrix_,this->OverlappingMap_);
             #else
             ExtractLocalSubdomainMatrix_Compute(this->OverlappingMatrix_,

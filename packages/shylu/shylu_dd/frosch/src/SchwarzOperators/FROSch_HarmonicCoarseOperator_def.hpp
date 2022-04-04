@@ -69,7 +69,7 @@ namespace FROSch {
         ConstXMapPtr repeatedMap;
         ConstXMatrixPtr repeatedMatrix;
         if (this->coarseExtractLocalSubdomainMatrix_Symbolic_Done_) {
-            #if 0
+            #if 1
             repeatedMap = AssembleSubdomainMap(NumberOfBlocks_,DofsMaps_,DofsPerNode_);
             repeatedMatrix = ExtractLocalSubdomainMatrix(this->K_.getConst(),repeatedMap.getConst());
             #else
@@ -114,26 +114,6 @@ namespace FROSch {
         XMatrixPtr kGammaGamma;
 
         BuildSubmatrices(repeatedMatrix.getConst(),indicesIDofsAll(),kII,kIGamma,kGammaI,kGammaGamma);
- /*{
-    int myRank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-    char filename[200];
-    sprintf(filename,"kII%d_%d.dat",myRank,kII->getLocalNumRows());
-    FILE *fp = fopen(filename,"w");
-    if (myRank == 10) printf(" Tii (%d) = [\n",kII->getLocalNumRows() );
-    for (size_t i = 0; i < kII->getLocalNumRows(); i++) {
-      ArrayView<const LO> indices;
-      ArrayView<const SC> values;
-      kII->getLocalRowView(i,indices,values);
-      for(size_t k = 0; k < indices.size(); k++) {
-        //fprintf(fp,"%d %d %e\n",i, indices[k], values[k] );
-        if (myRank == 10 && i == 0) printf("%d %d %e\n",i, indices[k], values[k] );
-      }
-    }
-    if (myRank == 10) printf(" ];\n" );
-    fclose(fp);
- }*/
-
 
         //Detect linear dependencies
         if (!this->ParameterList_->get("Skip DetectLinearDependencies",false)) {
