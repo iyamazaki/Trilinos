@@ -63,9 +63,6 @@ namespace FROSch {
         RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(map->lib(),map->getLocalNumElements(),0,SerialComm);
         RCP<Matrix<SC,LO,GO,NO> > localSubdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap,globalMatrix->getGlobalMaxNumRowEntries());
 
-int myRank;
-MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-if (myRank == 10) printf("\n > ExtractLocalSubdomainMatrix <\n" );
         for (unsigned i=0; i<localSubdomainMap->getLocalNumElements(); i++) {
             ArrayView<const GO> indices;
             ArrayView<const SC> values;
@@ -87,43 +84,6 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
             }
         }
         localSubdomainMatrix->fillComplete();
-if (myRank == 10) {
-    printf(" globalMatrix (%d) = [\n",(int)globalMatrix->getLocalNumRows() );
-    for (size_t i = 0; i < globalMatrix->getLocalNumRows(); i++)
-    {
-      ArrayView<const LO> indices;
-      ArrayView<const SC> values;
-      globalMatrix->getLocalRowView(i,indices,values);
-      for(size_t k = 0; k < indices.size(); k++) {
-        printf("%d %d %e\n",(int)i, (int)indices[k], values[k] );
-      }
-    }
-    printf("]\n\n" );
-    printf(" localSubdomainMatrix (%d) = [\n",(int)localSubdomainMatrix->getLocalNumRows() );
-    for (size_t i = 0; i < localSubdomainMatrix->getLocalNumRows(); i++)
-    {
-      ArrayView<const LO> indices;
-      ArrayView<const SC> values;
-      localSubdomainMatrix->getLocalRowView(i,indices,values);
-      for(size_t k = 0; k < indices.size(); k++) {
-        printf("%d %d %e\n",(int)i, (int)indices[k], values[k] );
-      }
-    }
-    printf("]\n\n" );
-
-    auto localK = localSubdomainMatrix->getLocalMatrixDevice();
-    auto hr = Kokkos::create_mirror_view (localK.graph.row_map);
-    auto hc = Kokkos::create_mirror_view (localK.graph.entries);
-    auto hv = Kokkos::create_mirror_view (localK.values);
-    Kokkos::deep_copy(hr, localK.graph.row_map);
-    Kokkos::deep_copy(hc, localK.graph.entries);
-    Kokkos::deep_copy(hv, localK.values);
-    printf( "[\n" );
-    for (int i=0; i<hr.extent(0)-1; i++) {
-      for (int k=hr(i); k<hr(i+1); k++) printf(" %d %d %e, %d\n",i,hc(k),hv(k),k);
-    }
-    printf("]\n");
-}
         return localSubdomainMatrix.getConst();
     }
 
@@ -138,9 +98,6 @@ if (myRank == 10) {
         auto localSubdomainColMap = localSubdomainMatrix->getColMap();
         auto subdomainMap = subdomainMatrix->getRowMap();
 
-//int myRank;
-//MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-//if (myRank == 10) printf("\n > ExtractLocalSubdomainMatrix_Symbolic <\n" );
         const SC zero = ScalarTraits<SC>::zero();
         for (unsigned i=0; i<localSubdomainRowMap->getLocalNumElements(); i++) {
             ArrayView<const GO> indices;
@@ -157,7 +114,6 @@ if (myRank == 10) {
                         LO newIndex = localSubdomainColMap->getLocalElement(localIndex);
                         indicesLocal.push_back(newIndex);
                         valuesLocal.push_back(SC(newIndex));
-//if (myRank == 10 && i == 1452) printf(" %d %d->%d->%d \n",(int)i,(int)indices[j],(int)localIndex,(int)localSubdomainColMap->getLocalElement(localIndex));
                     }
                 }
                 localSubdomainMatrix->insertLocalValues(i,indicesLocal(),valuesLocal());
@@ -181,9 +137,7 @@ if (myRank == 10) {
         RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(),subdomainMap);
         subdomainMatrix->setAllToScalar(zero);
         subdomainMatrix->doImport(*globalMatrix, *scatter, ADD);
-int myRank;
-MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-if (myRank == 10) printf("\n > ExtractLocalSubdomainMatrix_Compute <\n" );
+
 #if 0//defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
         if (globalMatrix->getRowMap()->lib() == UseTpetra) 
         {
@@ -233,12 +187,6 @@ if (myRank == 10) printf("\n > ExtractLocalSubdomainMatrix_Compute <\n" );
 
                 LO size = global_indices.size();
                 if (size>0) {
-//ArrayView<const LO> const_cols;
-//ArrayView<const SC> const_vals;
-//localSubdomainMatrix->getLocalRowView(i, const_cols, const_vals);
-//size_t nnz = const_vals.size();
-//ArrayView<SC> local_vals = ArrayView<SC>(const_cast<SC*>(const_vals.getRawPtr()), nnz);
-
                     // using "workspace" not to overwrite what's in localSubdomainMatrix
                     size_t new_nnz = 0;
                     ArrayView<LO> local_cols (local_cols_vector);
@@ -246,7 +194,6 @@ if (myRank == 10) printf("\n > ExtractLocalSubdomainMatrix_Compute <\n" );
                     for (LO j=0; j<size; j++) {
                         GO localIndex = subdomainMap->getLocalElement(global_indices[j]);
                         if (localIndex>=0) {
-//if (myRank == 10 && i == 1452) printf(" %d %d->%d->%d (%d) %e (nnz=%d / %d)\n",(int)i, (int)global_indices[j],(int)localIndex,(int)localSubdomainColMap->getLocalElement(localIndex), (int)const_cols[new_nnz],global_values[j], (int)new_nnz,(int)nnz);
                             local_cols[new_nnz] = localSubdomainColMap->getLocalElement(localIndex);
                             local_vals[new_nnz] = global_values[j];
                             new_nnz ++;
@@ -259,32 +206,6 @@ if (myRank == 10) printf("\n > ExtractLocalSubdomainMatrix_Compute <\n" );
         RCP<ParameterList> fillCompleteParams(new ParameterList);
         fillCompleteParams->set("No Nonlocal Changes", true);
         localSubdomainMatrix->fillComplete(fillCompleteParams);
-if (myRank == 10) {
-    printf(" localSubdomainMatrix (%d) = [\n",(int)localSubdomainMatrix->getLocalNumRows() );
-    for (size_t i = 0; i < localSubdomainMatrix->getLocalNumRows(); i++) 
-    {
-      ArrayView<const LO> indices;
-      ArrayView<const SC> values;
-      localSubdomainMatrix->getLocalRowView(i,indices,values);
-      for(size_t k = 0; k < indices.size(); k++) {
-        printf("%d %d %e\n",(int)i, (int)indices[k], values[k] );
-      }
-    }
-    printf("]\n\n" );
-
-    auto localK = localSubdomainMatrix->getLocalMatrixDevice();
-    auto hr = Kokkos::create_mirror_view (localK.graph.row_map);
-    auto hc = Kokkos::create_mirror_view (localK.graph.entries);
-    auto hv = Kokkos::create_mirror_view (localK.values);
-    Kokkos::deep_copy(hr, localK.graph.row_map);
-    Kokkos::deep_copy(hc, localK.graph.entries);
-    Kokkos::deep_copy(hv, localK.values);
-    printf( "[\n" );
-    for (int i=0; i<hr.extent(0)-1; i++) {
-      for (int k=hr(i); k<hr(i+1); k++) printf(" %d %d %e, %d\n",i,hc(k),hv(k),k);
-    }
-    printf("]\n");
-}
         return;
     }
 
@@ -383,9 +304,6 @@ if (myRank == 10) {
         RCP<Map<LO,GO,NO> > mapJ = MapFactory<LO,GO,NO>::Build(k->getRowMap()->lib(),-1,indJ(),0,k->getRowMap()->getComm());
         RCP<Map<LO,GO,NO> > mapJLocal = MapFactory<LO,GO,NO>::Build(k->getRowMap()->lib(),-1,indJ.size(),0,k->getRowMap()->getComm());
         RCP<const Map<LO,GO,NO> > colMap = k->getColMap();
-//int myRank;
-//MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-//if (myRank == 10) printf( "\n > BuildSubmatrices < \n" );
 #if 0//defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
         if (k->getRowMap()->lib() == UseTpetra) 
         {
@@ -416,19 +334,6 @@ if (myRank == 10) {
             auto localMapJ = mapJ->getLocalMap();
             auto localColMap = colMap->getLocalMap();
             auto localK = k->getLocalMatrixDevice();
-/*if (myRank == 10) {
-  auto hr = Kokkos::create_mirror_view (localK.graph.row_map);
-  auto hc = Kokkos::create_mirror_view (localK.graph.entries);
-  auto hv = Kokkos::create_mirror_view (localK.values);
-  Kokkos::deep_copy(hr, localK.graph.row_map);
-  Kokkos::deep_copy(hc, localK.graph.entries);
-  Kokkos::deep_copy(hv, localK.values);
-  printf( "[\n" );
-  for (int i=0; i<numRows; i++) {
-    for (int k=hr(i); k<hr(i+1); k++) printf(" %d %d %e, %d\n",i,hc(k),hv(k),k);
-  }
-  printf("]\n");
-}*/
             Kokkos::RangePolicy<execution_space> policy_row (0, numRows);
             Kokkos::parallel_for(
                 "FROSch_BuildSubmatrices::countNnz", policy_row,
@@ -625,20 +530,6 @@ if (myRank == 10) {
             kJI->fillComplete(mapILocal,mapJLocal);
             kJJ->fillComplete(mapJLocal,mapJLocal);
         }
-/*if (myRank == 10 && indI.size() > 0) {
-    printf("kII (%d) = [\n",kII->getLocalNumRows() );
-    for (size_t i = 0; i < 1; i++) 
-    //for (size_t i = 0; i < kII->getLocalNumRows(); i++) 
-    {
-      ArrayView<const LO> indices;
-      ArrayView<const SC> values;
-      kII->getLocalRowView(i,indices,values);
-      for(size_t k = 0; k < indices.size(); k++) {
-        printf("%d %d %e\n",i, indices[k], values[k] );
-      }
-    }
-    printf("]\n" );
-}*/
 
         return 0;
     }

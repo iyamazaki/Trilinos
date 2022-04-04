@@ -145,17 +145,6 @@ namespace Thyra {
                 // Extract the repeated map
                 ConstXMapPtr repeatedMap = extractRepeatedMap(comm,underlyingLib);
 
-int myRank;
-MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-if (myRank == 10) {
-  printf("\n > Thyra_FROSchFactory <\n" );
-  ArrayView<const LO> indices;
-  ArrayView<const SC> values;
-  A->getLocalRowView(0,indices,values);
-  for(size_t k = 0; k < indices.size(); k++) {
-    printf("%d %d %e\n",(int)0, (int)indices[k], values[k] );
-  }
-}
                 RCP<AlgebraicOverlappingPreconditioner<SC,LO,GO,NO> > AOP(new AlgebraicOverlappingPreconditioner<SC,LO,GO,NO>(A,paramList_));
 
                 AOP->initialize(paramList_->get("Overlap",1),
