@@ -69,16 +69,11 @@ namespace FROSch {
         ConstXMapPtr repeatedMap;
         ConstXMatrixPtr repeatedMatrix;
         if (this->coarseExtractLocalSubdomainMatrix_Symbolic_Done_) {
-            #if 1
-            repeatedMap = AssembleSubdomainMap(NumberOfBlocks_,DofsMaps_,DofsPerNode_);
-            repeatedMatrix = ExtractLocalSubdomainMatrix(this->K_.getConst(),repeatedMap.getConst());
-            #else
             ExtractLocalSubdomainMatrix_Compute(this->K_.getConst(),
                                                 this->coarseSubdomainMatrix_,
                                                 this->coarseLocalSubdomainMatrix_);
             repeatedMap = this->coarseSubdomainMatrix_->getRowMap();
             repeatedMatrix = this->coarseLocalSubdomainMatrix_;
-            #endif
         } else {
             repeatedMap = AssembleSubdomainMap(NumberOfBlocks_,DofsMaps_,DofsPerNode_);
             repeatedMatrix = ExtractLocalSubdomainMatrix(this->K_.getConst(),repeatedMap.getConst());
@@ -1081,8 +1076,8 @@ namespace FROSch {
         this->coarseLocalSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap, localSubdomainMap, this->K_->getGlobalMaxNumRowEntries());
 
         // fill in column indexes
-        ExtractLocalSubdomainMatrix_Symbolic(this->K_.getConst(), // input
-                                             this->coarseSubdomainMatrix_, this->coarseLocalSubdomainMatrix_);
+        ExtractLocalSubdomainMatrix_Symbolic(this->coarseSubdomainMatrix_, // input
+                                             this->coarseLocalSubdomainMatrix_); // output
 
         // turn flag on
         this->coarseExtractLocalSubdomainMatrix_Symbolic_Done_ = true;

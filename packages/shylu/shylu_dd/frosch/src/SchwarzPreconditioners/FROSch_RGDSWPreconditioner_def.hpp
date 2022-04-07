@@ -265,9 +265,6 @@ namespace FROSch {
     template <class SC,class LO,class GO,class NO>
     int RGDSWPreconditioner<SC,LO,GO,NO>::resetMatrix(ConstXMatrixPtr &k)
     {
-int myRank;
-MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-if (myRank == 10) printf("\n > RGDSWPreconditioner::resetMatrix <\n" );
         FROSCH_DETAILTIMER_START_LEVELID(resetMatrixTime,"RGDSWPreconditioner::resetMatrix");
         this->K_ = k;
         this->OverlappingOperator_->resetMatrix(this->K_);

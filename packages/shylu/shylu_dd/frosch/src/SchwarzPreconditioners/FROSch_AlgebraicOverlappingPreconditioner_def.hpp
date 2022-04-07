@@ -58,17 +58,6 @@ namespace FROSch {
     K_ (k),
     SumOperator_ (new SumOperator<SC,LO,GO,NO>(k->getRangeMap()->getComm()))
     {
-int myRank;
-MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-if (myRank == 10) {
-  printf("\n > AlgebraicOverlappingPreconditioner <\n" );
-  ArrayView<const LO> indices;
-  ArrayView<const SC> values;
-  this->K_->getLocalRowView(0,indices,values);
-  for(size_t k = 0; k < indices.size(); k++) {
-    printf("%d %d %e\n",(int)0, (int)indices[k], values[k] );
-  }
-}
         FROSCH_DETAILTIMER_START_LEVELID(algebraicOverlappingPreconditionerTime,"AlgebraicOverlappingPreconditioner::AlgebraicOverlappingPreconditioner");
         // Set the LevelID in the sublist
         parameterList->sublist("AlgebraicOverlappingOperator").set("Level ID",this->LevelID_);
@@ -137,9 +126,6 @@ if (myRank == 10) {
     int AlgebraicOverlappingPreconditioner<SC,LO,GO,NO>::resetMatrix(ConstXMatrixPtr &k)
     {
         FROSCH_DETAILTIMER_START_LEVELID(resetMatrixTime,"TwoLevelPreconditioner::resetMatrix");
-int myRank;
-MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-if (myRank == 10) printf("\n > AlgebraicOverlappingPreconditioner::resetMatrix <\n" );
         this->K_ = k;
         OverlappingOperator_->resetMatrix(this->K_);
         return 0;

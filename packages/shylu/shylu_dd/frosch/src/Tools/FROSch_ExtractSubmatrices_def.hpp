@@ -74,7 +74,6 @@ namespace FROSch {
                 Array<SC> valuesLocal;
                 for (LO j=0; j<size; j++) {
                     GO localIndex = map->getLocalElement(indices[j]);
-if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, values[j] );
                     if (localIndex>=0) {
                         indicesLocal.push_back(localIndex);
                         valuesLocal.push_back(values[j]);
@@ -89,34 +88,32 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
 
     // this version just read indices without building submatrices, which is done in extractLocalSubdomainMatrix_Symbolic
     template <class SC,class LO,class GO,class NO>
-    void ExtractLocalSubdomainMatrix_Symbolic(RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,    // input
-                                              RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix,       // output : globalMatrix, re-distributed with map
+    void ExtractLocalSubdomainMatrix_Symbolic(RCP<Matrix<SC,LO,GO,NO> > subdomainMatrix,       // input  : globalMatrix, re-distributed with map
                                               RCP<Matrix<SC,LO,GO,NO> > localSubdomainMatrix)  // output : local submatrix
     {
         FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_symbolic, "ExtractLocalSubdomainMatrix_Symbolic");
-        auto localSubdomainRowMap = localSubdomainMatrix->getRowMap();
-        auto localSubdomainColMap = localSubdomainMatrix->getColMap();
         auto subdomainMap = subdomainMatrix->getRowMap();
 
         const SC zero = ScalarTraits<SC>::zero();
-        for (unsigned i=0; i<localSubdomainRowMap->getLocalNumElements(); i++) {
+        for (unsigned i=0; i<subdomainMap->getLocalNumElements(); i++) {
             ArrayView<const GO> indices;
             ArrayView<const SC> values;
             subdomainMatrix->getGlobalRowView(subdomainMap->getGlobalElement(i),indices,values);
 
             LO size = indices.size();
             if (size>0) {
-                Array<LO> indicesLocal;
+                Array<GO> indicesLocal;
+                //Array<LO> indicesLocal;
                 Array<SC> valuesLocal;
                 for (LO j=0; j<size; j++) {
                     LO localIndex = subdomainMap->getLocalElement(indices[j]);
                     if (localIndex>=0) {
-                        LO newIndex = localSubdomainColMap->getLocalElement(localIndex);
-                        indicesLocal.push_back(newIndex);
-                        valuesLocal.push_back(SC(newIndex));
+                        indicesLocal.push_back(localIndex);
+                        valuesLocal.push_back(SC(localIndex));
                     }
                 }
-                localSubdomainMatrix->insertLocalValues(i,indicesLocal(),valuesLocal());
+                localSubdomainMatrix->insertGlobalValues(i,indicesLocal(),valuesLocal());
+                //localSubdomainMatrix->insertLocalValues(i,indicesLocal(),valuesLocal());
             }
         }
         localSubdomainMatrix->fillComplete();
@@ -130,40 +127,46 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
     {
         FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_compute, "ExtractLocalSubdomainMatrix_Compute");
         const SC zero = ScalarTraits<SC>::zero();
-        auto subdomainMap = subdomainMatrix->getRowMap();
-        auto localSubdomainRowMap = localSubdomainMatrix->getRowMap();
-        auto localSubdomainColMap = localSubdomainMatrix->getColMap();
+        auto subdomainRowMap = subdomainMatrix->getRowMap();
 
-        RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(),subdomainMap);
+        RCP<Import<LO,GO,NO> > scatter = ImportFactory<LO,GO,NO>::Build(globalMatrix->getRowMap(),subdomainRowMap);
+{
+    Teuchos::RCP< Teuchos::Time > FillTimer_ = Teuchos::TimeMonitor::getNewCounter ("Time for setToZero");
+    Teuchos::TimeMonitor fillTimer(*FillTimer_);
         subdomainMatrix->setAllToScalar(zero);
+}
+{
+    Teuchos::RCP< Teuchos::Time > FillTimer_ = Teuchos::TimeMonitor::getNewCounter ("Time for doImport");
+    Teuchos::TimeMonitor fillTimer(*FillTimer_);
         subdomainMatrix->doImport(*globalMatrix, *scatter, ADD);
+}
 
-#if 0//defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
+#if defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
         if (globalMatrix->getRowMap()->lib() == UseTpetra) 
         {
+{
+    Teuchos::RCP< Teuchos::Time > FillTimer_ = Teuchos::TimeMonitor::getNewCounter ("Time for fillComplete");
+    Teuchos::TimeMonitor fillTimer(*FillTimer_);
             subdomainMatrix->fillComplete();
-            localSubdomainMatrix->resumeFill();
-
-            auto devSubdomainMap = subdomainMap->getLocalMap();
-            auto devColMap = localSubdomainColMap->getLocalMap();
-
+}
+            auto devSubdomainMap         = subdomainRowMap->getLocalMap();
             auto devSubdomainMatrix      = subdomainMatrix->getLocalMatrixDevice();
             auto devLocalSubdomainMatrix = localSubdomainMatrix->getLocalMatrixDevice();
 
             using UN = unsigned;
             using execution_space = typename Map<LO,GO,NO>::local_map_type::execution_space;
-            UN numRows = localSubdomainRowMap->getLocalNumElements();
+            UN numRows = subdomainRowMap->getLocalNumElements();
             Kokkos::RangePolicy<execution_space> policy_row (0, numRows);
             Kokkos::parallel_for(
                 "FROSch :: ExtractLocalSubdomainMatrix_Compute", policy_row,
                 KOKKOS_LAMBDA(const UN i) {
                     for (UN j=devSubdomainMatrix.graph.row_map(i); j<devSubdomainMatrix.graph.row_map(i+1); j++) {
-                        GO localIndex = devSubdomainMap.getLocalElement(devSubdomainMatrix.graph.entries(j));
-                        if (localIndex>=0) {
-                            LO newIndex = devColMap.getLocalElement(localIndex);
+                        GO globalIndex_j = devSubdomainMap.getGlobalElement(devSubdomainMatrix.graph.entries(j));
+                        GO localIndex_j  = devSubdomainMap.getLocalElement(globalIndex_j);
+                        if (localIndex_j>=0) {
                             // look for the same column index in localSubdomainMatrix
                             for (UN k=devLocalSubdomainMatrix.graph.row_map(i); k<devLocalSubdomainMatrix.graph.row_map(i+1); k++) {
-                                if (devLocalSubdomainMatrix.graph.entries(k) == newIndex) {
+                                if (devLocalSubdomainMatrix.graph.entries(k) == localIndex_j) {
                                     devLocalSubdomainMatrix.values[k] = devSubdomainMatrix.values[j];
                                     break;
                                 }
@@ -172,6 +175,7 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
                     }
                 }
             );
+            Kokkos::fence();
         } else
 #endif
         {
@@ -180,10 +184,10 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
             size_t max_nnz = localSubdomainMatrix->getLocalMaxNumRowEntries();
             std::vector<LO> local_cols_vector (max_nnz);
             std::vector<SC> local_vals_vector (max_nnz);
-            for (unsigned i=0; i<localSubdomainRowMap->getLocalNumElements(); i++) {
+            for (unsigned i=0; i<subdomainRowMap->getLocalNumElements(); i++) {
                 ArrayView<const GO> global_indices;
                 ArrayView<const SC> global_values;
-                subdomainMatrix->getGlobalRowView(subdomainMap->getGlobalElement(i),global_indices,global_values);
+                subdomainMatrix->getGlobalRowView(subdomainRowMap->getGlobalElement(i),global_indices,global_values);
 
                 LO size = global_indices.size();
                 if (size>0) {
@@ -192,9 +196,9 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
                     ArrayView<LO> local_cols (local_cols_vector);
                     ArrayView<SC> local_vals (local_vals_vector);
                     for (LO j=0; j<size; j++) {
-                        GO localIndex = subdomainMap->getLocalElement(global_indices[j]);
+                        GO localIndex = subdomainRowMap->getLocalElement(global_indices[j]);
                         if (localIndex>=0) {
-                            local_cols[new_nnz] = localSubdomainColMap->getLocalElement(localIndex);
+                            local_cols[new_nnz] = localIndex;
                             local_vals[new_nnz] = global_values[j];
                             new_nnz ++;
                         }
@@ -202,10 +206,11 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
                     localSubdomainMatrix->replaceLocalValues(i, local_cols(0, new_nnz), local_vals(0, new_nnz));
                 }
             }
+            RCP<ParameterList> fillCompleteParams(new ParameterList);
+            fillCompleteParams->set("No Nonlocal Changes", true);
+            localSubdomainMatrix->fillComplete(fillCompleteParams);
         }
-        RCP<ParameterList> fillCompleteParams(new ParameterList);
-        fillCompleteParams->set("No Nonlocal Changes", true);
-        localSubdomainMatrix->fillComplete(fillCompleteParams);
+
         return;
     }
 
@@ -304,7 +309,7 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
         RCP<Map<LO,GO,NO> > mapJ = MapFactory<LO,GO,NO>::Build(k->getRowMap()->lib(),-1,indJ(),0,k->getRowMap()->getComm());
         RCP<Map<LO,GO,NO> > mapJLocal = MapFactory<LO,GO,NO>::Build(k->getRowMap()->lib(),-1,indJ.size(),0,k->getRowMap()->getComm());
         RCP<const Map<LO,GO,NO> > colMap = k->getColMap();
-#if 0//defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
+#if defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
         if (k->getRowMap()->lib() == UseTpetra) 
         {
             using crsmat_type  = typename Matrix<SC,LO,GO,NO>::local_matrix_type;
@@ -420,7 +425,6 @@ if (myRank == 10 && i == 0) printf( "%d %d->%d, %e\n",i,indices[j],localIndex, v
                             if (tmp2>=0) {
                                 IndicesII(nnz_i) = tmp2;
                                 ValuesII(nnz_i)  = localK.values[j];
-//if (myRank == 10 && tmp1 == 0) printf(" %d: %d->%d, %d->%d, %e\n",nnz_i, i,tmp1, colid,tmp2, ValuesII(nnz_i));
                                 nnz_i++;
                             } else {
                                 tmp2 = localMapJ.getLocalElement(colid);
