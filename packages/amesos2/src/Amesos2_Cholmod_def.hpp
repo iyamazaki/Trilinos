@@ -211,6 +211,8 @@ Cholmod<Matrix,Vector>::numericFactorization_impl()
   else {
     cholmod_l_factorize(&data_.A, data_.L, &(data_.c));
   }
+  //std::cout << (data_.L->is_super ? " * SuperNodal" : "not SuperNodal") << std::endl;
+  //std::cout << (data_.L->is_ll ? " * LLt factor" : " * LDLt factor") << std::endl;
 
   info = data_.c.status;
 
@@ -221,7 +223,7 @@ Cholmod<Matrix,Vector>::numericFactorization_impl()
     std::runtime_error,
     "Amesos2 cholmod_l_factorize error code: CHOLMOD_OUT_OF_MEMORY");
 
-  TEUCHOS_TEST_FOR_EXCEPTION(info == CHOLMOD_NOT_POSDEF,
+  TEUCHOS_TEST_FOR_EXCEPTION(info == CHOLMOD_NOT_POSDEF && data_.L->is_ll,
     std::runtime_error,
     "Amesos2 cholmod_l_factorize error code: CHOLMOD_NOT_POSDEF.");
 
@@ -415,7 +417,8 @@ Cholmod<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::Parameter
 #endif
 
   bool bSuperNodal = parameterList->get<bool>("SuperNodal", false);
-  data_.c.supernodal = bSuperNodal ? CHOLMOD_SUPERNODAL : CHOLMOD_AUTO;
+  //data_.c.supernodal = bSuperNodal ? CHOLMOD_SUPERNODAL : CHOLMOD_AUTO;
+  data_.c.supernodal = bSuperNodal ? CHOLMOD_SUPERNODAL : CHOLMOD_SIMPLICIAL;
 }
 
 
@@ -676,6 +679,50 @@ Cholmod<Matrix,Vector>::triangular_solve_numeric()
       (&device_long_khL_, &device_long_khU_, data_.L, &data_.c);
   }
 #endif // HAVE_AMESOS2_TRIANGULAR_SOLVE
+}
+
+template <class Matrix, class Vector>
+void
+Cholmod<Matrix,Vector>::getDiagonals(const Teuchos::RCP<Vector> d)
+{
+#if !defined(KOKKOSKERNELS_ENABLE_SUPERNODAL_SPTRSV)
+  TEUCHOS_TEST_FOR_EXCEPTION(1, std::runtime_error, "KOKKOSKERNELS_SUPERNODAL_SPTRSV not enabled.");
+#elif !defined(KOKKOSKERNELS_ENABLE_TPL_CHOLMOD)
+  TEUCHOS_TEST_FOR_EXCEPTION(1, std::runtime_error, "KOKKOSKERNELS_TPL_CHOLMOD not enabled.");
+#else
+  // get diagonal entries
+  using host_execution_space = Kokkos::DefaultHostExecutionSpace;
+  using host_vector_t = Kokkos::View<scalar_type *, Kokkos::LayoutLeft, host_execution_space>;
+  host_vector_t D_view;
+  if(use_cholmod_int_type_) {
+    D_view = KokkosSparse::Experimental::read_supernodal_diagonals<int, host_vector_t>(data_.L);
+  } else {
+    D_view = KokkosSparse::Experimental::read_supernodal_diagonals<long, host_vector_t>(data_.L);
+  }
+
+  // get pointers to output vector
+  using MVAdapter = MultiVecAdapter<Vector>;
+  Teuchos::RCP<MVAdapter> D = createMultiVecAdapter<Vector>(Teuchos::rcpFromPtr(d.ptr()));
+  const int ldd = D->getLocalLength();
+  auto Dptr = Teuchos::Ptr<MVAdapter>(D.ptr());
+
+  // wrap pointer to Kokkos view
+  using host_mvector_t = Kokkos::View<scalar_type **, Kokkos::LayoutLeft, host_execution_space>;
+  host_mvector_t D_out;
+  int rowIndexBase = 0;
+  bool not_initialize_data = false;
+  Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
+    do_get(not_initialize_data, Dptr, D_out, ldd, CONTIGUOUS_AND_ROOTED, rowIndexBase);
+
+  // deep-copy into output view
+  host_mvector_t D_2d (const_cast<scalar_type*>(D_view.data()), D_view.extent(0), 1);
+  Kokkos::deep_copy(D_out, D_2d);
+
+  // put the output back into output vector
+  Kokkos::resize(D_out, ldd, 1);
+  Util::put_1d_data_helper_kokkos_view<MVAdapter, host_mvector_t>::
+    do_put(Dptr, D_out, ldd, CONTIGUOUS_AND_ROOTED, rowIndexBase);
+#endif
 }
 
 

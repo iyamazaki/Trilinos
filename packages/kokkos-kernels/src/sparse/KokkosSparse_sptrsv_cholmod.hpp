@@ -294,6 +294,34 @@ void sptrsv_compute(KernelHandle *kernelHandleL, KernelHandle *kernelHandleU,
   handleU->set_numeric_complete();
 }
 
+/* =========================================================================================
+ */
+template <typename cholmod_int_type, typename scalar_view_t>
+scalar_view_t read_supernodal_diagonals(cholmod_factor *L) {
+  using scalar_t = typename scalar_view_t::value_type;
+  size_t n = L->n;
+
+  scalar_view_t diags;
+  if (L->is_super) {
+    size_t nsuper = L->nsuper;  // # of supernodal columns
+    cholmod_int_type *mb     = (cholmod_int_type *)(L->pi);
+    cholmod_int_type *nb     = (cholmod_int_type *)(L->super);
+    //cholmod_int_type *rowind = (cholmod_int_type *)(L->s);
+    cholmod_int_type *colptr = (cholmod_int_type *)(L->px);
+    scalar_t *Lx             = (scalar_t *)(L->x);  // data
+
+    bool ptr_by_column = false;
+    diags = read_supernodal_diagonals<scalar_view_t>(n, nsuper, ptr_by_column, mb, nb, colptr, Lx);
+  } else {
+    cholmod_int_type *colptr = (cholmod_int_type *)(L->p);
+    cholmod_int_type *nnz    = (cholmod_int_type *)(L->nz);
+    cholmod_int_type *rowind = (cholmod_int_type *)(L->i);
+    scalar_t *Lx             = (scalar_t *)(L->x);  // data
+    diags = read_nonsupernodal_diagonals<scalar_view_t>(n, colptr, nnz, rowind, Lx);
+  }
+  return diags;
+}
+
 }  // namespace Experimental
 }  // namespace KokkosSparse
 

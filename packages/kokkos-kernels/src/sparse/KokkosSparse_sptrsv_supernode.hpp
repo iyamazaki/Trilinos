@@ -1718,7 +1718,7 @@ crsmat_t read_supernodal_values(KernelHandle *kernelHandle, int n, int nsuper,
   // lower is always in CSC, if UinCSC, then lower=false, else lower=true
   bool lower_tri = kernelHandle->is_sptrsv_lower_tri();
   bool lower     = ((lower_tri && handle->is_column_major()) ||
-                (!lower_tri && !handle->is_column_major()));
+                   (!lower_tri && !handle->is_column_major()));
 
   // load graph
   auto rowmap_view = static_graph.row_map;
@@ -1865,6 +1865,59 @@ crsmat_t read_supernodal_values(KernelHandle *kernelHandle, int n, int nsuper,
   crsmat_t crsmat("CrsMatrix", n, values_view, static_graph);
 
   return crsmat;
+}
+
+/* =========================================================================================
+ */
+template <typename scalar_view_t, typename size_type, typename ordinal_type>
+scalar_view_t read_nonsupernodal_diagonals(int n, const size_type *colptr, const size_type *nnz,
+                                        const ordinal_type *rowind, typename scalar_view_t::value_type *Lx) {
+  printf( " in KokkosKernels::read_nonsupernodal_diagonals (n=%d)\n",n );
+  scalar_view_t diags("diagonals_view", n);
+  auto diags_host = Kokkos::create_mirror_view(diags);
+  for (int j = 0; j < n; j++) {
+    diags_host(j) = Lx[colptr[j]];
+    /*for (size_type k = colptr[j]; k < colptr[j+1]; k++) {
+      printf("%d %d %e\n",rowind[k], j, Lx[k]);
+    }*/
+  }
+  Kokkos::deep_copy(diags, diags_host);
+  return diags;
+}
+
+template <typename scalar_view_t, typename input_size_type, typename input_ptr_type, typename size_type>
+scalar_view_t read_supernodal_diagonals(int n, int nsuper, bool ptr_by_column, const input_size_type *mb, const input_ptr_type *nb, 
+                                        const size_type *colptr, typename scalar_view_t::value_type *Lx) {
+  printf( " in KokkosKernels::read_supernodal_diagonals (n=%d, nsuper=%d)\n",n,nsuper );
+  scalar_view_t diags("diagonals_view", n);
+  auto diags_host = Kokkos::create_mirror_view(diags);
+  for (int s = 0; s < nsuper; s++) {
+    int j1    = nb[s];
+    int j2    = nb[s + 1];
+    int nscol = j2 - j1;  // number of columns in the s-th supernode column
+
+    int i1, i2;
+    if (ptr_by_column) {
+      i1 = mb[j1];
+      i2 = mb[j1 + 1];
+    } else {
+      i1 = mb[s];
+      i2 = mb[s + 1];
+    }
+    int nsrow = i2 - i1;  // "total" number of rows in all the supernodes
+                          // (diagonal+off-diagonal)
+    int psx;  // offset into data,   Lx[s][s]
+    if (ptr_by_column) {
+      psx = colptr[j1];
+    } else {
+      psx = colptr[s];
+    }
+    for (int jj = 0; jj < nscol; jj++) {
+      diags_host(j1 + jj) = Lx[psx + (jj + jj * nsrow)];
+    }
+  }
+  Kokkos::deep_copy(diags, diags_host);
+  return diags;
 }
 
 /* =========================================================================================

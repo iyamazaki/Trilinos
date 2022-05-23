@@ -122,6 +122,8 @@ public:
   /// Destructor
   ~Cholmod( );
 
+  void getDiagonals(const Teuchos::RCP<Vector> d);
+
   //@}
 
 private:

@@ -291,6 +291,10 @@ namespace Amesos2 {
     /// Return the name of this solver.
     virtual std::string name( void ) const = 0;
 
+    virtual void getDiagonals(const Teuchos::RCP<Vector> D) {
+      TEUCHOS_TEST_FOR_EXCEPTION(1, std::runtime_error, "getDiagonals not supported.");
+    }
+
     /// @} End Accessor Methods
 
 

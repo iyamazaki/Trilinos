@@ -274,7 +274,6 @@ namespace Amesos2 {
 
     const Vector* getBRaw(){ return multiVecB_.getRawPtr(); }
 
-
     /// \name Parameter methods
     //@{
 
