@@ -825,6 +825,10 @@ class KokkosKernelsHandle {
   void set_sptrsv_trmm_on_device(bool trmm_on_device) {
     this->sptrsvHandle->set_trmm_on_device(trmm_on_device);
   }
+
+  int get_sptrsv_num_levels() {
+    return this->sptrsvHandle->get_num_levels();
+  }
 #endif
   void destroy_sptrsv_handle() {
     if (is_owner_of_the_sptrsv_handle && this->sptrsvHandle != nullptr) {

@@ -587,6 +587,8 @@ compute ()
       kh_->create_sptrsv_handle(KokkosSparse::Experimental::SPTRSVAlgorithm::SEQLVLSCHD_TP1, numRows, is_lower_tri);
     }
     KokkosSparse::Experimental::sptrsv_symbolic(kh_.getRawPtr(), ptr, ind, val);
+    std::cout << A_->getComm()->getRank() << " : nnz = " << Alocal.nnz()
+              << ", num levels = " << kh_->get_sptrsv_num_levels() << "(" << (is_lower_tri ? "lower)" : "upper)") << std::endl;
   }
 
   isComputed_ = true;

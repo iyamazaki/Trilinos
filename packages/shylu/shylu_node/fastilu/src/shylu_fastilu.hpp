@@ -907,7 +907,14 @@ class FastILUPrec
 
             if (level > 0)
             {
-                initGuessPrec = Teuchos::rcp(new FastPrec(aRowMapIn_, aColIdxIn_, aValIn_, nRow_, sptrsv_algo_, 3, 5,
+                #if 1
+                Ordinal nFact_guess = 3;
+                Ordinal nTrisol_guess = 5;
+                #else
+                Ordinal nFact_guess = nFact_;
+                Ordinal nTrisol_guess = nTrisol_;
+                #endif
+                initGuessPrec = Teuchos::rcp(new FastPrec(aRowMapIn_, aColIdxIn_, aValIn_, nRow_, sptrsv_algo_, nFact_guess, nTrisol_guess,
                                                           level_-1, omega_, shift_, guessFlag_, blkSzILU_, blkSz_));
             }
         }
@@ -1142,9 +1149,19 @@ class FastILUPrec
             std::cout << "  > numericILU " << Timer.seconds() << std::endl;
             Timer.reset();
             #endif
+            printf( " omega = %e, nFact = %d\n",omega,nFact );
+#define FASTILU_BUFFER
+#ifdef FASTILU_BUFFER
+ScalarArray lVal_tmp ("lVal_tmp", lVal.extent(0));
+ScalarArray uVal_tmp ("uVal_tmp", uVal.extent(0));
+#endif
             FastILUFunctor<Ordinal, Scalar, ExecSpace> iluFunctor(aRowMap_[nRows], blkSzILU,
                     aRowMap, aColIdx, aRowIdx, aVal, 
-                    lRowMap, lColIdx, lVal, uRowMap, uColIdx, uVal, diagElems, omega);
+                    lRowMap, lColIdx, lVal, uRowMap, uColIdx, uVal, diagElems, omega
+#ifdef FASTILU_BUFFER
+                    , lVal_tmp, uVal_tmp
+#endif
+                    );
             Ordinal extent = aRowMap_[nRows]/blkSzILU;
             if (aRowMap_[nRows]%blkSzILU != 0)
             {
@@ -1156,7 +1173,35 @@ class FastILUPrec
             for (int i = 0; i < nFact; i++) 
             {
                 Kokkos::parallel_for(extent, iluFunctor);
+ExecSpace().fence();
+#ifdef FASTILU_BUFFER
+                Kokkos::deep_copy(lVal, lVal_tmp);
+                Kokkos::deep_copy(uVal, uVal_tmp);
+#endif
             }
+#ifdef FASTILU_BUFFER
+Kokkos::deep_copy(lRowMap_, lRowMap);
+Kokkos::deep_copy(lColIdx_, lColIdx);
+Kokkos::deep_copy(lVal_, lVal);
+printf("L=[\n");
+for (Ordinal i = 0; i < nRows; i++) {
+  for (size_t k = lRowMap_(i); k < lRowMap_[i+1]; k++) {
+    printf("%d %d %.16e\n",i,lColIdx_(k),lVal_(k));
+  }
+}
+printf("];\n");
+
+Kokkos::deep_copy(uRowMap_, uRowMap);
+Kokkos::deep_copy(uColIdx_, uColIdx);
+Kokkos::deep_copy(uVal_, uVal);
+printf("U=[\n");
+for (Ordinal i = 0; i < nRows; i++) {
+  for (size_t k = uRowMap_(i); k < uRowMap_[i+1]; k++) {
+    printf("%d %d %.16e\n",i,uColIdx_(k),uVal_(k));
+  }
+}
+printf("];\n");
+#endif
             ExecSpace().fence();
             #ifdef FASTILU_TIMER
             std::cout << "  > iluFunctor (" << nFact << ") " << Timer.seconds() << std::endl;
@@ -1591,10 +1636,17 @@ class FastILUFunctor
         FastILUFunctor (Ordinal nNZ, Ordinal bs, ordinal_array_type Ap, ordinal_array_type Ai,
                 ordinal_array_type Aj, scalar_array_type Ax, ordinal_array_type Lp,
                 ordinal_array_type Li, scalar_array_type Lx, ordinal_array_type Up,
-                ordinal_array_type Ui, scalar_array_type Ux, scalar_array_type diag, Scalar omega)
+                ordinal_array_type Ui, scalar_array_type Ux, scalar_array_type diag, Scalar omega
+#ifdef FASTILU_BUFFER
+                , scalar_array_type Lx_tmp, scalar_array_type Ux_tmp
+#endif
+                )
             :
-                nnz(nNZ), blk_size(bs), _Ap(Ap), _Ai(Ai), _Aj(Aj),  _Lp(Lp), _Li(Li),_Up(Up),
-                _Ui(Ui), _Ax(Ax), _Lx(Lx), _Ux(Ux), _diag(diag), _omega(omega)
+                nnz(nNZ), blk_size(bs), _Ap(Ap), _Ai(Ai), _Aj(Aj),  _Lp(Lp), _Li(Li),
+                _Up(Up), _Ui(Ui), _Ax(Ax), _Lx(Lx), _Ux(Ux), _diag(diag), _omega(omega)
+#ifdef FASTILU_BUFFER
+                , _Lx_tmp(Lx_tmp), _Ux_tmp(Ux_tmp)
+#endif
         {}
 
         KOKKOS_INLINE_FUNCTION
@@ -1651,13 +1703,21 @@ class FastILUFunctor
                     if (i > j) 
                     {
                         val = (val-acc_val) / _Ux[_Up[j+1]-1];
+#ifdef FASTILU_BUFFER
+                        _Lx_tmp[lptr-1] = ((one - _omega) * _Lx[lptr-1]) + (_omega * val);
+#else
                         _Lx[lptr-1] = ((one - _omega) * _Lx[lptr-1]) + (_omega * val);
+#endif
                     }
                     else
                     {
                         val = (val-acc_val);
                         if (i == j) _diag[j] = val;
+#ifdef FASTILU_BUFFER
+                        _Ux_tmp[uptr-1] = ((one - _omega) * _Ux[uptr - 1]) + (_omega * val);
+#else
                         _Ux[uptr-1] = ((one - _omega) * _Ux[uptr - 1]) + (_omega * val);
+#endif
                     }
                 }
             }
@@ -1665,6 +1725,9 @@ class FastILUFunctor
         Ordinal nnz, blk_size;
         ordinal_array_type _Ap, _Ai, _Aj, _Lp, _Li, _Up, _Ui;
         scalar_array_type _Ax, _Lx, _Ux, _diag;
+#ifdef FASTILU_BUFFER
+        scalar_array_type _Lx_tmp, _Ux_tmp;
+#endif
         Scalar _omega;
 };
 
