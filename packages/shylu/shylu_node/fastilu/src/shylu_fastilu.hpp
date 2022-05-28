@@ -1150,13 +1150,13 @@ class FastILUPrec
             Timer.reset();
             #endif
             printf( " omega = %e, nFact = %d\n",omega,nFact );
-#define FASTILU_BUFFER
+//#define FASTILU_BUFFER
 #ifdef FASTILU_BUFFER
 ScalarArray lVal_tmp ("lVal_tmp", lVal.extent(0));
 ScalarArray uVal_tmp ("uVal_tmp", uVal.extent(0));
 #endif
             FastILUFunctor<Ordinal, Scalar, ExecSpace> iluFunctor(aRowMap_[nRows], blkSzILU,
-                    aRowMap, aColIdx, aRowIdx, aVal, 
+                    aRowMap, aRowIdx, aColIdx, aVal, 
                     lRowMap, lColIdx, lVal, uRowMap, uColIdx, uVal, diagElems, omega
 #ifdef FASTILU_BUFFER
                     , lVal_tmp, uVal_tmp
@@ -1170,8 +1170,42 @@ ScalarArray uVal_tmp ("uVal_tmp", uVal.extent(0));
             //Ordinal extent = aRowMap[nRows];
             //ExecSpace().fence();
 
+#if 0//def FASTILU_BUFFER
+printf("A=[\n");
+for (Ordinal i = 0; i < nRows; i++) {
+  for (size_t k = aRowMap(i); k < aRowMap[i+1]; k++) {
+    printf("%d %d %.16e %d\n",aRowIdx(k),aColIdx(k),aVal(k),k);
+  }
+}
+printf("];\n");
+//Kokkos::deep_copy(lRowMap_, lRowMap);
+//Kokkos::deep_copy(lColIdx_, lColIdx);
+//Kokkos::deep_copy(lVal_, lVal);
+printf("L0=[\n");
+for (Ordinal i = 0; i < nRows; i++) {
+  for (size_t k = lRowMap(i); k < lRowMap[i+1]; k++) {
+    printf("%d %d %.16e\n",i,lColIdx(k),lVal(k));
+  }
+}
+printf("];\n");
+
+//Kokkos::deep_copy(uRowMap_, uRowMap);
+//Kokkos::deep_copy(uColIdx_, uColIdx);
+//Kokkos::deep_copy(uVal_, uVal);
+printf("U0=[\n");
+for (Ordinal i = 0; i < nRows; i++) {
+  for (size_t k = uRowMap(i); k < uRowMap[i+1]; k++) {
+    printf("%d %d %.16e\n",i,uColIdx(k),uVal(k));
+  }
+}
+printf("];\n");
+#endif
             for (int i = 0; i < nFact; i++) 
             {
+#ifdef FASTILU_BUFFER
+                Kokkos::deep_copy(lVal_tmp, lVal);
+                Kokkos::deep_copy(uVal_tmp, uVal);
+#endif
                 Kokkos::parallel_for(extent, iluFunctor);
 ExecSpace().fence();
 #ifdef FASTILU_BUFFER
@@ -1179,25 +1213,25 @@ ExecSpace().fence();
                 Kokkos::deep_copy(uVal, uVal_tmp);
 #endif
             }
-#ifdef FASTILU_BUFFER
-Kokkos::deep_copy(lRowMap_, lRowMap);
-Kokkos::deep_copy(lColIdx_, lColIdx);
-Kokkos::deep_copy(lVal_, lVal);
+#if 0//def FASTILU_BUFFER
+//Kokkos::deep_copy(lRowMap_, lRowMap);
+//Kokkos::deep_copy(lColIdx_, lColIdx);
+//Kokkos::deep_copy(lVal_, lVal);
 printf("L=[\n");
 for (Ordinal i = 0; i < nRows; i++) {
-  for (size_t k = lRowMap_(i); k < lRowMap_[i+1]; k++) {
-    printf("%d %d %.16e\n",i,lColIdx_(k),lVal_(k));
+  for (size_t k = lRowMap(i); k < lRowMap[i+1]; k++) {
+    printf("%d %d %.16e\n",i,lColIdx(k),lVal(k));
   }
 }
 printf("];\n");
 
-Kokkos::deep_copy(uRowMap_, uRowMap);
-Kokkos::deep_copy(uColIdx_, uColIdx);
-Kokkos::deep_copy(uVal_, uVal);
+//Kokkos::deep_copy(uRowMap_, uRowMap);
+//Kokkos::deep_copy(uColIdx_, uColIdx);
+//Kokkos::deep_copy(uVal_, uVal);
 printf("U=[\n");
 for (Ordinal i = 0; i < nRows; i++) {
-  for (size_t k = uRowMap_(i); k < uRowMap_[i+1]; k++) {
-    printf("%d %d %.16e\n",i,uColIdx_(k),uVal_(k));
+  for (size_t k = uRowMap(i); k < uRowMap[i+1]; k++) {
+    printf("%d %d %.16e\n",i,uColIdx(k),uVal(k));
   }
 }
 printf("];\n");
@@ -1676,15 +1710,26 @@ class FastILUFunctor
                     Scalar lAdd = zero;
                     Ordinal lptr = _Lp[i];
                     Ordinal uptr = _Up[j];
+/*if (i == 3 && j == 2) {
+  printf( "a=%e (%d)\n",val,nz_index );
+  printf( "l=[\n" );
+  for (int k = _Lp[i]; k < _Lp[i+1]; k++) printf( "%d %e\n",_Li[k],_Lx[k] );
+  printf( "];\n" );
+  printf( "u=[\n" );
+  for (int k = _Up[j]; k < _Up[j+1]; k++) printf( "%d %e\n",_Ui[k],_Ux[k] );
+  printf( "];\n" );
+}*/
 
                     while ( lptr < _Lp[i+1] && uptr < _Up[j+1] ) 
                     {
                         lCol = _Li[lptr];
                         uCol = _Ui[uptr];
                         lAdd = zero;
+//if (i == 3 && j == 2) printf( " L(,%d) = %e, U(%d,)=%e\n",_Li[lptr],_Lx[lptr], _Ui[uptr],_Ux[uptr]);
                         if (lCol == uCol)
                         {
                             lAdd = _Lx[lptr] * _Ux[uptr];
+//if (i == 3 && j == 2) printf( " acc += %e + %e*%e\n",acc_val,_Lx[lptr],_Ux[uptr],acc_val+lAdd);
                             acc_val += lAdd; 
                         }
                         if (lCol <= uCol)
@@ -1696,14 +1741,15 @@ class FastILUFunctor
                             uptr++;
                         }
                     }
-
                     acc_val -= lAdd;
+//if (i == 3 && j == 2) printf( " acc -> %e\n",acc_val);
 
                     // Place the value into L or U
                     if (i > j) 
                     {
                         val = (val-acc_val) / _Ux[_Up[j+1]-1];
 #ifdef FASTILU_BUFFER
+if (i == 3 && j == 2) printf( " l = %e*%e + %e*%e\n",(one - _omega),_Lx[lptr - 1], _omega,val);
                         _Lx_tmp[lptr-1] = ((one - _omega) * _Lx[lptr-1]) + (_omega * val);
 #else
                         _Lx[lptr-1] = ((one - _omega) * _Lx[lptr-1]) + (_omega * val);
@@ -1714,6 +1760,7 @@ class FastILUFunctor
                         val = (val-acc_val);
                         if (i == j) _diag[j] = val;
 #ifdef FASTILU_BUFFER
+if (i == 3 && j == 2) printf( " u = %e*%e + %e*%e\n",(one - _omega),_Ux[uptr - 1], _omega,val);
                         _Ux_tmp[uptr-1] = ((one - _omega) * _Ux[uptr - 1]) + (_omega * val);
 #else
                         _Ux[uptr-1] = ((one - _omega) * _Ux[uptr - 1]) + (_omega * val);
@@ -1725,10 +1772,10 @@ class FastILUFunctor
         Ordinal nnz, blk_size;
         ordinal_array_type _Ap, _Ai, _Aj, _Lp, _Li, _Up, _Ui;
         scalar_array_type _Ax, _Lx, _Ux, _diag;
+        Scalar _omega;
 #ifdef FASTILU_BUFFER
         scalar_array_type _Lx_tmp, _Ux_tmp;
 #endif
-        Scalar _omega;
 };
 
 
