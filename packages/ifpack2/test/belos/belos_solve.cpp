@@ -189,17 +189,22 @@ int main (int argc, char* argv[])
       prec->describe (*out, Teuchos::VERB_LOW);
     }
 
-    RCP<TMV> R = rcp(new TMV(*problem->getRHS()));
+    RCP<TMV> R = rcp(new TMV(*problem->getRHS(), Teuchos::Copy));
     problem->computeCurrResVec(&*R, &*problem->getLHS(), &*problem->getRHS());
-    Teuchos::Array<Teuchos::ScalarTraits<Scalar>::magnitudeType> norms(R->getNumVectors());
-    R->norm2(norms);
+    Teuchos::Array<Teuchos::ScalarTraits<Scalar>::magnitudeType> normsR(R->getNumVectors());
+    Teuchos::Array<Teuchos::ScalarTraits<Scalar>::magnitudeType> normsB(R->getNumVectors());
+    Teuchos::Array<Teuchos::ScalarTraits<Scalar>::magnitudeType> normsX(R->getNumVectors());
+    R->norm2(normsR);
+    problem->getRHS()->norm2(normsB);
+    problem->getLHS()->norm2(normsX);
 
-    if (norms.size() < 1) {
+    if (normsR.size() < 1) {
       throw std::runtime_error("ERROR: norms.size()==0 indicates R->getNumVectors()==0.");
     }
-
-    *out << "2-Norm of 0th residual vec: " << norms[0] << std::endl;
+    *out << std::endl;
+    *out << "2-Norm of 0th residual vec: " << normsR[0] << "(" << normsB[0] << ", " << normsX[0] << ")" << std::endl;
     *out << "Achieved tolerance: " << solver->achievedTol() << std::endl;
+    *out << std::endl;
 
     //If the xml file specified a number of iterations to expect, then we will
     //use that as a test pass/fail criteria.
@@ -208,13 +213,13 @@ int main (int argc, char* argv[])
       int expected_iters = 0;
       Ifpack2::getParameter(test_params, "expectNumIters", expected_iters);
       int actual_iters = solver->getNumIters();
-      if (ret == Belos::Converged && actual_iters <= expected_iters && norms[0] < 1.e-7) {
+      if (ret == Belos::Converged && actual_iters <= expected_iters && normsR[0] < 1.e-7) {
       }
       else {
         success = false;
         *out << "Actual iters("<<actual_iters
              <<") > expected number of iterations ("
-             <<expected_iters<<"), or resid-norm(" << norms[0] << ") >= 1.e-7"<<std::endl;
+             <<expected_iters<<"), or resid-norm(" << normsR[0] << ") >= 1.e-7"<<std::endl;
       }
     }
 
