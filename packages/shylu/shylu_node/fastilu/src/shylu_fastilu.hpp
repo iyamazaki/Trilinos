@@ -150,6 +150,11 @@ class FastILUPrec
         OrdinalArrayMirror lColIdx_;
         OrdinalArrayMirror lRowMap_;
 
+        //Lower triangular factor (CSR) for TRSV (not SpTRSV)
+        ScalarArrayHost lVal_trsv_;
+        OrdinalArrayHost lColIdx_trsv_;
+        OrdinalArrayHost lRowMap_trsv_;
+
         //Upper triangular factor (CSC)
         ScalarArray uVal;
         OrdinalArray uColIdx;
@@ -167,6 +172,12 @@ class FastILUPrec
         ScalarArrayMirror utVal_;
         OrdinalArrayMirror utColIdx_;
         OrdinalArrayMirror utRowMap_;
+
+        //Upper triangular factor (CSR) for TRSV (not SpTRSV)
+        ScalarArrayHost  dVal_trsv_;
+        ScalarArrayHost utVal_trsv_;
+        OrdinalArrayHost utColIdx_trsv_;
+        OrdinalArrayHost utRowMap_trsv_;
 
         //Pointer to the copy of input A.
         // device
@@ -1245,6 +1256,48 @@ printf("];\n");
             // transposee u on host (need to copy to & from host)
             double t = timer.seconds();
             transposeU();
+            #define UNIFORM_TRSV
+            #if defined(UNIFORM_TRSV)
+            if (sptrsv_algo == FastILU::SpTRSV::StandardHost) {
+                dVal_trsv_     = ScalarArrayHost ("dVal_trsv",     nRows);
+                utVal_trsv_    = ScalarArrayHost ("utVal_trsv",    utRowMap_[nRows]-nRows);
+                utColIdx_trsv_ = OrdinalArrayHost("utColIdx_trsv", utRowMap_[nRows]-nRows);
+                utRowMap_trsv_ = OrdinalArrayHost("utRowMap_trsv", nRows+1);
+
+                size_t nnzU = 0;
+                utRowMap_trsv_(0) = 0;
+                for (Ordinal i = 0; i < nRows; i++) {
+                    for (Ordinal k = utRowMap_(i); k < utRowMap_[i+1]; k++) {
+                        if (utColIdx_(k) == i) {
+                            dVal_trsv_(i) = utVal_(k);
+                        } else {
+                            utVal_trsv_(nnzU) = utVal_(k);
+                            utColIdx_trsv_(nnzU) = utColIdx_(k);
+                            nnzU++;
+                        }
+                    }
+                    utRowMap_trsv_(i+1)=nnzU;
+                }
+                for (Ordinal i = 0; i < nRows; i++) {
+                    for (Ordinal k = utRowMap_trsv_(i); k < utRowMap_trsv_[i+1]; k++) {
+                        utVal_trsv_(k) = utVal_trsv_(k) / dVal_trsv_(i);
+                    }
+                    dVal_trsv_(i) = STS::one() / dVal_trsv_(i);
+                }
+            }
+#if 0
+printf("D=[\n");
+for (Ordinal i = 0; i < nRows; i++) printf("%.16e\n",dVal_trsv_(i));
+printf("];\n");
+printf("Ut=[\n");
+for (Ordinal i = 0; i < nRows; i++) {
+  for (size_t k = utRowMap_trsv_(i); k < utRowMap_trsv_[i+1]; k++) {
+    printf("%d %d %.16e\n",i,utColIdx_trsv_(k),utVal_trsv_(k));
+  }
+}
+printf("];\n");
+#endif
+            #endif
             computeTime = t;
             #ifdef FASTILU_TIMER
             std::cout << "  > transposeU " << Timer.seconds() << std::endl;
@@ -1276,6 +1329,26 @@ printf("];\n");
                           << ", " << Timer.seconds() << " seconds" << std::endl;
                 #endif
             }
+            #if defined(UNIFORM_TRSV)
+            else if (sptrsv_algo == FastILU::SpTRSV::StandardHost) {
+                lVal_trsv_   = ScalarArrayHost ("lVal_trsv",    lRowMap_[nRows]-nRows);
+                lColIdx_trsv_ = OrdinalArrayHost("lColIdx_trsv", lRowMap_[nRows]-nRows);
+                lRowMap_trsv_ = OrdinalArrayHost("lRowMap_trsv", nRows+1);
+
+                size_t nnzL = 0;
+                lRowMap_trsv_(0) = 0;
+                for (Ordinal i = 0; i < nRows; i++) {
+                    for (size_t k = lRowMap_(i); k < lRowMap_[i+1]; k++) {
+                        if (lColIdx_(k) != i) {
+                            lVal_trsv_(nnzL) = lVal_(k);
+                            lColIdx_trsv_(nnzL) = lColIdx_(k);
+                            nnzL++;
+                        }
+                    }
+                    lRowMap_trsv_(i+1)=nnzL;
+                 }
+            }
+            #endif
             #ifdef FASTILU_TIMER
             std::cout << "  >> compute done " << Timer2.seconds() << " <<" << std::endl << std::endl;
             #endif
@@ -1307,20 +1380,56 @@ printf("];\n");
                 auto y_ = Kokkos::create_mirror(y2d);
 
                 // wrap L into crsmat on host
+                #if defined(UNIFORM_TRSV)
+                graph_t static_graphL(lColIdx_trsv_, lRowMap_trsv_);
+                crsmat_t crsmatL("CrsMatrix", nRows, lVal_trsv_, static_graphL);
+                #else
                 graph_t static_graphL(lColIdx_, lRowMap_);
                 crsmat_t crsmatL("CrsMatrix", nRows, lVal_, static_graphL);
+                #endif
 
                 // wrap U into crsmat on host
+                #if defined(UNIFORM_TRSV)
+                graph_t static_graphU(utColIdx_trsv_, utRowMap_trsv_);
+                crsmat_t crsmatU("CrsMatrix", nRows, utVal_trsv_, static_graphU);
+                #else
                 graph_t static_graphU(utColIdx_, utRowMap_);
                 crsmat_t crsmatU("CrsMatrix", nRows, utVal_, static_graphU);
+                #endif
 
                 // copy x to host
                 Kokkos::deep_copy(x_, x2d);
 
+{
+    Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("LocalSparseTriangularSolve::apply(L)");
+    Teuchos::TimeMonitor timeMon (*localTimer);
                 // solve with L
+                #if defined(UNIFORM_TRSV)
+                KokkosSparse::trsv ("L", "N", "U", crsmatL, x_, y_);
+                #else
                 KokkosSparse::trsv ("L", "N", "N", crsmatL, x_, y_);
+                #endif
+}
+{
+    Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("LocalSparseTriangularSolve::apply(D)");
+    Teuchos::TimeMonitor timeMon (*localTimer);
+                // solve with D
+                #if defined(UNIFORM_TRSV)
+                for (Ordinal i = 0; i < nRows; i++) {
+                    y_(i, 0) = dVal_trsv_(i) * y_(i, 0);
+                }
+                #endif
+}
+{
+    Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("LocalSparseTriangularSolve::apply(U)");
+    Teuchos::TimeMonitor timeMon (*localTimer);
                 // solve with U
+                #if defined(UNIFORM_TRSV)
+                KokkosSparse::trsv ("U", "N", "U", crsmatU, y_, x_);
+                #else
                 KokkosSparse::trsv ("U", "N", "N", crsmatU, y_, x_);
+                #endif
+}
 
                 // copy x to device
                 Kokkos::deep_copy(x2d, x_);
