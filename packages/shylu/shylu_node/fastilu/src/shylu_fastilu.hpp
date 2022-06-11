@@ -548,11 +548,11 @@ class FastILUPrec
 
             //Create mirror
             lColIdx_ = Kokkos::create_mirror(lColIdx);
-            lVal_    = Kokkos::create_mirror(lVal);
             uColIdx_ = Kokkos::create_mirror(uColIdx);
-            uVal_    = Kokkos::create_mirror(uVal);
-
             utColIdx_ = Kokkos::create_mirror(utColIdx);
+
+            lVal_    = Kokkos::create_mirror(lVal);
+            uVal_    = Kokkos::create_mirror(uVal);
             utVal_    = Kokkos::create_mirror(utVal);
         }
 
@@ -572,7 +572,7 @@ class FastILUPrec
             aColIdx_ = Kokkos::create_mirror(aColIdx);
             aRowIdx_ = Kokkos::create_mirror(aRowIdx);
 
-            aVal = ScalarArray("aVal", aColIdx.extent(0));
+            aVal = ScalarArray("aVal", nnzA);
             aVal_ = Kokkos::create_mirror(aVal);
 
             Ordinal aRowPtr = 0;
@@ -612,13 +612,16 @@ class FastILUPrec
             //Now allocate memory for L and U. 
             //
             lRowMap = OrdinalArray("lRowMap", nRows + 1);
-            uRowMap = OrdinalArray("uRowMap", nRows + 1);
-            utRowMap = OrdinalArray("utRowMap", nRows + 1);
+            lRowMap_ = Kokkos::create_mirror(lRowMap);
             countL();
             #ifdef FASTILU_DEBUG_OUTPUT
             std::cout << "**Finished counting L" << std::endl;
             #endif
             
+            uRowMap = OrdinalArray("uRowMap", nRows + 1);
+            utRowMap = OrdinalArray("utRowMap", nRows + 1);
+            utRowMap_ = Kokkos::create_mirror(utRowMap);
+            uRowMap_  = Kokkos::create_mirror(uRowMap);
             countU();
             #ifdef FASTILU_DEBUG_OUTPUT
             std::cout << "**Finished counting U" << std::endl;
@@ -632,6 +635,15 @@ class FastILUPrec
             lVal = ScalarArray("lVal", lRowMap_[nRows]);
             uVal = ScalarArray("uVal", uRowMap_[nRows]);
             utVal = ScalarArray("utVal", uRowMap_[nRows]);
+
+            //Create mirror
+            lColIdx_ = Kokkos::create_mirror(lColIdx);
+            uColIdx_ = Kokkos::create_mirror(uColIdx);
+            utColIdx_ = Kokkos::create_mirror(utColIdx);
+
+            lVal_    = Kokkos::create_mirror(lVal);
+            uVal_    = Kokkos::create_mirror(uVal);
+            utVal_    = Kokkos::create_mirror(utVal);
         }
 
         void numericILU()
