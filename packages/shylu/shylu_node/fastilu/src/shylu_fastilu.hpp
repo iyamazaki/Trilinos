@@ -1068,7 +1068,7 @@ class FastILUPrec
             blkSzILU = blkSzILU_;
             blkSz = blkSz_;
             doUnitDiag_TRSV = true; // perform TRSV with unit diagonals
-            sptrsv_KKSpMV = false;   // use Kokkos-Kernels SpMV for Fast SpTRSV
+            sptrsv_KKSpMV = true;   // use Kokkos-Kernels SpMV for Fast SpTRSV
 
             const Scalar one = STS::one();
             onesVector = ScalarArray("onesVector", nRow_);
@@ -1199,7 +1199,7 @@ class FastILUPrec
             KOKKOS_INLINE_FUNCTION
             void operator()(const SwapDiagTag &, const int i) const {
                 const Scalar one  = STS::one();
-                const Scalar zero = STS::one();
+                const Scalar zero = STS::zero();
 		// diagonal of L (stored as last entry in the row)
                 lVal[lRowMap[i+1]-1] = zero; // -one;
 		// diagonal of U (stored as first entry in the row)
@@ -1585,7 +1585,7 @@ Kokkos::deep_copy(hRowMap, lRowMap);
 Kokkos::deep_copy(hColIdx, lColIdx);
 Kokkos::deep_copy(hVal, lVal);
 printf( " L = [\n" );
-for (int i = 0; i < nRows; i++) {
+for (int i = 0; i < 5; i++) {
  for (int k = hRowMap(i); k < hRowMap(i+1); k++) printf("%d %d %e\n",i,hColIdx(k),hVal(k));
 }
 printf(" ];\n");
@@ -1598,13 +1598,13 @@ Kokkos::deep_copy(hRowMap, utRowMap);
 Kokkos::deep_copy(hColIdx, utColIdx);
 Kokkos::deep_copy(hVal, utVal);
 printf( " U = [\n" );
-for (int i = 0; i < nRows; i++) {
+for (int i = 0; i < 5; i++) {
  for (int k = hRowMap(i); k < hRowMap(i+1); k++)
    printf("%d %d %e\n",i,hColIdx(k),hVal(k));
 }
 printf(" ];\n");
-}
-{
+}*/
+/*{
 auto hD = Kokkos::create_mirror(diagElems);
 Kokkos::deep_copy(hD, diagElems);
 printf( " D = [\n" );
@@ -1702,11 +1702,11 @@ printf(" ];\n");
                         crsmat_t crsmatU("CrsMatrix", nRows, utVal, static_graphU);
 
                         Scalar2dArray x2d_old (const_cast<Scalar*>(xOld.data()), nRows, 1);
-auto hy = Kokkos::create_mirror(y2d);
-auto hx = Kokkos::create_mirror(x2d);
-auto hx_old = Kokkos::create_mirror(x2d_old);
-Kokkos::deep_copy(hx, x2d);
-for (int i=0; i<5; i++) printf( "b[%d] = %e\n",i,hx(i,0));
+//auto hy = Kokkos::create_mirror(y2d);
+//auto hx = Kokkos::create_mirror(x2d);
+//auto hx_old = Kokkos::create_mirror(x2d_old);
+//Kokkos::deep_copy(hx, x2d);
+//for (int i=0; i<5; i++) printf( "b[%d] = %e\n",i,hx(i,0));
 
                         // 1) approximately solve, y = L^{-1}*x
 			// y = zeros
@@ -1726,17 +1726,17 @@ for (int i=0; i<5; i++) printf( "b[%d] = %e\n",i,hx(i,0));
                             ExecSpace().fence();
 			    //Kokkos::deep_copy(x2d_old, y2d);
 			    //Kokkos::deep_copy(y2d, x2d);
-printf( "\n -- %d --\n",i );
-Kokkos::deep_copy(hy, y2d);
-Kokkos::deep_copy(hx_old, x2d_old);
-Kokkos::deep_copy(hx, x2d);
-for (int i=0; i<5; i++) printf( " > x_old[%d] = %e\n",i,hx_old(i,0));
-for (int i=0; i<5; i++) printf( " > y[%d] = %e <- %e\n",i,hy(i,0),hx(i,0));
-printf("\n");
+//printf( "\n -- %d --\n",i );
+//Kokkos::deep_copy(hy, y2d);
+//Kokkos::deep_copy(hx_old, x2d_old);
+//Kokkos::deep_copy(hx, x2d);
+//for (int i=0; i<5; i++) printf( " > x_old[%d] = %e\n",i,hx_old(i,0));
+//for (int i=0; i<5; i++) printf( " > y[%d] = %e <- %e\n",i,hy(i,0),hx(i,0));
+//printf("\n");
                             KokkosSparse::spmv("N", -one, crsmatL, x2d_old, one, y2d);
                         }
-Kokkos::deep_copy(hy, y2d);
-for (int i=0; i<5; i++) printf( "y[%d] = %e\n",i,hy(i,0));
+//Kokkos::deep_copy(hy, y2d);
+//for (int i=0; i<5; i++) printf( "y[%d] = %e\n",i,hy(i,0), hx_old(i,0));
                         // 2) approximately solve, x = U^{-1}*y
 			// to copy y into x
                         ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_newY(nRows, xTemp, y);
@@ -1761,24 +1761,24 @@ for (int i=0; i<5; i++) printf( "y[%d] = %e\n",i,hy(i,0));
 			    // scale y = inv(diag(U))*y
                             Kokkos::parallel_for(nRows, parScal);
                         }
-Kokkos::deep_copy(hx, x2d);
-for (int i=0; i<5; i++) printf( "x[%d] = %e\n",i,hx(i,0));
+//Kokkos::deep_copy(hx, x2d);
+//for (int i=0; i<5; i++) printf( "x[%d] = %e %e\n",i,hx(i,0),hy(i,0));
                     } else {
                         //apply L^{-1} to xTemp
-auto hy = Kokkos::create_mirror(y2d);
-auto hx = Kokkos::create_mirror(x2d);
-Kokkos::deep_copy(hx, x2d);
-Kokkos::deep_copy(hy, y2d);
-for (int i=0; i<5; i++) printf( " 0:%d = %e\n",i,hx(i,0),hy(i,0));
+//auto hy = Kokkos::create_mirror(y2d);
+//auto hx = Kokkos::create_mirror(x2d);
+//Kokkos::deep_copy(hx, x2d);
+//Kokkos::deep_copy(hy, y2d);
+//for (int i=0; i<5; i++) printf( " 0:%d = %e\n",i,hx(i,0),hy(i,0));
                         applyL(xTemp, y);
-Kokkos::deep_copy(hx, x2d);
-Kokkos::deep_copy(hy, y2d);
-for (int i=0; i<5; i++) printf( " 1:%d = %e\n",i,hx(i,0),hy(i,0));
+//Kokkos::deep_copy(hx, x2d);
+//Kokkos::deep_copy(hy, y2d);
+//for (int i=0; i<5; i++) printf( " 1:%d = %e %e\n",i,hy(i,0),hx(i,0));
                         //apply U^{-1} to y
                         applyU(y, xTemp);
-Kokkos::deep_copy(hx, x2d);
-Kokkos::deep_copy(hy, y2d);
-for (int i=0; i<5; i++) printf( " 2:%d = %e\n",i,hx(i,0),hy(i,0));
+//Kokkos::deep_copy(hx, x2d);
+//Kokkos::deep_copy(hy, y2d);
+//for (int i=0; i<5; i++) printf( " 2:%d = %e %e\n",i,hx(i,0),hy(i,0));
                     }
                 }
             }
@@ -2235,10 +2235,12 @@ class BlockJacobiIterFunctorL
                         col = aColIdx[k];
                         if (col >= idx1 && col < row)
                         {
+if (row == 1) printf( " + %e - %e * %e\n",val,aVal2[k],x2[col] );
                             val -= aVal2[k]*x2[col];
                         }
                         else if (col < idx1 || col > row)
                         {
+if (row == 1) printf( " - %e - %e * %e\n",val,aVal2[k],x1[col] );
                             val -= aVal2[k]*x1[col];
                         }
                     }
