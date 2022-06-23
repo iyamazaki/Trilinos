@@ -2235,12 +2235,10 @@ class BlockJacobiIterFunctorL
                         col = aColIdx[k];
                         if (col >= idx1 && col < row)
                         {
-if (row == 1) printf( " + %e - %e * %e\n",val,aVal2[k],x2[col] );
                             val -= aVal2[k]*x2[col];
                         }
                         else if (col < idx1 || col > row)
                         {
-if (row == 1) printf( " - %e - %e * %e\n",val,aVal2[k],x1[col] );
                             val -= aVal2[k]*x1[col];
                         }
                     }
