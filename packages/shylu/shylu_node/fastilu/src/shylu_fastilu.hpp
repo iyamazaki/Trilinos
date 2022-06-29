@@ -294,7 +294,7 @@ class FastILUPrec
 
             Ordinal n = nRows;
 
-            Ordinal i;
+            Ordinal row, i;
             vector<int> lnklst(n);
             vector<int> curlev(n);
             vector<int> iwork(n);
@@ -305,9 +305,11 @@ class FastILUPrec
             lRowMap[0] = 0;
             uRowMap[0] = 0;
 
-            for (i=0; i<n; i++)
+            for (row=0; row<n; row++)
             {
                 int first, next, j;
+                i = row;
+                //i = (has_metis_perm ? metis_perm(row) : i);
 
                 /* copy column indices of row into workspace and sort them */
                 int len = aRowMap[i+1] - aRowMap[i];

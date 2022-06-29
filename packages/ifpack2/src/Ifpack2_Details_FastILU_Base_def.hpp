@@ -50,7 +50,6 @@
 #include <stdexcept>
 #include "Teuchos_TimeMonitor.hpp"
 
-
 namespace Ifpack2
 {
 namespace Details
@@ -161,7 +160,7 @@ initialize()
     timer = Teuchos::TimeMonitor::getNewCounter (timerName);
   }
   Teuchos::TimeMonitor timeMon (*timer);
-  
+
   if(mat_.is_null())
   {
     throw std::runtime_error(std::string("Called ") + getName() + "::initialize() but matrix was null (call setMatrix() with a non-null matrix first)");
@@ -169,6 +168,46 @@ initialize()
   Kokkos::Timer copyTimer;
   CrsArrayReader<Scalar, ImplScalar, LocalOrdinal, GlobalOrdinal, Node>::getStructure(mat_.get(), localRowPtrsHost_, localRowPtrs_, localColInds_);
   crsCopyTime_ = copyTimer.seconds();
+
+  if (params_.use_metis)
+  {
+    #ifdef HAVE_IFPACK2_METIS
+    // reorder will convert both graph and perm/iperm to the internal METIS integer type
+    idx_t nrows = mat_.getLocalNumRows();
+    metis_perm_  = MetisArrayHost(Kokkos::ViewAllocateWithoutInitializing("metis_perm"),  nrows);
+    metis_iperm_ = MetisArrayHost(Kokkos::ViewAllocateWithoutInitializing("metis_iperm"), nrows);
+
+    // copy ColInds to host
+    auto localColIndsHost_ = Kokkos::create_mirror(localColInds_);
+    Kokkos::deep_copy(localColIndsHost_, localColInds_);
+
+    // prepare for calling metis
+    idx_t nnz = localColIndsHost.size() - 1;
+    MetisArrayHost metis_rowptr (Kokkos::ViewAllocateWithoutInitializing("metis_rowptr"), nrows+1);
+    metis_iperm_ = metis_colidx (Kokkos::ViewAllocateWithoutInitializing("metis_colidx"), nnz);
+
+    nnz = 0;
+    metis_rowptr(0) = 0;
+    for (idx_t i = 0; i < nrows; i++) {
+      for (Ordinal k = localRowPtrsHost(i); k < localRowPtrsHost(i+1); k++) {
+        if (localColsIndsHost(k) != i) {
+          metis_colidx(nnz) = localColsIndsHost(k);
+        }
+      }
+      metis_rowptr(i+1) = nnz;
+    }
+
+    // call metis
+    idx_t options[METIS_NOPTIONS];
+    METIS_SetDefaultOptions(options);
+    METIS_NodeND(&nrows, &(metis_rowptr(0)), &(metis_colidx(0)),
+                         nullptr, options,
+                         &(metis_perm_(0)), &(metis_iperm_(0)));
+    #else
+    throw std::runtime_error(std::string("TPL METIS is not enabled"));
+    #endif
+  }
+
   initLocalPrec();  //note: initLocalPrec updates initTime
   initFlag_ = true;
   nInit_++;
@@ -334,6 +373,7 @@ FastILU_Base<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
 Params::getDefaults()
 {
   Params p;
+  p.use_metis = false;
   p.sptrsv_algo = FastILU::SpTRSV::Fast;
   p.nFact = 5;          // # of sweeps for computing fastILU
   p.nTrisol = 5;        // # of sweeps for applying fastSpTRSV
@@ -358,6 +398,16 @@ Params::Params(const Teuchos::ParameterList& pL, std::string precType)
   //"sweeps" aka nFact
   #define TYPE_ERROR(name, correctTypeName) {throw std::invalid_argument(precType + "::setParameters(): parameter \"" + name + "\" has the wrong type (must be " + correctTypeName + ")");}
   #define CHECK_VALUE(param, member, cond, msg) {if(cond) {throw std::invalid_argument(precType + "::setParameters(): parameter \"" + param + "\" has value " + std::to_string(member) + " but " + msg);}}
+
+  //metis
+  if(pL.isParameter("metis"))
+  {
+    if(pL.isType<bool>("metis"))
+      guessFlag = pL.get<bool>("metis");
+    else
+      TYPE_ERROR("metis", "bool");
+  }
+
   if(pL.isParameter("sweeps"))
   {
     if(pL.isType<int>("sweeps"))
