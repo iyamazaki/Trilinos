@@ -173,7 +173,7 @@ initialize()
   {
     #ifdef HAVE_IFPACK2_METIS
     // reorder will convert both graph and perm/iperm to the internal METIS integer type
-    idx_t nrows = mat_.getLocalNumRows();
+    idx_t nrows = localRowPtrsHost_.size() - 1;
     metis_perm_  = MetisArrayHost(Kokkos::ViewAllocateWithoutInitializing("metis_perm"),  nrows);
     metis_iperm_ = MetisArrayHost(Kokkos::ViewAllocateWithoutInitializing("metis_iperm"), nrows);
 
@@ -182,27 +182,30 @@ initialize()
     Kokkos::deep_copy(localColIndsHost_, localColInds_);
 
     // prepare for calling metis
-    idx_t nnz = localColIndsHost.size() - 1;
+    idx_t nnz = localColIndsHost_.size();
     MetisArrayHost metis_rowptr (Kokkos::ViewAllocateWithoutInitializing("metis_rowptr"), nrows+1);
-    metis_iperm_ = metis_colidx (Kokkos::ViewAllocateWithoutInitializing("metis_colidx"), nnz);
+    MetisArrayHost metis_colidx (Kokkos::ViewAllocateWithoutInitializing("metis_colidx"), nnz);
 
     nnz = 0;
     metis_rowptr(0) = 0;
     for (idx_t i = 0; i < nrows; i++) {
-      for (Ordinal k = localRowPtrsHost(i); k < localRowPtrsHost(i+1); k++) {
-        if (localColsIndsHost(k) != i) {
-          metis_colidx(nnz) = localColsIndsHost(k);
+      for (LocalOrdinal k = localRowPtrsHost_(i); k < localRowPtrsHost_(i+1); k++) {
+        if (localColIndsHost_(k) != i) {
+          metis_colidx(nnz) = localColIndsHost_(k);
         }
       }
       metis_rowptr(i+1) = nnz;
     }
 
     // call metis
-    idx_t options[METIS_NOPTIONS];
-    METIS_SetDefaultOptions(options);
-    METIS_NodeND(&nrows, &(metis_rowptr(0)), &(metis_colidx(0)),
-                         nullptr, options,
-                         &(metis_perm_(0)), &(metis_iperm_(0)));
+    //idx_t options[METIS_NOPTIONS];
+    //METIS_SetDefaultOptions(options);
+    int info = METIS_NodeND(&nrows, &(metis_rowptr(0)), &(metis_colidx(0)),
+                            NULL, NULL, &(metis_perm_(0)), &(metis_iperm_(0)));
+    if (METIS_OK != info) {
+      throw std::runtime_error(std::string("METIS_NodeND returned info = " + info));
+    }
+    for (idx_t i = 0; i < nrows; i++) printf("%d %d\n",metis_perm_(i),metis_iperm_(i));
     #else
     throw std::runtime_error(std::string("TPL METIS is not enabled"));
     #endif
@@ -403,7 +406,7 @@ Params::Params(const Teuchos::ParameterList& pL, std::string precType)
   if(pL.isParameter("metis"))
   {
     if(pL.isType<bool>("metis"))
-      guessFlag = pL.get<bool>("metis");
+      use_metis = pL.get<bool>("metis");
     else
       TYPE_ERROR("metis", "bool");
   }
