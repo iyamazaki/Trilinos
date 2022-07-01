@@ -172,6 +172,12 @@ initialize()
 
   if (params_.use_metis)
   {
+    const std::string timerNameMetis ("Ifpack2::FastILU::Metis");
+    Teuchos::RCP<Teuchos::Time> timerMetis = Teuchos::TimeMonitor::lookupCounter (timerNameMetis);
+    if (timerMetis.is_null ()) {
+      timerMetis = Teuchos::TimeMonitor::getNewCounter (timerNameMetis);
+    }
+    Teuchos::TimeMonitor timeMonMetis (*timerMetis);
     #ifdef HAVE_IFPACK2_METIS
     // reorder will convert both graph and perm/iperm to the internal METIS integer type
     idx_t nrows = localRowPtrsHost_.size() - 1;
