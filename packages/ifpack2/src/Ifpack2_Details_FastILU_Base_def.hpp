@@ -236,6 +236,7 @@ initialize()
     if (METIS_OK != info) {
       throw std::runtime_error(std::string("METIS_NodeND returned info = " + info));
     }
+    //for (idx_t i = 0; i < nrows; i++) printf("%d %d\n",metis_perm_(i),metis_iperm_(i));
     #else
     throw std::runtime_error(std::string("TPL METIS is not enabled"));
     #endif

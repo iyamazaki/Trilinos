@@ -714,19 +714,13 @@ class FastILUPrec
             std::cout << "   + copy values  " << Timer.seconds() << std::endl;
             Timer.reset();
             #endif
-            printf("A=[\n");
-            for (Ordinal i = 0; i < nRows; i++) 
-            {
-                for (Ordinal k = aRowMap[i]; k < aRowMap[i+1]; k++) printf("%d %d %d %e\n",i,aRowIdx[k],aColIdx[k],aVal[k]);
-            }
-            printf("];\n");
 
-            // applyDiagonalScaling
+            // obtain diagonal scaling factor
             Kokkos::RangePolicy<GetDiagsTag, ExecSpace> get_policy (0, nRows);
             Kokkos::parallel_for(
               "numericILU::getDiags", get_policy, functor);
             ExecSpace().fence();
-
+            // apply diagonal scaling
             Kokkos::RangePolicy<DiagScalTag, ExecSpace> scale_policy (0, nRows);
             Kokkos::parallel_for(
               "numericILU::diagScal", scale_policy, functor);
@@ -1337,8 +1331,10 @@ class FastILUPrec
                         if (row == col)
                         {
                             diagElems[row] = aVal[k];
+                            lVal[lPtr] = STS::one();
+                        } else {
+                            lVal[lPtr] = aVal[k];
                         }
-                        lVal[lPtr] = aVal[k];
                         lColIdx[lPtr] = col;
                         lPtr++;
                     }
@@ -1580,6 +1576,12 @@ class FastILUPrec
             std::cout << "  > numericILU " << Timer.seconds() << std::endl;
             Timer.reset();
             #endif
+            /*printf("A=[\n");
+            for (Ordinal i = 0; i < nRows; i++) 
+            {
+                for (Ordinal k = aRowMap[i]; k < aRowMap[i+1]; k++) printf("%d %d %.16e\n",1+i,1+aColIdx[k],aVal[k]);
+            }
+            printf("];\n");*/
             FastILUFunctor<Ordinal, Scalar, ExecSpace> iluFunctor(aRowMap_[nRows], blkSzILU,
                     aRowMap, aRowIdx, aColIdx, aVal,
                     lRowMap, lColIdx, lVal, uRowMap, uColIdx, uVal, diagElems, omega);
@@ -1600,6 +1602,18 @@ class FastILUPrec
             std::cout << "  > iluFunctor (" << nFact << ") " << Timer.seconds() << std::endl;
             Timer.reset();
             #endif
+            /*printf("L=[\n");
+            for (Ordinal i = 0; i < nRows; i++) 
+            {
+                for (Ordinal k = lRowMap[i]; k < lRowMap[i+1]; k++) printf("%d %d %.16e %d\n",1+i,1+lColIdx[k],lVal[k],k);
+            }
+            printf("];\n");
+            printf("U=[\n");
+            for (Ordinal i = 0; i < nRows; i++) 
+            {
+                for (Ordinal k = uRowMap[i]; k < uRowMap[i+1]; k++) printf("%d %d %.16e\n",1+i,1+uColIdx[k],uVal[k]);
+            }
+            printf("];\n");*/
 
             // transposee u
             double t = timer.seconds();
@@ -2502,7 +2516,6 @@ class ParScalFunctor
         KOKKOS_INLINE_FUNCTION
             void operator()(const Ordinal xId) const
             {
-               // x_[xId] *= scaleFactors_[xId];
                y_[xId] = x_[xId]*scaleFactors_[xId];
             }
 
@@ -2531,7 +2544,7 @@ class PermScalFunctor
             {
                // y = D*P*x 
                Ordinal row = perm_(xId);
-               y_[xId] = x_[row]*scaleFactors_[row];
+               y_[xId] = scaleFactors_[xId]*x_[row];
             }
 
         KOKKOS_INLINE_FUNCTION
@@ -2539,7 +2552,7 @@ class PermScalFunctor
             {
                // y = P'*D*x 
                Ordinal row = perm_(xId);
-               y_[xId] = x_[row]*scaleFactors_[xId];
+               y_[xId] = x_[row]*scaleFactors_[row];
             }
 
         scalar_array_type x_, y_;
