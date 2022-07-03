@@ -675,7 +675,7 @@ class FastILUPrec
 
             lVal_    = Kokkos::create_mirror(lVal);
             uVal_    = Kokkos::create_mirror(uVal);
-            utVal_    = Kokkos::create_mirror(utVal);
+            utVal_   = Kokkos::create_mirror(utVal);
         }
 
         void numericILU()
@@ -684,7 +684,7 @@ class FastILUPrec
             #ifdef FASTILU_TIMER
             Kokkos::Timer Timer;
             #endif
-            if (useMetis) {
+            if (useMetis && level == 0) { // applied only at the first call (level 0)
               // apply column permutation before sorting it
               FastILUPrec_Functor perm_functor(aColIdxIn, ipermMetis);
               Kokkos::RangePolicy<ColPermTag, ExecSpace> perm_policy (0, aColIdxIn.size());
@@ -1136,7 +1136,7 @@ class FastILUPrec
             xOld = ScalarArray("xOld", nRow_);
             xTemp = ScalarArray("xTemp", nRow_);
 
-            if (level > 0)
+            if ((level > 0) && (guessFlag != 0))
             {
                 initGuessPrec = Teuchos::rcp(new FastPrec(aRowMapIn_, aColIdxIn_, aValIn_, nRow_, sptrsv_algo_, 3, 5,
                                                           level_-1, omega_, shift_, guessFlag_, blkSzILU_, blkSz_));
@@ -1237,6 +1237,9 @@ class FastILUPrec
                     {
                         aVal[k] = aValIn[aPtr];
                         aPtr++;
+                    } else
+                    {
+                        aVal[k] = STS::zero();
                     }
                 }
             }
@@ -1254,6 +1257,9 @@ class FastILUPrec
                     {
                         aVal[k] = aValIn[aPtr];
                         aPtr++;
+                    } else
+                    {
+                        aVal[k] = STS::zero();
                     }
                 }
             }
@@ -1404,6 +1410,10 @@ class FastILUPrec
           }
           Kokkos::deep_copy(permMetis, permMetisHost);
           Kokkos::deep_copy(ipermMetis, ipermMetisHost);
+          if ((level > 0) && (guessFlag != 0))
+          {
+            initGuessPrec->setMetisPerm(permMetis_, ipermMetis_);
+          }
 
           useMetis = true;
         }
@@ -1602,18 +1612,32 @@ class FastILUPrec
             std::cout << "  > iluFunctor (" << nFact << ") " << Timer.seconds() << std::endl;
             Timer.reset();
             #endif
-            /*printf("L=[\n");
+            /*int myRank = -1;
+            MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+            char filename[200];
+            sprintf(filename,"L_%d_%d.dat", myRank, lColIdx.size());
+            FILE *fp = fopen(filename,"w");
+            Kokkos::deep_copy(lRowMap_, lRowMap);
+            Kokkos::deep_copy(lColIdx_, lColIdx);
+            Kokkos::deep_copy(lVal_, lVal);
+            printf("L=[\n");
             for (Ordinal i = 0; i < nRows; i++) 
             {
-                for (Ordinal k = lRowMap[i]; k < lRowMap[i+1]; k++) printf("%d %d %.16e %d\n",1+i,1+lColIdx[k],lVal[k],k);
+                for (Ordinal k = lRowMap_[i]; k < lRowMap_[i+1]; k++) fprintf(fp,"%d %d %e\n",1+i,1+lColIdx_[k],lVal_[k]);
             }
             printf("];\n");
+            sprintf(filename,"U_%d_%d.dat", myRank, uColIdx.size());
+            fp = fopen(filename,"w");
+            Kokkos::deep_copy(uRowMap_, uRowMap);
+            Kokkos::deep_copy(uColIdx_, uColIdx);
+            Kokkos::deep_copy(uVal_, uVal);
             printf("U=[\n");
             for (Ordinal i = 0; i < nRows; i++) 
             {
-                for (Ordinal k = uRowMap[i]; k < uRowMap[i+1]; k++) printf("%d %d %.16e\n",1+i,1+uColIdx[k],uVal[k]);
+                for (Ordinal k = uRowMap_[i]; k < uRowMap_[i+1]; k++) fprintf(fp,"%d %d %e\n",1+i,1+uColIdx_[k],uVal_[k]);
             }
-            printf("];\n");*/
+            printf("];\n");
+            fclose(fp);*/
 
             // transposee u
             double t = timer.seconds();

@@ -210,7 +210,7 @@ initialize()
             nnz++;
           }
         }
-        old_nnz = metis_rowptr(i+1);;
+        old_nnz = metis_rowptr(i+1);
         metis_rowptr(i+1) = nnz;
       }
     } else {
@@ -231,8 +231,8 @@ initialize()
     }
 
     // call metis
-    int info = METIS_NodeND(&nrows, &(metis_rowptr(0)), &(metis_colidx(0)),
-                            NULL, NULL, &(metis_perm_(0)), &(metis_iperm_(0)));
+    int info = METIS_NodeND(&nrows, metis_rowptr.data(), metis_colidx.data(),
+                            NULL, NULL, metis_perm_.data(), metis_iperm_.data());
     if (METIS_OK != info) {
       throw std::runtime_error(std::string("METIS_NodeND returned info = " + info));
     }
