@@ -523,12 +523,6 @@ class FastILUPrec
                 }
                 aRowMap_[i+1] = aRowPtr;
             }
-            /*printf("A=[\n");
-            for (i = 0; i < nRows; i++) 
-            {
-                for (Ordinal k = aRowMap_[i]; k < aRowMap_[i+1]; k++) printf("%d %d %d\n",i,aRowIdx_[k],aColIdx_[k]);
-            }
-            printf("];\n");*/
             #ifdef FASTILU_INIT_TIMER
             std::cout << " Copy time : " << timer.seconds() << std::endl;
             timer.reset();
@@ -1586,12 +1580,6 @@ class FastILUPrec
             std::cout << "  > numericILU " << Timer.seconds() << std::endl;
             Timer.reset();
             #endif
-            /*printf("A=[\n");
-            for (Ordinal i = 0; i < nRows; i++) 
-            {
-                for (Ordinal k = aRowMap[i]; k < aRowMap[i+1]; k++) printf("%d %d %.16e\n",1+i,1+aColIdx[k],aVal[k]);
-            }
-            printf("];\n");*/
             FastILUFunctor<Ordinal, Scalar, ExecSpace> iluFunctor(aRowMap_[nRows], blkSzILU,
                     aRowMap, aRowIdx, aColIdx, aVal,
                     lRowMap, lColIdx, lVal, uRowMap, uColIdx, uVal, diagElems, omega);
@@ -1612,32 +1600,6 @@ class FastILUPrec
             std::cout << "  > iluFunctor (" << nFact << ") " << Timer.seconds() << std::endl;
             Timer.reset();
             #endif
-            /*int myRank = -1;
-            MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-            char filename[200];
-            sprintf(filename,"L_%d_%d.dat", myRank, lColIdx.size());
-            FILE *fp = fopen(filename,"w");
-            Kokkos::deep_copy(lRowMap_, lRowMap);
-            Kokkos::deep_copy(lColIdx_, lColIdx);
-            Kokkos::deep_copy(lVal_, lVal);
-            printf("L=[\n");
-            for (Ordinal i = 0; i < nRows; i++) 
-            {
-                for (Ordinal k = lRowMap_[i]; k < lRowMap_[i+1]; k++) fprintf(fp,"%d %d %e\n",1+i,1+lColIdx_[k],lVal_[k]);
-            }
-            printf("];\n");
-            sprintf(filename,"U_%d_%d.dat", myRank, uColIdx.size());
-            fp = fopen(filename,"w");
-            Kokkos::deep_copy(uRowMap_, uRowMap);
-            Kokkos::deep_copy(uColIdx_, uColIdx);
-            Kokkos::deep_copy(uVal_, uVal);
-            printf("U=[\n");
-            for (Ordinal i = 0; i < nRows; i++) 
-            {
-                for (Ordinal k = uRowMap_[i]; k < uRowMap_[i+1]; k++) fprintf(fp,"%d %d %e\n",1+i,1+uColIdx_[k],uVal_[k]);
-            }
-            printf("];\n");
-            fclose(fp);*/
 
             // transposee u
             double t = timer.seconds();

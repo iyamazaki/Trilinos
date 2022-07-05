@@ -48,8 +48,8 @@
 #include <Ifpack2_Details_CrsArrays.hpp>
 #include <KokkosKernels_Utils.hpp>
 #include <Kokkos_Timer.hpp>
-#include <stdexcept>
 #include <Teuchos_TimeMonitor.hpp>
+#include <stdexcept>
 
 namespace Ifpack2
 {
