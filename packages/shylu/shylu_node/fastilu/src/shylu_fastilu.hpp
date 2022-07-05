@@ -1756,7 +1756,6 @@ class FastILUPrec
         {
             Kokkos::Timer timer;
             const Scalar one  = STS::one();
-            const Scalar zero = STS::zero();
 
             //required to prevent contamination of the input.
             ParCopyFunctor<Ordinal, Scalar, ExecSpace> parCopyFunctor(xTemp, x);
@@ -1840,47 +1839,86 @@ class FastILUPrec
                         Scalar2dArray x2d_old (const_cast<Scalar*>(xOld.data()), nRows, 1);
 
                         // 1) approximately solve, y = L^{-1}*x
-                        // y = zeros
-                        ParInitZeroFunctor<Ordinal, Scalar, ExecSpace> parInitZero(y);
-                        //Kokkos::parallel_for(nRows, parInitZero);
-                        //ExecSpace().fence();
-                        Kokkos::deep_copy(y2d, zero);
-                        // to copy RHS x into y
-                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_newX(y, xTemp);
-                        // to save old y
-                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_oldX(xOld, y);
-                        for (Ordinal i = 0; i < nTrisol; i++) 
-                        {
-                            // x = y - Lx (diag(L) is zero)
-                            Kokkos::parallel_for(nRows, copy_oldX); // x_old = y
-                            Kokkos::parallel_for(nRows, copy_newX); // y = x
-                            ExecSpace().fence();
+                        // functor to copy RHS x into y (for even iteration)
+                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_x2y(y, xTemp);
+                        // functor to copy RHS x into xold (for odd iteration)
+                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_x2xold(xOld, xTemp);
 
-                            KokkosSparse::spmv("N", -one, crsmatL, x2d_old, one, y2d);
-                        }
-                        // 2) approximately solve, x = U^{-1}*y
-                        // to copy y into x
-                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_newY(xTemp, y);
-                        // to save old x
-                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_oldY(xOld, xTemp);
-                        // to scale x
-                        ParScalFunctor<Ordinal, Scalar, Scalar, ExecSpace> parScal(xTemp, xTemp, diagElems);
-                        // x = zeros
-                        ParInitZeroFunctor<Ordinal, Scalar, ExecSpace> initZeroY(xTemp);
-                        //Kokkos::parallel_for(nRows, initZeroY);
-                        //ExecSpace().fence();
-                        Kokkos::deep_copy(x2d, zero);
+                        // functor to copy x_old to y (final iteration)
+                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_xold2y(y, xOld);
+
+                        // xold = zeros
+                        ParInitZeroFunctor<Ordinal, Scalar, ExecSpace> initZeroX(xOld);
+                        Kokkos::parallel_for(nRows, initZeroX);
+                        //Kokkos::deep_copy(x2d_old, zero);
                         for (Ordinal i = 0; i < nTrisol; i++) 
                         {
-                            // y = x - Uy (diag(U) is zero)
-                            Kokkos::parallel_for(nRows, copy_oldY); // x_old = x
-                            Kokkos::parallel_for(nRows, copy_newY); // x = y
-                            ExecSpace().fence();
-                            //Kokkos::deep_copy(x2d_old, x2d);
-                            //Kokkos::deep_copy(x2d, y2d);
-                            KokkosSparse::spmv("N", -one, crsmatU, x2d_old, one, x2d);
-                            // scale y = inv(diag(U))*y
-                            Kokkos::parallel_for(nRows, parScal);
+                            if (i%2 == 0) {
+                                // y = y - L*x_old
+                                // > y = x
+                                Kokkos::parallel_for(nRows, copy_x2y);
+                                ExecSpace().fence();
+                                // > y = y - L*x_old
+                                KokkosSparse::spmv("N", -one, crsmatL, x2d_old, one, y2d);
+                            } else {
+                                // x_old = x_old - L*y
+                                // > x_old = x
+                                Kokkos::parallel_for(nRows, copy_x2xold);
+                                ExecSpace().fence();
+                                // > x_old = x_old - L*y
+                                KokkosSparse::spmv("N", -one, crsmatL, y2d, one, x2d_old);
+
+                                if (i == nTrisol-1) {
+                                    // y = x_old
+                                    Kokkos::parallel_for(nRows, copy_xold2y);
+                                    ExecSpace().fence();
+                                }
+                            }
+                        }
+
+                        // 2) approximately solve, x = U^{-1}*y
+                        // functor to copy y into x
+                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_y2x(xTemp, y);
+                        // functor to copy y into xold
+                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_y2xold(xOld, y);
+
+                        // functor to scale x
+                        ParScalFunctor<Ordinal, Scalar, Scalar, ExecSpace> scal_x(xTemp, xTemp, diagElems);
+                        ParScalFunctor<Ordinal, Scalar, Scalar, ExecSpace> scal_xold(xOld, xOld, diagElems);
+
+                        // functor to copy x_old to x (final iteration)
+                        ParCopyFunctor<Ordinal, Scalar, ExecSpace> copy_xold2x(xTemp, xOld);
+
+                        // xold = zeros
+                        Kokkos::parallel_for(nRows, initZeroX);
+                        //Kokkos::deep_copy(x2d_old, zero);
+                        for (Ordinal i = 0; i < nTrisol; i++) 
+                        {
+                            if (i%2 == 0) {
+                                // x = y - U*x_old
+                                // > x = y
+                                Kokkos::parallel_for(nRows, copy_y2x);
+                                ExecSpace().fence();
+                                // > x = x - U*x_old
+                                KokkosSparse::spmv("N", -one, crsmatU, x2d_old, one, x2d);
+                                // > scale x = inv(diag(U))*x
+                                Kokkos::parallel_for(nRows, scal_x);
+                            } else {
+                                // xold = y - U*x
+                                // > xold = y
+                                Kokkos::parallel_for(nRows, copy_y2xold);
+                                ExecSpace().fence();
+                                // > x = x - U*x_old
+                                KokkosSparse::spmv("N", -one, crsmatU, x2d, one, x2d_old);
+                                // > scale x = inv(diag(U))*x
+                                Kokkos::parallel_for(nRows, scal_xold);
+
+                                if (i == nTrisol-1) {
+                                    // x = x_old
+                                    Kokkos::parallel_for(nRows, copy_xold2x);
+                                    ExecSpace().fence();
+                                }
+                            }
                         }
                     } else {
                         //apply L^{-1} to xTemp
