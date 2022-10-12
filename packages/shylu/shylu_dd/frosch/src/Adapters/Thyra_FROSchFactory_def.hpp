@@ -204,9 +204,9 @@ namespace Thyra {
                     auto ANonConst = rcp_const_cast<XMatrix>(A);
                     auto halfA = Xpetra::convertToHalfPrecision(ANonConst);
 
-                    RCP<RGDSWPreconditioner<HalfSC,LO,GO,NO> > halfRGP = rcp (new RGDSWPreconditioner<HalfSC,LO,GO,NO>(halfA,paramList_));
+                    RCP<RGDSWPreconditioner<HalfSC,LO,GO,NO> > halfRGP(new RGDSWPreconditioner<HalfSC,LO,GO,NO>(halfA,paramList_));
 
-                    XMultiVectorPtr coordinatesListNonConst = rcp_const_cast<XMultiVector>(coordinatesList);
+                    XMultiVectorPtr coordinatesListNonConst = (coordinatesList == null ? null : rcp_const_cast<XMultiVector>(coordinatesList));
                     auto halfCoordinatesList = rcp_dynamic_cast<const HalfPrecMultiVector> (Xpetra::convertToHalfPrecision(coordinatesListNonConst));
                     halfRGP->initialize(paramList_->get("Dimension",3),
                                         paramList_->get("DofsPerNode",1),
@@ -261,18 +261,42 @@ namespace Thyra {
                 } else {
                     FROSCH_ASSERT(false,"ERROR: Specify a valid DofOrdering.");
                 }
+#if defined(HAVE_XPETRA_TPETRA) && defined(HAVE_TPETRA_INST_DOUBLE) && defined(HAVE_TPETRA_INST_FLOAT)
+                if (useHalfPrecision)
+                {
+                    auto ANonConst = rcp_const_cast<XMatrix>(A);
+                    auto halfA = Xpetra::convertToHalfPrecision(ANonConst);
 
-                RCP<TwoLevelPreconditioner<SC,LO,GO,NO> > TLP(new TwoLevelPreconditioner<SC,LO,GO,NO>(A,paramList_));
+                    RCP<TwoLevelPreconditioner<HalfSC,LO,GO,NO> > halfTLP(new TwoLevelPreconditioner<HalfSC,LO,GO,NO>(halfA,paramList_));
 
-                TLP->initialize(paramList_->get("Dimension",3),
-                                paramList_->get("DofsPerNode",1),
-                                paramList_->get("Overlap",1),
-                                nullSpaceBasis,
-                                coordinatesList,
-                                dofOrdering,
-                                repeatedMap);
+                    XMultiVectorPtr coordinatesListNonConst = rcp_const_cast<XMultiVector>(coordinatesList);
+                    XMultiVectorPtr nullSpaceBasisNonConst = rcp_const_cast<XMultiVector>(nullSpaceBasis);
+                    auto halfCoordinatesList = (coordinatesListNonConst == null ? null : rcp_dynamic_cast<const HalfPrecMultiVector> (Xpetra::convertToHalfPrecision(coordinatesListNonConst)));
+                    auto halfNullSpaceBasis = (nullSpaceBasisNonConst == null ? null : rcp_dynamic_cast<const HalfPrecMultiVector> (Xpetra::convertToHalfPrecision(nullSpaceBasisNonConst)));
+                    halfTLP->initialize(paramList_->get("Dimension",3),
+                                        paramList_->get("DofsPerNode",1),
+                                        paramList_->get("Overlap",1),
+                                        halfNullSpaceBasis,
+                                        halfCoordinatesList,
+                                        dofOrdering,
+                                        repeatedMap);
 
-                schwarzPreconditioner = TLP;
+                    halfSchwarzPreconditioner = halfTLP;
+                } else
+#endif
+                {
+                    RCP<TwoLevelPreconditioner<SC,LO,GO,NO> > TLP(new TwoLevelPreconditioner<SC,LO,GO,NO>(A,paramList_));
+
+                    TLP->initialize(paramList_->get("Dimension",3),
+                                    paramList_->get("DofsPerNode",1),
+                                    paramList_->get("Overlap",1),
+                                    nullSpaceBasis,
+                                    coordinatesList,
+                                    dofOrdering,
+                                    repeatedMap);
+
+                    schwarzPreconditioner = TLP;
+                }
             } else if (!paramList_->get("FROSch Preconditioner Type","TwoLevelPreconditioner").compare("TwoLevelBlockPreconditioner")) {
                 ConstXMapPtrVecPtr repeatedMaps = null;
                 ConstXMultiVectorPtrVecPtr coordinatesList = null;
