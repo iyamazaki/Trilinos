@@ -591,7 +591,7 @@ protected:
     std::vector<real_type> cs (restart);
     std::vector<SC> sn (restart);
 
-    //#define HAVE_TPETRA_DEBUG
+    #define HAVE_TPETRA_DEBUG
     #ifdef HAVE_TPETRA_DEBUG
     dense_matrix_type H2 (restart+1, restart,   true);
     dense_matrix_type H3 (restart+1, restart,   true);
@@ -847,7 +847,7 @@ protected:
 
     #if 0
     printf( " > checkNumeric(iter = %d, check = %d)\n",iter,check );
-    /*auto Q_lcl = Q.getLocalViewHost();
+    /*auto Q_lcl = Q.getLocalViewHost(Tpetra::Access::ReadOnly);
     printf( " Q = [\n" );
     for (int i = 0; i < (int)Q_lcl.extent(0); i++) {
       for (int j = 0; j <= check+1; j++) printf( "%.16e ",Q_lcl(i,j) );
@@ -972,7 +972,6 @@ protected:
       // > compute norm, norm(HH) and sqrt(norm(AQ'*AQ))
       {
         proje_error = computeNorm(HH);
-
         dense_matrix_type T (check+1, check+1, true);
         MVT::MvTransMv(one, AQ, AQ, T);
         repre_error = STM::squareroot (computeNorm(T));
@@ -994,6 +993,41 @@ protected:
             << ", Projection error: "
             << proje_error
             << std::endl;
+  }
+
+  // ! compute condition number
+  real_type
+  computeCondNum(const MV& Q)
+  {
+    const SC one  = STS::one ();
+    const LO ione = 1;
+
+    // compute G = Q'*Q
+    size_t ncols = Q.getNumVectors ();
+    dense_matrix_type G (ncols, ncols, true);
+    MVT::MvTransMv(one, Q, Q, G);
+
+    // compute SVD(G)
+    LO m = G.numRows ();
+    LO n = G.numCols ();
+    LO minmn = (m < n ? m : n);
+
+    LO INFO, LWORK;
+    SC  U, VT, TEMP;
+    real_type RWORK;
+    real_vector_type S (minmn, true);
+    LWORK = -1;
+    Teuchos::LAPACK<LO ,SC> lapack;
+    lapack.GESVD('N', 'N', m, n, G.values (), G.stride (),
+                 S.values (), &U, ione, &VT, ione,
+                 &TEMP, LWORK, &RWORK, &INFO);
+    LWORK = Teuchos::as<LO> (STS::real (TEMP));
+    dense_vector_type WORK (LWORK, true);
+    lapack.GESVD('N', 'N', m, n, G.values (), G.stride (),
+                 S.values (), &U, ione, &VT, ione,
+                 WORK.values (), LWORK, &RWORK, &INFO);
+
+    return STM::squareroot(S(0) / S(minmn-1));
   }
 
 private:

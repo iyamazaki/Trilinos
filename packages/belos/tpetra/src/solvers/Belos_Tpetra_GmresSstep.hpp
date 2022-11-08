@@ -209,6 +209,7 @@ private:
 public:
   GmresSstep () :
     base_type::Gmres (),
+    useRandomQR_ (false),
     useCholQR2_ (false),
     cholqr_ (Teuchos::null)
   {}
@@ -242,6 +243,9 @@ public:
 
     constexpr bool useCholQR_default = true;
     bool useCholQR = params.get<bool> ("CholeskyQR", useCholQR_default);
+
+    bool useRandomQR = params.get<bool> ("RandomQR", useRandomQR_);
+    useRandomQR_ = useRandomQR;
 
     bool useCholQR2 = params.get<bool> ("CholeskyQR2", useCholQR2_);
     useCholQR2_ = useCholQR2;
@@ -299,6 +303,11 @@ private:
     std::vector<mag_type> cs (restart);
     std::vector<SC> sn (restart);
 
+    #ifdef HAVE_TPETRA_DEBUG
+    dense_matrix_type H2 (restart+1, restart,   true);
+    dense_matrix_type H3 (restart+1, restart,   true);
+    #endif
+
     mag_type b_norm;  // initial residual norm
     mag_type b0_norm; // initial residual norm, not left preconditioned
     mag_type r_norm;
@@ -311,6 +320,11 @@ private:
     vec_type MP (B.getMap (), zeroOut);
     MV  Q (B.getMap (), restart+1, zeroOut);
     vec_type P0 = * (Q.getVectorNonConst (0));
+
+    // random Gaussian vectors for random sketching
+    dense_matrix_type  O (2*(1+step), 1+step, true); // projected matrix
+    MV  W (B.getMap (), 2*(1+step), zeroOut);
+    W.randomize ();
 
     // Compute initial residual (making sure R = B - Ax)
     {
@@ -450,10 +464,21 @@ private:
           Teuchos::TimeMonitor LocalTimer (*bortTimer);
           this->projectBelosOrthoManager (iter, step, Q, G);
         }
+        #ifdef HAVE_TPETRA_DEBUG
+        for (int iiter = 0; iiter < step; iiter++) {
+          Teuchos::Range1D cols(iter, iter+iiter+1);
+          Teuchos::RCP<const MV> Qj = Q.subView(cols);
+          *outPtr << " > condNum( " << iter+iiter << " ) = " << this->computeCondNum(*Qj) << std::endl;
+        }
+        #endif
         int rank = 0;
         {
           Teuchos::TimeMonitor LocalTimer (*tsqrTimer);
-          rank = recursiveCholQR (outPtr, iter, step, Q, G);
+          if (useRandomQR_) {
+            rank = randomQR (outPtr, iter, step, W, Q, O, G);
+          } else {
+            rank = recursiveCholQR (outPtr, iter, step, Q, G);
+          }
           if (useCholQR2_) {
             rank = recursiveCholQR (outPtr, iter, step, Q, G2);
             // merge R 
@@ -486,6 +511,10 @@ private:
             for (int i = 0; i <= iter+iiter+1; i++) {
               T(i, iter+iiter) = H(i, iter+iiter);
             }
+            #ifdef HAVE_TPETRA_DEBUG
+            this->checkNumerics (outPtr, iter+iiter, iter+iiter, A, M, Q, X, B, y,
+                                 H, H2, H3, cs, sn, input);
+            #endif
             this->reduceHessenburgToTriangular(iter+iiter, T, cs, sn, y);
             metric = this->getConvergenceMetric (STS::magnitude (y(iter+iiter+1)), b_norm, input);
             if (outPtr != nullptr) {
@@ -740,7 +769,96 @@ protected:
     return rank;
   }
 
+  //! Apply the orthogonalization using Belos' OrthoManager
+  int
+  randomQR (Teuchos::FancyOStream* outPtr,
+            const int n,
+            const int s,
+            MV& W,
+            MV& Q,
+            dense_matrix_type& O,
+            dense_matrix_type& R)
+  {
+    const SC one  = STS::one ();
+    const SC zero = STS::zero ();
+
+    // random sketching vectors
+    Teuchos::Range1D index_sketch(0, 2*(s+1)-1);
+    MV Ws = * (W.subView(index_sketch));
+
+    // vector to be orthogonalized
+    Teuchos::Range1D index_prev(n, n+s);
+    MV Qnew = * (Q.subView(index_prev));
+
+    dense_matrix_type o_new (Teuchos::View, O, 2*(s+1), s+1,0, 0);
+    dense_matrix_type r_new (Teuchos::View, R,    s+1,  s+1, n, 0);
+
+    // random sketch O := W^T * Q
+    MV O_mv = makeStaticLocalMultiVector (Qnew, 2*(s+1), s+1);
+    O_mv.multiply (Teuchos::CONJ_TRANS, Teuchos::NO_TRANS, one, Ws, Qnew, zero);
+
+    // compute QR of O
+    int rank = 0;
+    {
+      auto O_h = O_mv.getLocalViewHost (Tpetra::Access::ReadWrite);
+      int ld = int (O_h.extent (0));
+      SC *Odata = reinterpret_cast<SC*> (O_h.data ());
+
+      // get workspace size
+      SC TEMP;
+      int info;
+      int lwork = -1;
+      dense_vector_type  tau (s+1, true);
+      Teuchos::LAPACK<LO, SC> lapack;
+      lapack.GEQRF (2*(s+1), s+1, Odata, ld,
+                    tau.values (), &TEMP, lwork, &info);
+      TEUCHOS_TEST_FOR_EXCEPTION(
+        info != 0, std::runtime_error, "Belos::GmresSstep::randomQR:"
+        " LAPACK's _GEQRF failed to compute a workspace size.");
+
+      // allocate workspace and call QR
+      lwork = Teuchos::as<LO> (STS::real (TEMP));
+      dense_vector_type WORK (lwork, true);
+      lapack.GEQRF (2*(s+1), s+1, Odata, ld,
+                    tau.values (), WORK.values (), lwork, &info);
+      TEUCHOS_TEST_FOR_EXCEPTION(
+        info != 0, std::runtime_error, "Belos::GmresSstep::randomQR:"
+        " LAPACK's _GEQRF failed to compute QR factorization.");
+
+      // extract R
+      rank = s+1;
+      for (int i=0; i<rank; i++) {
+        // zero-out lower-triangular part
+        for (int j=0; j<i; j++) {
+          r_new(i, j) = zero;
+        }
+        // make sure positive diagonals
+        if (STS::real (Odata[i + i*ld]) < STM::zero ()) {
+          for (int j=i; j<rank; j++) {
+            Odata[i + j*ld] = -Odata[i + j*ld];
+            r_new(i, j) = Odata[i + j*ld];
+          }
+        } else {
+          for (int j=i; j<rank; j++) {
+            r_new(i, j) = Odata[i + j*ld];
+          }
+        }
+      }
+    }
+
+    {
+      using range_type = Kokkos::pair<int, int>;
+      auto Q_d = Qnew.getLocalViewDevice (Tpetra::Access::ReadWrite);
+      auto O_d = O_mv.getLocalViewDevice (Tpetra::Access::ReadOnly);
+      auto R_d = Kokkos::subview(O_d, range_type(0, s+1), Kokkos::ALL());
+      KokkosBlas::trsm ("R", "U", "N", "N",
+                        one, R_d, Q_d);
+    }
+    return rank;
+  }
+
 private:
+  bool useRandomQR_;
   bool useCholQR2_;
   Teuchos::RCP<CholQR<SC, MV, OP> > cholqr_;
 };
