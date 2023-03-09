@@ -121,6 +121,7 @@ template <> struct CholSupernodes<Algo::Workflow::Serial> {
     // short cut to direct update
     if ((send - sbeg) == 1) {
       const auto &s = info.supernodes(info.sid_block_colidx(sbeg).first);
+printf( " --> sid = %d\n",info.sid_block_colidx(sbeg).first );
       const ordinal_type tgtbeg = info.sid_block_colidx(s.sid_col_begin).second,
                          tgtend = info.sid_block_colidx(s.sid_col_end - 1).second, tgtsize = tgtend - tgtbeg;
 

@@ -351,6 +351,7 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
           policy, KOKKOS_LAMBDA(const typename policy_type::member_type &member) {
             const ordinal_type sid = member.league_rank();
             const auto s = self.supernodes(sid);
+printf( " * sid = %d\n",sid );
             /// copy to upper triangular
             {
               UnmanagedViewType<value_type_matrix> tgt_u(s.u_buf, s.m, s.n);
@@ -376,6 +377,7 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
                                              });
                                          TACHO_TEST_FOR_ABORT(*loc != jj, "copy is wrong");
                                          const ordinal_type j = loc - first;
+printf( " (%d, %d) = %e\n",i,j,ax(k) );
                                          tgt_u(i, j) = ax(k);
                                          if (j >= s.m && copy_to_l_buf) {
                                            tgt_l(j - s.m, i) = axt(k);

@@ -938,6 +938,16 @@ public:
     ordinal_type q(0);
 #endif
     exec_space exec_instance;
+Kokkos::Timer toc; toc.reset();
+int minM = 0, maxM = 0, numM = 0;
+double tic_symm = 0.0;
+double tic_fact = 0.0;
+double tic_modi = 0.0;
+double tic_pivo = 0.0;
+double tic_copy = 0.0;
+double tic_trsm = 0.0;
+double tic_inve = 0.0;
+double tic_gemm = 0.0;
     for (ordinal_type p = pbeg; p < pend; ++p) {
       const ordinal_type sid = _h_level_sids(p);
       if (_h_factorize_mode(sid) == 0) {
@@ -955,22 +965,28 @@ public:
         const auto &s = _h_supernodes(sid);
         {
           const ordinal_type offs = s.row_begin, m = s.m, n = s.n, n_m = n - m;
+numM++;
+minM = (minM > m ? m : minM);
+maxM = (maxM < m ? m : maxM);
           if (m > 0) {
             value_type *aptr = s.u_buf;
             UnmanagedViewType<value_type_matrix> ATL(aptr, m, m);
             aptr += m * m;
 
             _status = Symmetrize<Uplo::Upper, Algo::OnDevice>::invoke(exec_instance, ATL);
+Kokkos::fence(); tic_symm += toc.seconds(); toc.reset();
 
             ordinal_type *pivptr = _piv.data() + 4 * offs;
             UnmanagedViewType<ordinal_type_array> P(pivptr, 4 * m);
             _status = LDL<Uplo::Lower, Algo::OnDevice>::invoke(_handle_lapack, ATL, P, W);
             checkDeviceLapackStatus("ldl::invoke");
+Kokkos::fence(); tic_fact += toc.seconds(); toc.reset();
 
             value_type *dptr = _diag.data() + 2 * offs;
             UnmanagedViewType<value_type_matrix> D(dptr, m, 2);
             _status = LDL<Uplo::Lower, Algo::OnDevice>::modify(exec_instance, ATL, P, D);
             checkDeviceLapackStatus("ldl::modify");
+Kokkos::fence(); tic_modi += toc.seconds(); toc.reset();
 
             if (n_m > 0) {
               UnmanagedViewType<value_type_matrix> ATR(aptr, m, n_m); // aptr += m*n_m;
@@ -980,23 +996,30 @@ public:
               auto fpiv = ordinal_type_array(P.data() + m, m);
               _status = ApplyPivots<PivotMode::Flame, Side::Left, Direct::Forward, Algo::OnDevice>::invoke(
                   exec_instance, fpiv, ATR);
+Kokkos::fence(); tic_pivo += toc.seconds(); toc.reset();
 
               _status = Trsm<Side::Left, Uplo::Lower, Trans::NoTranspose, Algo::OnDevice>::invoke(
                   _handle_blas, Diag::Unit(), one, ATL, ATR);
               checkDeviceBlasStatus("trsm");
+Kokkos::fence(); tic_trsm += toc.seconds(); toc.reset();
 
               _status = Copy<Algo::OnDevice>::invoke(exec_instance, STR, ATR);
+Kokkos::fence(); tic_copy += toc.seconds(); toc.reset();
 
               _status = Scale2x2_BlockInverseDiagonals<Side::Left, Algo::OnDevice>::invoke(exec_instance, P, D, ATR);
+Kokkos::fence(); tic_inve += toc.seconds(); toc.reset();
 
               _status = GemmTriangular<Trans::Transpose, Trans::NoTranspose, Uplo::Upper, Algo::OnDevice>::invoke(
                   _handle_blas, minus_one, ATR, STR, zero, ABR);
               checkDeviceBlasStatus("gemm");
+Kokkos::fence(); tic_gemm += toc.seconds(); toc.reset();
             }
           }
         }
       }
     }
+printf( " %d:%d(%d): symm = %e, fact = %e, modi = %e, pivo = %e, copy = %e, trsm = %e, inve = %e, gemm = %e\n",
+minM,maxM,numM,tic_symm,tic_fact,tic_modi,tic_pivo,tic_copy,tic_trsm,tic_inve,tic_gemm);
   }
 
   inline void factorizeLDL_OnDeviceVar1(const ordinal_type pbeg, const ordinal_type pend,
@@ -2690,6 +2713,7 @@ public:
   inline void factorizeLDL(const value_type_array &ax, const ordinal_type verbose) {
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     Kokkos::Timer timer;
+    Kokkos::Timer toc;
 
     timer.reset();
     value_type_array work;
@@ -2701,7 +2725,6 @@ public:
       value_type_matrix T(NULL, _info.max_supernode_size, _info.max_supernode_size);
       ordinal_type_array P(NULL, _info.max_supernode_size);
       const size_type worksize = LDL<Uplo::Lower, Algo::OnDevice>::invoke(_handle_lapack, T, P, work);
-
       work = value_type_array(do_not_initialize_tag("work"), worksize * (_nstreams + 1) * max(8, _nstreams));
 #else
       const size_type worksize = 32 * _info.max_supernode_size;
@@ -2721,6 +2744,9 @@ public:
       exec_space().fence(); // wait for copy
     }
     stat.t_copy = timer.seconds();
+double time_facto_d = 0.0;
+double time_facto_p = 0.0;
+double time_update  = 0.0;
 
     stat_level.n_kernel_launching = 0;
     timer.reset();
@@ -2767,6 +2793,7 @@ public:
             const range_type range_buf_factor_ptr(_h_buf_level_ptr(lvl), _h_buf_level_ptr(lvl + 1));
 
             const auto buf_factor_ptr = Kokkos::subview(_buf_factor_ptr, range_buf_factor_ptr);
+toc.reset();
             functor.setRange(pbeg, pend);
             functor.setBufferPtr(buf_factor_ptr);
             if (is_host) {
@@ -2792,13 +2819,19 @@ public:
             }
 
             const auto h_buf_factor_ptr = Kokkos::subview(_h_buf_factor_ptr, range_buf_factor_ptr);
-
+Kokkos::fence();
+time_facto_p += toc.seconds();
+toc.reset();
             factorizeLDL_OnDevice(pbeg, pend, h_buf_factor_ptr, work);
             Kokkos::fence();
+time_facto_d += toc.seconds();
+toc.reset();
 
             Kokkos::parallel_for("update factor", policy_update, functor);
             ++stat_level.n_kernel_launching;
             exec_space().fence();
+time_update += toc.seconds();
+toc.reset();
           }
           const auto exec_instance = exec_space();
           Kokkos::deep_copy(exec_instance, _h_supernodes, _info.supernodes);
@@ -2820,6 +2853,8 @@ public:
     if (verbose) {
       printf("Summary: LevelSetTools-Variant-%d (LDL Factorize)\n", variant);
       printf("=================================================\n");
+printf( " Time Factor : %f + %f\n",time_facto_p,time_facto_d );
+printf( " Time Update : %f\n",time_update ); 
       print_stat_factor();
     }
   }

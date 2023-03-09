@@ -66,6 +66,14 @@ template <> struct LDL_Supernodes<Algo::Workflow::Serial> {
     // get current supernode
     const auto &s = info.supernodes(sid);
 
+    printf( " >> sid = %d\n",sid );
+{
+  const auto &s1 = info.supernodes(1);
+  const ordinal_type m1 = s1.m, n1 = s1.n - s1.m;
+  value_type *ptr1 = s1.u_buf;
+  UnmanagedViewType<value_type_matrix> ATL1(ptr1, m1, m1);
+  printf( " ++ %e (%d)\n",ATL1(0,0),m1 );
+}
     // get panel pointer
     value_type *ptr = s.u_buf;
 
@@ -243,8 +251,22 @@ template <> struct LDL_Supernodes<Algo::Workflow::Serial> {
       LDL_Supernodes<Algo::Workflow::Serial>::factorize(member, info, ipiv, dblk, w, ABR, sid);
 
       /// assembly is same
+{
+  const auto &s1 = info.supernodes(1);
+  const ordinal_type m1 = s1.m, n1 = s1.n - s1.m;
+  value_type *ptr1 = s1.u_buf;
+  UnmanagedViewType<value_type_matrix> ATL1(ptr1, m1, m1);
+  printf( " **  %e (%d)\n",ATL1(0,0),m1 );
+}
       CholSupernodes<Algo::Workflow::Serial>::update(member, info, ABR, sid, bufsize - ABR.span() * sizeof(value_type),
                                                      (void *)(w.data()));
+{
+  const auto &s1 = info.supernodes(1);
+  const ordinal_type m1 = s1.m, n1 = s1.n - s1.m;
+  value_type *ptr1 = s1.u_buf;
+  UnmanagedViewType<value_type_matrix> ATL1(ptr1, m1, m1);
+  printf( " *** %e (%d)\n",ATL1(0,0),m1 );
+}
     }
     return 0;
   }
@@ -302,6 +324,7 @@ template <> struct LDL_Supernodes<Algo::Workflow::Serial> {
     using ordinal_type_array = typename supernode_info_type::ordinal_type_array;
 
     const auto &s = info.supernodes(sid);
+    printf( " sid = %d\n",sid );
     {
       const ordinal_type m = s.m;
       const ordinal_type rbeg = s.row_begin;

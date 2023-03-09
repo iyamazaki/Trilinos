@@ -280,6 +280,7 @@ public:
         /// matrix values
         _ax = ax;
 
+printf( " copy :\n" );
         /// copy the input matrix into super panels
         const bool copy_to_l_buf(false);
         _info.copySparseToSuperpanels(copy_to_l_buf, _ap, _aj, _ax, _perm, _peri);
@@ -301,10 +302,11 @@ public:
 
       /// recursive tree traversal
       const ordinal_type member = 0, nroots = _stree_roots.extent(0);
-      for (ordinal_type i = 0; i < nroots; ++i)
+      for (ordinal_type i = 0; i < nroots; ++i) {
+        printf("\n -- i = %d --\n",i );
         LDL_Supernodes<Algo::Workflow::Serial>::factorize_recursive_serial(
             member, _info, _stree_roots(i), true, _piv.data(), _diag.data(), buf.data(), bufsize);
-
+      }
       track_free(bufsize);
     }
     stat.t_factor = timer.seconds();

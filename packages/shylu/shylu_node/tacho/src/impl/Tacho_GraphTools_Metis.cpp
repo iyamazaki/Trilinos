@@ -83,10 +83,13 @@ void GraphTools_Metis::reorder(const ordinal_type verbose) {
   ierr = METIS_NodeND(&_nvts, xadj, adjncy, vwgt, _options, perm, peri);
   t_metis = timer.seconds();
 
+printf("METIS = [\n");
   for (idx_t i = 0; i < _nvts; ++i) {
+printf("%d %d %d\n",i,_perm_t(i),_peri_t(i));
     _perm(i) = _perm_t(i);
     _peri(i) = _peri_t(i);
   }
+printf("];\n");
 
   TACHO_TEST_FOR_EXCEPTION(ierr != METIS_OK, std::runtime_error, "Failed in METIS_NodeND");
   _is_ordered = true;

@@ -46,6 +46,15 @@ template <> struct LDL<Uplo::Lower, Algo::External> {
     if (m > 0) {
       /// factorize LDL
       Lapack<value_type>::sytrf('L', m, A.data(), A.stride_1(), P.data(), W.data(), W.extent(0), &r_val);
+if (r_val != 0) {
+printf( " r_val = %d\n",r_val );
+printf( "A=[\n" );
+for (int i=0; i<m; i++) {
+  for (int j=0; j<m; j++) printf("%e ",A(i,j));
+  printf("\n");
+}
+printf( "];\n");
+}
       TACHO_TEST_FOR_EXCEPTION(r_val, std::runtime_error, "LAPACK (sytrf) returns non-zero error code.");
     }
 #else
