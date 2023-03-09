@@ -57,6 +57,7 @@
 #include <stk_util/environment/RuntimeWarning.hpp>  // for RuntimeWarning
 #include <stk_util/parallel/ParallelReduce.hpp>     // for all_reduce_sum
 #include <stk_util/util/SortAndUnique.hpp>          // for sort_and_unique
+#include <stk_util/util/string_case_compare.hpp>
 #include <stk_util/util/tokenize.hpp>               // for tokenize
 #include <typeinfo>                                 // for type_info
 #include "Ioss_Assembly.h"                          // for Assembly
@@ -761,6 +762,9 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
     void set_alternate_part_name(stk::mesh::Part& part, const std::string& altPartName)
     {
       stk::mesh::impl::set_unique_part_attribute<IossAlternatePartName>(part, altPartName);
+
+      mesh::MetaData & meta = mesh::MetaData::get(part);
+      meta.add_part_alias(part, altPartName);
     }
 
     bool has_alternate_part_name(const stk::mesh::Part& part)
@@ -827,19 +831,6 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         }
       else
         return part.name();
-    }
-
-    stk::mesh::Part *getPart(const stk::mesh::MetaData& metaData, const std::string& name)
-    {
-      const mesh::PartVector & parts = metaData.get_parts();
-      for (unsigned ii=0; ii < parts.size(); ++ii)
-        {
-          stk::mesh::Part *pp = parts[ii];
-          std::string altName = getPartName(*pp);
-          if (altName == name)
-            return pp;
-        }
-      return 0;
     }
 
     Ioss::GroupingEntity* get_grouping_entity(const Ioss::Region& region, const stk::mesh::Part& part)
@@ -1097,35 +1088,45 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
                       "  stk::io::create_named_suffix_field_output_type()");
       }
 
-      impl::set_field_output_type(field, variableType);
+      for (unsigned i = 0; i < field.number_of_states(); ++i) {
+        stk::mesh::FieldState state = static_cast<stk::mesh::FieldState>(i);
+        stk::mesh::FieldBase * fieldOfState = field.field_state(state);
+
+        impl::set_field_output_type(*fieldOfState, variableType);
+      }
     }
 
     void set_field_output_type(stk::mesh::FieldBase & field, FieldOutputType fieldOutputType)
     {
-      switch (fieldOutputType) {
-        case (FieldOutputType::SCALAR)         : impl::set_field_output_type(field, "Scalar"); break;
-        case (FieldOutputType::VECTOR_2D)      : impl::set_field_output_type(field, "Vector_2D"); break;
-        case (FieldOutputType::VECTOR_3D)      : impl::set_field_output_type(field, "Vector_3D"); break;
-        case (FieldOutputType::FULL_TENSOR_36) : impl::set_field_output_type(field, "Full_Tensor_36"); break;
-        case (FieldOutputType::FULL_TENSOR_32) : impl::set_field_output_type(field, "Full_Tensor_32"); break;
-        case (FieldOutputType::FULL_TENSOR_22) : impl::set_field_output_type(field, "Full_Tensor_22"); break;
-        case (FieldOutputType::FULL_TENSOR_16) : impl::set_field_output_type(field, "Full_Tensor_16"); break;
-        case (FieldOutputType::FULL_TENSOR_12) : impl::set_field_output_type(field, "Full_Tensor_12"); break;
-        case (FieldOutputType::SYM_TENSOR_33)  : impl::set_field_output_type(field, "Sym_Tensor_33"); break;
-        case (FieldOutputType::SYM_TENSOR_31)  : impl::set_field_output_type(field, "Sym_Tensor_31"); break;
-        case (FieldOutputType::SYM_TENSOR_21)  : impl::set_field_output_type(field, "Sym_Tensor_21"); break;
-        case (FieldOutputType::SYM_TENSOR_13)  : impl::set_field_output_type(field, "Sym_Tensor_13"); break;
-        case (FieldOutputType::SYM_TENSOR_11)  : impl::set_field_output_type(field, "Sym_Tensor_11"); break;
-        case (FieldOutputType::SYM_TENSOR_10)  : impl::set_field_output_type(field, "Sym_Tensor_10"); break;
-        case (FieldOutputType::ASYM_TENSOR_03) : impl::set_field_output_type(field, "Asym_Tensor_03"); break;
-        case (FieldOutputType::ASYM_TENSOR_02) : impl::set_field_output_type(field, "Asym_Tensor_02"); break;
-        case (FieldOutputType::ASYM_TENSOR_01) : impl::set_field_output_type(field, "Asym_Tensor_01"); break;
-        case (FieldOutputType::MATRIX_22)      : impl::set_field_output_type(field, "Matrix_22"); break;
-        case (FieldOutputType::MATRIX_33)      : impl::set_field_output_type(field, "Matrix_33"); break;
-        case (FieldOutputType::QUATERNION_2D)  : impl::set_field_output_type(field, "Quaternion_2D"); break;
-        case (FieldOutputType::QUATERNION_3D)  : impl::set_field_output_type(field, "Quaternion_3D"); break;
-        default:
-          ThrowErrorMsg("Unsupported FieldOutputType: " << static_cast<int>(fieldOutputType));
+      for (unsigned i = 0; i < field.number_of_states(); ++i) {
+        stk::mesh::FieldState state = static_cast<stk::mesh::FieldState>(i);
+        stk::mesh::FieldBase * fieldOfState = field.field_state(state);
+
+        switch (fieldOutputType) {
+          case (FieldOutputType::SCALAR)         : impl::set_field_output_type(*fieldOfState, "Scalar"); break;
+          case (FieldOutputType::VECTOR_2D)      : impl::set_field_output_type(*fieldOfState, "Vector_2D"); break;
+          case (FieldOutputType::VECTOR_3D)      : impl::set_field_output_type(*fieldOfState, "Vector_3D"); break;
+          case (FieldOutputType::FULL_TENSOR_36) : impl::set_field_output_type(*fieldOfState, "Full_Tensor_36"); break;
+          case (FieldOutputType::FULL_TENSOR_32) : impl::set_field_output_type(*fieldOfState, "Full_Tensor_32"); break;
+          case (FieldOutputType::FULL_TENSOR_22) : impl::set_field_output_type(*fieldOfState, "Full_Tensor_22"); break;
+          case (FieldOutputType::FULL_TENSOR_16) : impl::set_field_output_type(*fieldOfState, "Full_Tensor_16"); break;
+          case (FieldOutputType::FULL_TENSOR_12) : impl::set_field_output_type(*fieldOfState, "Full_Tensor_12"); break;
+          case (FieldOutputType::SYM_TENSOR_33)  : impl::set_field_output_type(*fieldOfState, "Sym_Tensor_33"); break;
+          case (FieldOutputType::SYM_TENSOR_31)  : impl::set_field_output_type(*fieldOfState, "Sym_Tensor_31"); break;
+          case (FieldOutputType::SYM_TENSOR_21)  : impl::set_field_output_type(*fieldOfState, "Sym_Tensor_21"); break;
+          case (FieldOutputType::SYM_TENSOR_13)  : impl::set_field_output_type(*fieldOfState, "Sym_Tensor_13"); break;
+          case (FieldOutputType::SYM_TENSOR_11)  : impl::set_field_output_type(*fieldOfState, "Sym_Tensor_11"); break;
+          case (FieldOutputType::SYM_TENSOR_10)  : impl::set_field_output_type(*fieldOfState, "Sym_Tensor_10"); break;
+          case (FieldOutputType::ASYM_TENSOR_03) : impl::set_field_output_type(*fieldOfState, "Asym_Tensor_03"); break;
+          case (FieldOutputType::ASYM_TENSOR_02) : impl::set_field_output_type(*fieldOfState, "Asym_Tensor_02"); break;
+          case (FieldOutputType::ASYM_TENSOR_01) : impl::set_field_output_type(*fieldOfState, "Asym_Tensor_01"); break;
+          case (FieldOutputType::MATRIX_22)      : impl::set_field_output_type(*fieldOfState, "Matrix_22"); break;
+          case (FieldOutputType::MATRIX_33)      : impl::set_field_output_type(*fieldOfState, "Matrix_33"); break;
+          case (FieldOutputType::QUATERNION_2D)  : impl::set_field_output_type(*fieldOfState, "Quaternion_2D"); break;
+          case (FieldOutputType::QUATERNION_3D)  : impl::set_field_output_type(*fieldOfState, "Quaternion_3D"); break;
+          default:
+            ThrowErrorMsg("Unsupported FieldOutputType: " << static_cast<int>(fieldOutputType));
+        }
       }
     }
 
@@ -1373,6 +1374,27 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
       }
     }
 
+    void declare_stk_aliases(stk::mesh::Part& part, Ioss::GroupingEntity *ge, stk::mesh::MetaData &meta)
+    {
+      meta.add_part_alias(part, part.name());
+
+      if(nullptr != ge && ge->get_database() != nullptr) {
+        Ioss::Region* region = ge->get_database()->get_region();
+
+        if(ge->property_exists("db_name")) {
+          std::string canonName = ge->get_property("db_name").get_string();
+          meta.add_part_alias(part, canonName);
+        }
+
+        const Ioss::AliasMap& ioss_alias_map = region->get_alias_map(ge->type());
+        for(auto&& alias : ioss_alias_map) {
+          if(stk::equal_case(alias.second, part.name())) {
+            meta.add_part_alias(part, alias.first);
+          }
+        }
+      }
+    }
+
     stk::mesh::Part& declare_stk_part(Ioss::GroupingEntity* entity, stk::mesh::MetaData& meta)
     {
       if (entity->type() == Ioss::ASSEMBLY) {
@@ -1387,6 +1409,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
     {
       if (include_entity(entity)) {
         stk::mesh::Part & part = declare_stk_part(entity, meta);
+        declare_stk_aliases(part, entity, meta);
         if (entity->property_exists("id")) {
           meta.set_part_id(part, entity->get_property("id").get_int());
         }
@@ -1400,6 +1423,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         mesh::EntityRank type = get_entity_rank(entity, meta);
         stk::mesh::Part * part = nullptr;
         part = &meta.declare_part(entity->name(), type);
+        declare_stk_aliases(*part, entity, meta);
         if (entity->property_exists("id")) {
             meta.set_part_id(*part, entity->get_property("id").get_int());
         }
@@ -3193,7 +3217,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         const stk::mesh::BulkData &bulk = params.bulk_data();
         const stk::mesh::MetaData & metaData = bulk.mesh_meta_data();
         const std::string& name = block->name();
-        mesh::Part* part = getPart( metaData, name);
+        mesh::Part* part = metaData.get_part(name);
         assert(part != nullptr);
 
         stk::topology topo = part->topology();
@@ -3304,7 +3328,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         const stk::mesh::BulkData &bulk = params.bulk_data();
         const stk::mesh::MetaData & metaData = bulk.mesh_meta_data();
         const std::string& name = ns->name();
-        mesh::Part* part = getPart( metaData, name);
+        mesh::Part* part = metaData.get_part(name);
 
         // If part is null, then it is possible that this nodeset is a "viz nodeset" which
         // means that it is a nodeset containing the nodes of an element block.
@@ -3313,7 +3337,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         if (part == nullptr) {
           if (ns->property_exists(base_stk_part_name)) {
             std::string baseName = ns->get_property(base_stk_part_name).get_string();
-            part = getPart( metaData, baseName);
+            part = metaData.get_part(baseName);
           }
           if (part == nullptr) {
             std::ostringstream msg ;
@@ -3411,7 +3435,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         for (size_t i=0; i < blockCount; i++) {
           Ioss::SideBlock *block = ss->get_block(i);
           if (stk::io::include_entity(block)) {
-            stk::mesh::Part * part = getPart(meta, block->name());
+            stk::mesh::Part * part = meta.get_part(block->name());
             const Ioss::ElementTopology *parent_topology = block->parent_element_topology();
             stk::io::write_side_data_to_ioss<INT>(params, *block, part, parent_topology);
           }
@@ -3424,7 +3448,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         const stk::mesh::BulkData &bulk = params.bulk_data();
         const stk::mesh::MetaData & metaData = bulk.mesh_meta_data();
         const std::string& name = fb->name();
-        mesh::Part* part = getPart( metaData, name);
+        mesh::Part* part = metaData.get_part(name);
         assert(part != nullptr);
 
         stk::topology topo = part->topology();
@@ -3484,7 +3508,7 @@ const stk::mesh::FieldBase *declare_stk_field_internal(stk::mesh::MetaData &meta
         const stk::mesh::BulkData &bulk = params.bulk_data();
         const stk::mesh::MetaData & metaData = bulk.mesh_meta_data();
         const std::string& name = eb->name();
-        mesh::Part* part = getPart( metaData, name);
+        mesh::Part* part = metaData.get_part(name);
         assert(part != nullptr);
 
         stk::topology topo = part->topology();

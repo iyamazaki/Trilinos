@@ -34,7 +34,8 @@
 #ifndef STK_SIMD_PARALLEL_H
 #define STK_SIMD_PARALLEL_H
 
-#include <stk_simd_view/simd_view.hpp>
+#include <Kokkos_Core.hpp>
+#include <stk_simd_view/simd_layout.hpp>
 #include <stk_simd_view/has_typedef.hpp>
 #include <stk_simd_view/simd_index.hpp>
 #include <typeinfo>
@@ -42,11 +43,28 @@
 namespace stk {
 namespace simd {
 
+namespace internal {
+template <class T>
+using ExecutionSpaceArchetypeAlias = typename T::execution_space;
+
+template <class T>
+using DeviceTypeArchetypeAlias = typename T::device_type;
+
+template <class Functor>
+struct DeduceFunctorExecutionSpace {
+  using execution_space = Kokkos::detected_or_t<
+      std::conditional_t<
+          Kokkos::is_detected<DeviceTypeArchetypeAlias, Functor>::value,
+          Kokkos::detected_t<ExecutionSpaceArchetypeAlias, Kokkos::detected_t<DeviceTypeArchetypeAlias, Functor>>,
+          Kokkos::DefaultExecutionSpace>,
+      ExecutionSpaceArchetypeAlias, Functor>;
+};
+} // namespace internal
+
 template <typename Func>
-STK_INLINE
+KOKKOS_INLINE_FUNCTION
 constexpr bool is_gpu() {
-  typedef typename
-    Kokkos::Impl::FunctorPolicyExecutionSpace<Func, void>::execution_space execution_space;
+using execution_space = typename internal::DeduceFunctorExecutionSpace<Func>::execution_space;
 #ifdef KOKKOS_ENABLE_CUDA
   return std::is_same<execution_space, Kokkos::Cuda>::value;
 #else
@@ -54,9 +72,8 @@ constexpr bool is_gpu() {
 #endif
 }
 
-
 template <typename T, typename Func>
-STK_INLINE
+KOKKOS_INLINE_FUNCTION
 int get_simd_loop_size(int N) {
   return is_gpu<Func>() ? N : simd_pad<T>(N) / SimdSizeTraits<T>::simd_width;
 }
@@ -151,7 +168,7 @@ parallel_for(const Kokkos::TeamPolicy<>::member_type& thread, int N, const Func&
 
 
 template <typename T, typename Func>
-STK_INLINE void
+KOKKOS_INLINE_FUNCTION void
 for_each(int N, const Func& func) {
   const int simdLoopSize = get_simd_loop_size<T, Func>(N);
   for (int i=0; i < simdLoopSize; ++i) {
@@ -160,7 +177,7 @@ for_each(int N, const Func& func) {
 }
 
 template <typename Func>
-STK_INLINE void
+KOKKOS_INLINE_FUNCTION void
 for_each(int N, const Func& func) {
   const int simdLoopSize = get_simd_loop_size<double, Func>(N);
   for (int i=0; i < simdLoopSize; ++i) {
@@ -181,7 +198,7 @@ struct SimdReduct {
     initialVal = 0.0;
   }
 
-  STK_INLINE void operator() (PolicyTag tag, const int n, value_type& reductee) const {
+  KOKKOS_INLINE_FUNCTION void operator() (PolicyTag tag, const int n, value_type& reductee) const {
     if (n != simdLoopSizeWithoutRemainder) {
       func(tag, simd::DeviceIndex(n), reductee);
     } else {
@@ -209,7 +226,7 @@ struct SimdReduct<Func, RealType, void> {
     initialVal = 0.0;
   }
 
-  STK_INLINE void operator() (const int n, value_type& reductee) const {
+  KOKKOS_INLINE_FUNCTION void operator() (const int n, value_type& reductee) const {
     if (n != simdLoopSizeWithoutRemainder) {
       func(simd::DeviceIndex(n), reductee);
     } else {

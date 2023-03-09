@@ -712,7 +712,7 @@ Entity BulkData::generate_new_entity(unsigned preferred_offset)
   if (new_local_offset == m_mesh_indexes.size()) {
     m_mesh_indexes.push_back(mesh_index);
     m_entity_keys.push_back(invalid_key);
-    m_entitycomm.push_back(nullptr);
+    m_entitycomm.push_back(-1);
     m_owner.push_back(parallel_rank());
     m_meshModification.add_created_entity_state();
     m_mark_entity.push_back(NOT_MARKED);
@@ -731,7 +731,7 @@ Entity BulkData::generate_new_entity(unsigned preferred_offset)
 
     m_mesh_indexes[new_local_offset] = mesh_index;
     m_entity_keys[new_local_offset] = invalid_key;
-    m_entitycomm[new_local_offset] = nullptr;
+    m_entitycomm[new_local_offset] = -1;
     m_owner[new_local_offset] = parallel_rank();
     m_mark_entity[new_local_offset] = NOT_MARKED;
     m_meshModification.mark_entity_as_created(new_local_offset);
@@ -761,7 +761,7 @@ void BulkData::initialize_arrays()
 
   EntityKey invalid_key;
   m_entity_keys.push_back(invalid_key);
-  m_entitycomm.push_back(nullptr);
+  m_entitycomm.push_back(-1);
   m_owner.push_back(parallel_rank());
 
   m_mark_entity.push_back(NOT_MARKED);
@@ -980,13 +980,13 @@ void BulkData::entity_comm_list_insert(Entity node)
   EntityCommListInfoVector::iterator lb_itr = std::lower_bound(m_entity_comm_list.begin(), m_entity_comm_list.end(), key);
   if(lb_itr == m_entity_comm_list.end() || lb_itr->key != key)
   {
-    const EntityComm* entity_comm = m_entity_comm_map.entity_comm(key);
-    EntityCommListInfo comm_info = {key, node, entity_comm};
+    const int entityCommIndex = m_entity_comm_map.entity_comm(key);
+    EntityCommListInfo comm_info = {key, node, entityCommIndex};
     m_entity_comm_list.insert(lb_itr, comm_info);
   }
 }
 
-void BulkData::add_node_sharing( Entity node, int sharing_proc )
+void BulkData::add_node_sharing(Entity node, int sharing_proc)
 {
   // Only valid to specify sharing information for non-deleted nodes
   ThrowRequire(entity_rank(node) == stk::topology::NODE_RANK);
@@ -1004,6 +1004,41 @@ void BulkData::add_node_sharing( Entity node, int sharing_proc )
   entity_comm_map_insert(node, EntityCommInfo(stk::mesh::BulkData::SHARED, sharing_proc));
   entity_comm_map_erase(entity_key(node), EntityCommInfo(stk::mesh::BulkData::AURA, sharing_proc));
   entity_comm_list_insert(node);
+}
+
+void BulkData::add_node_sharing(const EntityProcVec& nodesAndProcs)
+{
+  EntityCommListInfoVector newCommListEntries;
+  newCommListEntries.reserve(nodesAndProcs.size());
+
+  for(const EntityProc& nodeAndSharingProc : nodesAndProcs) {
+    Entity node = nodeAndSharingProc.first;
+    int sharing_proc = nodeAndSharingProc.second;
+
+    // Only valid to specify sharing information for non-deleted nodes
+    ThrowRequire(entity_rank(node) == stk::topology::NODE_RANK);
+    ThrowRequire(state(node) != Deleted);
+
+    protect_orphaned_node(node);
+
+    if (state(node) == Unchanged) {
+        mark_entity_and_upward_related_entities_as_modified(node);
+    }
+
+    internal_mark_entity(node, IS_SHARED);
+    std::pair<int,bool> result = entity_comm_map_insert(node, EntityCommInfo(stk::mesh::BulkData::SHARED, sharing_proc));
+    entity_comm_map_erase(entity_key(node), EntityCommInfo(stk::mesh::BulkData::AURA, sharing_proc));
+ 
+    const bool inserted = result.second;
+    if (inserted) {
+      EntityKey key = entity_key(node);
+      EntityCommListInfo info = {key, node, result.first};
+      newCommListEntries.push_back(info);
+    }
+  }
+
+  internal_add_comm_list_entries(newCommListEntries);
+  m_add_node_sharing_called = true;
 }
 
 EntityId BulkData::get_solo_side_id()
@@ -1284,7 +1319,6 @@ bool BulkData::internal_destroy_entity(Entity entity, bool wasGhost)
 
   record_entity_deletion(entity, ghost);
 
-
   m_check_invalid_rels = true;
   return true ;
 }
@@ -1313,27 +1347,28 @@ size_t get_max_num_ids_needed_across_all_procs(const stk::mesh::BulkData& bulkDa
 
 std::vector<uint64_t> BulkData::internal_get_ids_in_use(stk::topology::rank_t rank, const std::vector<stk::mesh::EntityId>& reserved_ids) const
 {
+  const_entity_iterator beg = begin_entities(rank);
+  const_entity_iterator end = end_entities(rank);
   std::vector<uint64_t> ids_in_use;
-  ids_in_use.reserve(m_entity_keys.size() + m_meshModification.get_deleted_entity_cache().get_deleted_entities_current_mod_cycle().size());
+  ids_in_use.reserve(std::distance(beg,end) + m_meshModification.get_deleted_entity_cache().get_deleted_entities_current_mod_cycle().size() + reserved_ids.size());
 
-  const BucketVector& bkts = this->buckets(rank);
-  for (const Bucket* bptr : bkts) {
-    for (Entity entity : *bptr) {
-      ids_in_use.push_back(identifier(entity));
-    }
+  for(const_entity_iterator i = beg; i!=end; ++i) {
+    ids_in_use.push_back(i->first.id());
   }
 
+  std::vector<uint64_t> reserved_and_deleted_ids(reserved_ids.begin(), reserved_ids.end());
   for (Entity::entity_value_type local_offset : m_meshModification.get_deleted_entity_cache().get_deleted_entities_current_mod_cycle()) {
     stk::mesh::Entity entity;
     entity.set_local_offset(local_offset);
     if ((entity_rank(entity) == rank) && (is_valid(entity) || state(entity)==Deleted)) {
-      ids_in_use.push_back(identifier(entity));
+      reserved_and_deleted_ids.push_back(identifier(entity));
     }
   }
 
-  ids_in_use.insert(ids_in_use.end(), reserved_ids.begin(), reserved_ids.end());
-
-  stk::util::sort_and_unique(ids_in_use);
+  if (!reserved_and_deleted_ids.empty()) {
+    stk::util::sort_and_unique(reserved_and_deleted_ids);
+    stk::util::insert_keep_sorted_and_unique(reserved_and_deleted_ids, ids_in_use);
+  }
   return ids_in_use;
 }
 
@@ -1353,11 +1388,17 @@ void BulkData::generate_new_ids_given_reserved_ids(stk::topology::rank_t rank, s
 {
     size_t maxNumNeeded = get_max_num_ids_needed_across_all_procs(*this, numIdsNeeded);
     if ( maxNumNeeded == 0 ) return;
-    std::vector<uint64_t> ids_in_use = this->internal_get_ids_in_use(rank, reserved_ids);
-
+    EntityId globalMaxId = impl::get_global_max_id_in_use(*this, rank, m_meshModification.get_deleted_entity_cache().get_deleted_entities_current_mod_cycle(), reserved_ids);
     uint64_t maxAllowedId = get_max_allowed_id();
+    uint64_t availableIds = maxAllowedId - globalMaxId;
+    uint64_t globalNumIdsRequested = stk::get_global_sum(this->parallel(), numIdsNeeded);
+    if (availableIds > globalNumIdsRequested) {
+      generate_parallel_ids_above_existing_max(this->parallel(), numIdsNeeded, globalNumIdsRequested, maxNumNeeded, availableIds, globalMaxId, requestedIds);
+      return;
+    }
 
-    requestedIds = generate_parallel_unique_ids(maxAllowedId, ids_in_use, numIdsNeeded, this->parallel());
+    std::vector<uint64_t> ids_in_use = this->internal_get_ids_in_use(rank, reserved_ids);
+    generate_parallel_ids_in_gap(this->parallel(), ids_in_use, maxAllowedId, numIdsNeeded, globalNumIdsRequested, requestedIds);
 }
 
 void BulkData::generate_new_ids(stk::topology::rank_t rank, size_t numIdsNeeded, std::vector<stk::mesh::EntityId>& requestedIds)
@@ -1389,7 +1430,8 @@ void BulkData::generate_new_ids(stk::topology::rank_t rank, size_t numIdsNeeded,
   }
 
   std::vector<uint64_t> ids_in_use = internal_get_ids_in_use(rank);
-  requestedIds = generate_parallel_unique_ids(maxAllowedId, ids_in_use, numIdsNeeded, parallel());
+  uint64_t localMaxIdInUse = ids_in_use.back();
+  requestedIds = generate_parallel_unique_ids(maxAllowedId, ids_in_use, numIdsNeeded, parallel(), localMaxIdInUse);
 }
 
 void BulkData::generate_new_entities(const std::vector<size_t>& requests,
@@ -1533,17 +1575,15 @@ bool BulkData::in_shared(EntityKey key, int proc) const
 
 bool BulkData::in_shared(Entity entity, int proc) const
 {
-  const EntityComm* entityComm = m_entitycomm[entity.local_offset()];
-  if (entityComm != nullptr && entityComm->isShared) {
-    const EntityCommInfoVector& vec = entityComm->comm_map;
-    EntityCommInfoVector::const_iterator it = vec.begin();
-    EntityCommInfoVector::const_iterator end = vec.end();
+  const int entityCommIndex = m_entitycomm[entity.local_offset()];
+  if (entityCommIndex != -1) {
+    PairIterEntityComm commInfo = internal_comm_db().comm(entityCommIndex);
     
-    while(it!=end && it->ghost_id == SHARED) {
-      if (it->proc == proc) {
+    while(!commInfo.empty() && commInfo->ghost_id == SHARED) {
+      if (commInfo->proc == proc) {
         return true;
       }
-      ++it;
+      ++commInfo;
     }
   }
   return false ;
@@ -1586,32 +1626,28 @@ bool BulkData::in_ghost( const Ghosting & ghost , EntityKey key , int proc ) con
   EntityCommInfo tmp( ghost.ordinal() , proc );
 
   PairIterEntityComm ec = internal_entity_comm_map(key);
-  EntityCommInfoVector::const_iterator i =
-    std::lower_bound( ec.begin(), ec.end() , tmp );
+  const EntityCommInfo* i = std::lower_bound( ec.begin(), ec.end() , tmp );
 
   return i != ec.end() && tmp == *i ;
 }
 
 bool BulkData::in_ghost( const Ghosting & ghost , Entity entity , int proc ) const
 {
-  if (m_entitycomm[entity.local_offset()] == nullptr) {
+  if (m_entitycomm[entity.local_offset()] == -1) {
     return false;
   }
 
-  const EntityCommInfoVector& vec = m_entitycomm[entity.local_offset()]->comm_map;
+  PairIterEntityComm commInfo = internal_comm_db().comm(m_entitycomm[entity.local_offset()]);
   
-  EntityCommInfoVector::const_iterator i = vec.begin();
-  EntityCommInfoVector::const_iterator end = vec.end();
-  
-  while(i!=end && i->ghost_id < ghost.ordinal()) {
-    ++i;
+  while(!commInfo.empty() && commInfo->ghost_id < ghost.ordinal()) {
+    ++commInfo;
   }
 
-  while(i!=end && i->ghost_id == ghost.ordinal()) {
-    if (i->proc == proc) {
+  while(!commInfo.empty() && commInfo->ghost_id == ghost.ordinal()) {
+    if (commInfo->proc == proc) {
       return true;
     }
-    ++i;
+    ++commInfo;
   }
 
   return false;
@@ -1619,14 +1655,14 @@ bool BulkData::in_ghost( const Ghosting & ghost , Entity entity , int proc ) con
 
 bool BulkData::in_ghost( const Ghosting & ghost , Entity entity ) const
 {
-  if (m_entitycomm[entity.local_offset()] == nullptr) {
+  if (m_entitycomm[entity.local_offset()] == -1) {
     return false;
   }
 
-  const EntityCommInfoVector& vec = m_entitycomm[entity.local_offset()]->comm_map;
+  PairIterEntityComm commInfo = internal_comm_db().comm(m_entitycomm[entity.local_offset()]);
   
-  EntityCommInfoVector::const_iterator i = vec.begin();
-  EntityCommInfoVector::const_iterator end = vec.end();
+  const EntityCommInfo* i = commInfo.begin();
+  const EntityCommInfo* end = commInfo.end();
   
   while(i!=end && i->ghost_id < ghost.ordinal()) {
     ++i;
@@ -1649,8 +1685,7 @@ bool BulkData::in_send_ghost( const Ghosting & ghost , EntityKey key , int proc 
       EntityCommInfo tmp( ghost.ordinal() , proc );
 
       PairIterEntityComm ec = internal_entity_comm_map(key);
-      EntityCommInfoVector::const_iterator i =
-        std::lower_bound( ec.begin(), ec.end() , tmp );
+      const EntityCommInfo* i = std::lower_bound( ec.begin(), ec.end() , tmp );
 
       ret_val = i != ec.end() && tmp == *i ;
   }
@@ -1660,14 +1695,14 @@ bool BulkData::in_send_ghost( const Ghosting & ghost , EntityKey key , int proc 
 
 bool BulkData::is_communicated_with_proc(Entity entity, int proc) const
 {
-  if (m_entitycomm[entity.local_offset()] == nullptr) {
+  if (m_entitycomm[entity.local_offset()] == -1) {
     return false;
   }
 
-  const EntityCommInfoVector& vec = m_entitycomm[entity.local_offset()]->comm_map;
+  PairIterEntityComm commInfo = internal_comm_db().comm(m_entitycomm[entity.local_offset()]);
   
-  EntityCommInfoVector::const_iterator i = vec.begin();
-  EntityCommInfoVector::const_iterator end = vec.end();
+  const EntityCommInfo* i = commInfo.begin();
+  const EntityCommInfo* end = commInfo.end();
   
   while(i != end) {
     if (i->proc == proc) {
@@ -1682,27 +1717,27 @@ bool BulkData::is_communicated_with_proc(Entity entity, int proc) const
 void BulkData::comm_procs(Entity entity, std::vector<int> & procs ) const
 {
   procs.clear();
-  const EntityComm* entityComm = m_entitycomm[entity.local_offset()];
-  if (entityComm != nullptr) {
-    impl::fill_sorted_procs(PairIterEntityComm(entityComm->comm_map.begin(),entityComm->comm_map.end()), procs);
+  const int entityCommIndex = m_entitycomm[entity.local_offset()];
+  if (entityCommIndex != -1) {
+    impl::fill_sorted_procs(internal_comm_db().comm(entityCommIndex), procs);
   }
 }
 
 void BulkData::comm_shared_procs(EntityKey key, std::vector<int> & procs ) const
 {
   procs.clear();
-  const EntityComm* entityComm = m_entity_comm_map.entity_comm(key);
-  if (entityComm != nullptr) {
-    impl::comm_shared_procs(entityComm->comm_map, procs);
+  const int entityCommIndex = m_entity_comm_map.entity_comm(key);
+  if (entityCommIndex != -1) {
+    impl::comm_shared_procs(internal_comm_db().comm(entityCommIndex), procs);
   }
 }
 
 void BulkData::comm_shared_procs(Entity entity, std::vector<int> & procs ) const
 {
   procs.clear();
-  const EntityComm* entityComm = m_entitycomm[entity.local_offset()];
-  if (entityComm != nullptr) {
-    impl::comm_shared_procs(entityComm->comm_map, procs);
+  const int entityCommIndex = m_entitycomm[entity.local_offset()];
+  if (entityCommIndex != -1) {
+    impl::comm_shared_procs(internal_comm_db().comm(entityCommIndex), procs);
   }
 }
 
@@ -2508,7 +2543,7 @@ void BulkData::get_entities_that_have_sharing(std::vector<stk::mesh::Entity> &en
         stk::mesh::EntityProcVec entitiesToRemoveFromSharing;
         m_meshModification.delete_shared_entities_which_are_no_longer_in_owned_closure(entitiesToRemoveFromSharing); 
         
-        impl::CommEntityMods commEntityMods(*this, internal_comm_list());
+        impl::CommEntityMods commEntityMods(*this, internal_comm_db(), internal_comm_list());
         commEntityMods.communicate(impl::CommEntityMods::PACK_SHARED);
         m_meshModification.internal_resolve_shared_modify_delete(commEntityMods.get_shared_mods(), entitiesToRemoveFromSharing, entitiesNoLongerShared);
     }
@@ -3058,14 +3093,14 @@ void BulkData::destroy_all_ghosting()
       if(entity_is_not_shared)
       {
         i->key = EntityKey();
-        i->entity_comm = nullptr;
+        i->entity_comm = -1;
       }
     }
     else {
       entity_comm_map_clear_ghosting(i->key);
       if ( internal_entity_comm_map(i->key).empty() ) {
         i->key = EntityKey();
-        i->entity_comm = nullptr;
+        i->entity_comm = -1;
       }
     }
   }
@@ -3213,19 +3248,22 @@ void BulkData::internal_verify_inputs_and_change_ghosting(
 //----------------------------------------------------------------------
 
 void BulkData::ghost_entities_and_fields(Ghosting & ghosting,
-                                         const std::vector<EntityProc>& sendGhosts,
+                                         EntityProcVec&& sendGhosts,
                                          bool isFullRegen,
                                          const std::vector<EntityProc>& removedSendGhosts)
 {
     //------------------------------------
     // Push newly ghosted entities to the receivers and update the comm list.
 
-    const size_t record_entity_comm_size_before_changing_it = m_entity_comm_list.size();
     const int p_size = parallel_size() ;
     const bool onlyPackDownwardRelations = isFullRegen ? true : false;
+    EntityCommListInfoVector newCommListEntries;
+    const unsigned arbitraryInitialCapacity = 512;
+    newCommListEntries.reserve(arbitraryInitialCapacity);
 
     stk::CommSparse commSparse( parallel() );
     for ( int phase = 0; phase < 2; ++phase ) {
+      Entity prevEntity;
       for (const EntityProc& entProc : sendGhosts) {
         Entity entity = entProc.first;
         const int proc = entProc.second;
@@ -3240,11 +3278,13 @@ void BulkData::ghost_entities_and_fields(Ghosting & ghosting,
           pack_field_values(*this, buf , entity );
 
           if (phase == 1) {
-            std::pair<EntityComm*,bool> result = entity_comm_map_insert(entity, EntityCommInfo(ghosting.ordinal(), proc));
-            const EntityComm* entity_comm = result.first;
-            EntityCommListInfo comm_info = {entity_key(entity), entity,
-                                            entity_comm};
-            m_entity_comm_list.push_back( comm_info );
+            std::pair<int,bool> result = entity_comm_map_insert(entity, EntityCommInfo(ghosting.ordinal(), proc));
+            if(result.second && entity != prevEntity) {
+              const int entityCommIndex = result.first;
+              EntityCommListInfo comm_info = {entity_key(entity), entity, entityCommIndex};
+              newCommListEntries.push_back(comm_info);
+              prevEntity = entity;
+            }
           }
         }
       }
@@ -3264,6 +3304,10 @@ void BulkData::ghost_entities_and_fields(Ghosting & ghosting,
         const bool deallocateSendBuffers = true;
         commSparse.communicate(deallocateSendBuffers);
       }
+    }
+
+    {
+      std::vector<EntityProc>().swap(sendGhosts);
     }
 
     std::ostringstream error_msg ;
@@ -3373,12 +3417,11 @@ void BulkData::ghost_entities_and_fields(Ghosting & ghosting,
 
           const EntityCommInfo tmp( ghosting.ordinal() , owner );
 
-          std::pair<EntityComm*, bool> insertResult = entity_comm_map_insert(entity, tmp);
+          std::pair<int, bool> insertResult = entity_comm_map_insert(entity, tmp);
           if ( insertResult.second ) {
-            const EntityComm* entity_comm = insertResult.first;
-            EntityCommListInfo comm_info = {entity_key(entity), entity,
-                                            entity_comm};
-            m_entity_comm_list.push_back( comm_info );
+            const int entityCommIndex = insertResult.first;
+            EntityCommListInfo comm_info = {entity_key(entity), entity, entityCommIndex};
+            newCommListEntries.push_back(comm_info);
           }
 
           //now, change owner. (needed to wait until comm-info was created)
@@ -3400,18 +3443,7 @@ void BulkData::ghost_entities_and_fields(Ghosting & ghosting,
     ThrowErrorMsgIf( error_count, error_msg.str() );
 #endif
 
-    if ( record_entity_comm_size_before_changing_it < m_entity_comm_list.size() ) {
-      // Added new ghosting entities to the list,
-      // must now sort and merge.
-
-      EntityCommListInfoVector::iterator i = m_entity_comm_list.begin();
-      i += record_entity_comm_size_before_changing_it ;
-      std::sort( i , m_entity_comm_list.end() );
-      std::inplace_merge( m_entity_comm_list.begin() , i ,
-                          m_entity_comm_list.end() );
-      m_entity_comm_list.erase( std::unique( m_entity_comm_list.begin() , m_entity_comm_list.end() ) ,
-                                m_entity_comm_list.end() );
-    }
+    internal_add_comm_list_entries(newCommListEntries);
 
     OrdinalVector addParts, scratchOrdinalVec;
     removeParts = {ghosting_part(ghosting).mesh_meta_data_ordinal()};
@@ -3501,7 +3533,7 @@ void BulkData::internal_add_to_ghosting(
     stk::mesh::impl::move_unowned_entities_for_owner_to_ghost(*this, entitiesToGhostOntoOtherProcessors);
 
     stk::util::sort_and_unique(entitiesToGhostOntoOtherProcessors, EntityLess(*this));
-    ghost_entities_and_fields(ghosting, entitiesToGhostOntoOtherProcessors);
+    ghost_entities_and_fields(ghosting, std::move(entitiesToGhostOntoOtherProcessors));
 }
 
 void BulkData::filter_ghosting_remove_receives(const stk::mesh::Ghosting &ghosting,
@@ -3520,7 +3552,7 @@ void BulkData::filter_ghosting_remove_receives(const stk::mesh::Ghosting &ghosti
   // all received-ghosts on this process by the end of the loop.
   EntityVector recvGhosts;
   for ( const EntityCommListInfo& info : internal_comm_list()) {
-    if (info.entity_comm && info.entity_comm->isGhost) {
+    if (info.entity_comm != -1) {
       const bool inRemoveReceive = ghostStatus[info.entity.local_offset()];
       if ( is_valid(info.entity) && !inRemoveReceive && in_receive_ghost(ghosting, info.entity) ) {
         recvGhosts.push_back(info.entity);
@@ -3623,7 +3655,7 @@ void BulkData::internal_change_ghosting(
 
   if (!add_send_is_globally_empty) {
     stk::util::sort_and_unique(newSendGhosts, EntityLess(*this));
-    ghost_entities_and_fields(ghosting, newSendGhosts, false);
+    ghost_entities_and_fields(ghosting, std::move(newSendGhosts), false);
   }
   else {
     ThrowRequireMsg(newSendGhosts.empty(), "internal_change_ghosting: add_send_is_globally_empty but newSendGhosts not empty");
@@ -3645,8 +3677,9 @@ void BulkData::internal_change_ghosting(
     internal_change_entity_parts(get_entity(key), {}, removeGhostingPart, scratchOrdinalVec, scratchSpace);
   }
 
+  const EntityCommDatabase& commDB = internal_comm_db();
   for(EntityCommListInfo& info : m_entity_comm_list) {
-    if (info.entity_comm == nullptr || info.entity_comm->comm_map.empty()) {
+    if (info.entity_comm == -1 || commDB.comm(info.entity_comm).empty()) {
       info.key = EntityKey();
     }
   }
@@ -3674,7 +3707,7 @@ void BulkData::internal_change_ghosting(
   }
 
   for(EntityCommListInfo& info : m_entity_comm_list) {
-    if (info.entity_comm == nullptr || info.entity_comm->comm_map.empty()) {
+    if (info.entity_comm == -1 || commDB.comm(info.entity_comm).empty()) {
       info.key = EntityKey();
     }
   }
@@ -4054,8 +4087,8 @@ void BulkData::add_comm_list_entries_for_entities(const std::vector<stk::mesh::E
     {
       Entity entity = sharedModifiedEntities[i];
       EntityKey key = entity_key(entity);
-      const EntityComm* entity_comm = m_entity_comm_map.entity_comm(key);
-      EntityCommListInfo comm_info = {key, entity, entity_comm};
+      const int entityCommIndex = m_entity_comm_map.entity_comm(key);
+      EntityCommListInfo comm_info = {key, entity, entityCommIndex};
       m_entity_comm_list.push_back(comm_info);
     }
 
@@ -4070,6 +4103,18 @@ void BulkData::add_comm_list_entries_for_entities(const std::vector<stk::mesh::E
 
     m_entity_comm_list.erase( iter , m_entity_comm_list.end() );
 }
+
+void BulkData::internal_add_comm_list_entries(EntityCommListInfoVector& newCommListEntries)
+{
+  if (!newCommListEntries.empty()) {
+    stk::util::sort_and_unique(newCommListEntries);
+    if (newCommListEntries.capacity() >= newCommListEntries.size()+m_entity_comm_list.size()) {
+      m_entity_comm_list.swap(newCommListEntries);
+    }
+    stk::util::insert_keep_sorted_and_unique(newCommListEntries, m_entity_comm_list);
+  }
+}
+
 //----------------------------------------------------------------------
 
 // Postconditions:
@@ -4145,7 +4190,7 @@ void BulkData::update_comm_list_based_on_changes_in_comm_map()
 {
   bool changed = false ;
   for (EntityCommListInfo& entityCommInfo : m_entity_comm_list) {
-      if (entityCommInfo.entity_comm == nullptr) {
+      if (entityCommInfo.entity_comm == -1) {
           entityCommInfo.key = EntityKey();
           changed = true;
       }
@@ -4192,7 +4237,7 @@ bool BulkData::internal_modification_end_for_change_parts(ModEndOptimizationFlag
       stk::mesh::EntityProcVec entitiesToRemoveFromSharing;
       m_meshModification.delete_shared_entities_which_are_no_longer_in_owned_closure(entitiesToRemoveFromSharing);
       
-      impl::CommEntityMods commEntityMods(*this, internal_comm_list());
+      impl::CommEntityMods commEntityMods(*this, internal_comm_db(), internal_comm_list());
       commEntityMods.communicate(impl::CommEntityMods::PACK_SHARED);
       m_meshModification.internal_resolve_shared_modify_delete(commEntityMods.get_shared_mods(), entitiesToRemoveFromSharing, entitiesNoLongerShared);
       internal_resolve_shared_membership(entitiesNoLongerShared);
@@ -4449,7 +4494,7 @@ bool BulkData::internal_modification_end_for_skin_mesh( EntityRank entity_rank, 
       stk::mesh::EntityProcVec entitiesToRemoveFromSharing;
       m_meshModification.delete_shared_entities_which_are_no_longer_in_owned_closure(entitiesToRemoveFromSharing);
 
-      impl::CommEntityMods commEntityMods(*this, internal_comm_list());
+      impl::CommEntityMods commEntityMods(*this, internal_comm_db(), internal_comm_list());
       commEntityMods.communicate(impl::CommEntityMods::PACK_SHARED);
       m_meshModification.internal_resolve_shared_modify_delete(commEntityMods.get_shared_mods(), entitiesToRemoveFromSharing, entitiesNoLongerShared);
       this->internal_resolve_shared_membership(entitiesNoLongerShared);
@@ -4477,7 +4522,7 @@ void BulkData::resolve_incremental_ghosting_for_entity_creation_or_skin_mesh(Ent
     find_upward_connected_entities_to_ghost_onto_other_processors(sendGhosts, entity_rank, selectedToSkin, connectFacesToPreexistingGhosts);
 
     stk::util::sort_and_unique(sendGhosts, EntityLess(*this));
-    ghost_entities_and_fields(aura_ghosting(), sendGhosts);
+    ghost_entities_and_fields(aura_ghosting(), std::move(sendGhosts));
 }
 
 bool BulkData::internal_modification_end_for_entity_creation( const std::vector<EntityRank> & entity_rank_vector, ModEndOptimizationFlag opt )
@@ -4520,6 +4565,7 @@ bool BulkData::internal_modification_end_for_entity_creation( const std::vector<
 void BulkData::fill_entity_procs_for_owned_modified_or_created(std::vector<EntityProc> & send_list ) const
 {
     const int p_rank = this->parallel_rank();
+    const EntityCommDatabase& commDB = internal_comm_db();
     for(const EntityCommListInfo& info : m_entity_comm_list)
     {
         stk::mesh::Entity entity = info.entity;
@@ -4527,8 +4573,8 @@ void BulkData::fill_entity_procs_for_owned_modified_or_created(std::vector<Entit
 
         if(owner == p_rank && is_modified_or_created(*this, entity))
         {
-            const EntityComm* entity_comm = info.entity_comm;
-            for(PairIterEntityComm ec(entity_comm->comm_map); !ec.empty(); ++ec)
+            const int entityCommIndex = info.entity_comm;
+            for(PairIterEntityComm ec = commDB.comm(entityCommIndex); !ec.empty(); ++ec)
             {
                 EntityProc tmp(entity, ec->proc);
                 send_list.push_back(tmp);
@@ -4551,7 +4597,7 @@ struct PartStorage
 };
 
 
-void BulkData::remove_unneeded_induced_parts(stk::mesh::Entity entity, const EntityCommInfoVector& entity_comm_info,
+void BulkData::remove_unneeded_induced_parts(stk::mesh::Entity entity, PairIterEntityComm entity_comm_info,
         PartStorage& part_storage, stk::CommSparse& comm)
 {
     part_storage.induced_part_ordinals.clear();
@@ -4581,8 +4627,15 @@ void BulkData::internal_resolve_shared_membership(const stk::mesh::EntityVector 
             buf.unpack<EntityKey>(key);
             buf.unpack<EntityState>(remoteState);
             Entity entity = get_entity(key);
+            int numSharingProcs = 0;
+            buf.unpack<int>(numSharingProcs);
+            for(int sp=0; sp<numSharingProcs; ++sp) {
+              int sharingProc = -1;
+              buf.unpack<int>(sharingProc);
+              entity_comm_map_insert(entity, EntityCommInfo(SHARED, sharingProc));
+            }
+ 
             const EntityState localState = state(entity);
-
             if (!in_shared(entity,p)) {
               if (localState == Unchanged) {
                 stk::util::insert_keep_sorted_and_unique(EntityProc(entity,p),
@@ -4611,6 +4664,7 @@ void BulkData::internal_resolve_shared_membership(const stk::mesh::EntityVector 
     bool localOk = true;
 #endif
     std::string errorMsg;
+    const EntityCommDatabase& commDB = internal_comm_db();
     try
     {
       std::vector<bool> shouldProcess(m_entity_comm_list.size(), false);
@@ -4626,7 +4680,7 @@ void BulkData::internal_resolve_shared_membership(const stk::mesh::EntityVector 
       for (unsigned i=0; i<m_entity_comm_list.size(); ++i) {
         if (shouldProcess[i]) {
           const EntityCommListInfo& info = m_entity_comm_list[i];
-          remove_unneeded_induced_parts(info.entity, info.entity_comm->comm_map, part_storage,       comm);
+          remove_unneeded_induced_parts(info.entity, commDB.comm(info.entity_comm), part_storage, comm);
         }
       }
     }
@@ -4682,6 +4736,7 @@ void BulkData::internal_resolve_shared_part_membership_for_element_death()
     stk::CommSparse comm(p_comm);
 
     const EntityCommListInfoVector& entityCommList = m_entity_comm_list;
+    const EntityCommDatabase& commDB = internal_comm_db();
     pack_and_communicate(comm, [this, &comm, &entityCommList]() {
         impl::pack_induced_memberships_for_entities_less_than_element_rank(*this, comm, entityCommList);
     });
@@ -4691,16 +4746,16 @@ void BulkData::internal_resolve_shared_part_membership_for_element_death()
 
     for(EntityCommListInfoVector::iterator i = m_entity_comm_list.begin(); i != m_entity_comm_list.end(); ++i)
     {
-        stk::mesh::Entity entity = i->entity;
+      stk::mesh::Entity entity = i->entity;
 
-        if(is_less_than_element_rank(*this, entity) && is_modified_or_created(*this, entity))
+      if(is_less_than_element_rank(*this, entity) && is_modified_or_created(*this, entity))
+      {
+        bool i_own_this_entity_in_comm_list = parallel_owner_rank(i->entity) == p_rank;
+        if( i_own_this_entity_in_comm_list )
         {
-            bool i_own_this_entity_in_comm_list = parallel_owner_rank(i->entity) == p_rank;
-            if( i_own_this_entity_in_comm_list )
-            {
-                remove_unneeded_induced_parts(entity, i->entity_comm->comm_map, part_storage,  comm);
-            }
+          remove_unneeded_induced_parts(entity, commDB.comm(i->entity_comm), part_storage, comm);
         }
+      }
     }
 
     std::vector<EntityProc> send_list;
@@ -4799,14 +4854,15 @@ void BulkData::internal_update_all_sharing_procs()
     }
 
     const EntityCommListInfoVector& all_comm = m_entity_comm_list;
+    const EntityCommDatabase& commDB = internal_comm_db();
     for (const EntityCommListInfo& info : all_comm) {
       const Entity entity = info.entity;
       const Bucket& bkt = bucket(entity);
 
-      if (bkt.shared() && info.entity_comm != nullptr) {
+      if (bkt.shared() && info.entity_comm != -1) {
         const EntityRank rank = bkt.entity_rank();
 
-        const EntityCommInfoVector& commInfo = info.entity_comm->comm_map;
+        PairIterEntityComm commInfo = commDB.comm(info.entity_comm);
         const unsigned len = commInfo.size();
         unsigned i = 0;
         while (i < len && commInfo[i].ghost_id == BulkData::SHARED) {
@@ -4823,6 +4879,7 @@ void BulkData::internal_update_fast_comm_maps() const
     m_volatile_fast_shared_comm_map.resize(num_ranks);
     if (parallel_size() > 1) {
         const EntityCommListInfoVector& all_comm = m_entity_comm_list;
+        const EntityCommDatabase& commDB = internal_comm_db();
 
         // Flush previous map
         for (EntityRank r = stk::topology::BEGIN_RANK; r < num_ranks; ++r) {
@@ -4843,8 +4900,8 @@ void BulkData::internal_update_fast_comm_maps() const
             EntityKey const key   = all_comm[i].key;
             EntityRank const rank = key.rank();
 
-            if (all_comm[i].entity_comm != nullptr) {
-                PairIterEntityComm ec(all_comm[i].entity_comm->comm_map);
+            if (all_comm[i].entity_comm != -1) {
+                PairIterEntityComm ec = commDB.comm(all_comm[i].entity_comm);
                 for(; !ec.empty() && ec->ghost_id == BulkData::SHARED; ++ec) {
                     shared_entity_counts[rank][ec->proc]++;
                 }
@@ -4862,14 +4919,14 @@ void BulkData::internal_update_fast_comm_maps() const
         for (size_t i = 0, ie = all_comm.size(); i < ie; ++i) {
             Entity const e        = all_comm[i].entity;
             MeshIndex const& idx  = mesh_index(e);
-            if (idx.bucket->shared() && all_comm[i].entity_comm != nullptr) {
+            if (idx.bucket->shared() && all_comm[i].entity_comm != -1) {
               unsigned bucket_id  = idx.bucket->bucket_id();
               unsigned bucket_ord = idx.bucket_ordinal;
 
               EntityKey const key   = all_comm[i].key;
               EntityRank const rank = key.rank();
   
-              PairIterEntityComm ec(all_comm[i].entity_comm->comm_map);
+              PairIterEntityComm ec = commDB.comm(all_comm[i].entity_comm);
               for(; !ec.empty() && ec->ghost_id == BulkData::SHARED; ++ec) {
                 add_bucket_and_ord(bucket_id, bucket_ord, m_volatile_fast_shared_comm_map[rank][ec->proc]);
               }
@@ -5533,7 +5590,7 @@ bool BulkData::verify_parallel_attributes( std::ostream & error_log )
     }
   }
 
-  bool isGloballyConsistentCommList = impl::is_comm_list_globally_consistent(*this, this->m_entity_comm_list, error_log);
+  bool isGloballyConsistentCommList = impl::is_comm_list_globally_consistent(*this, internal_comm_db(), m_entity_comm_list, error_log);
   result = result && isGloballyConsistentCommList;
 
   return result ;
@@ -5555,11 +5612,11 @@ bool BulkData::comm_mesh_verify_parallel_consistency(std::ostream & error_log )
   if ( verified_ok ) {
     CommSparse comm( parallel() );
 
-    impl::pack_owned_verify(*this, this->internal_comm_list(), comm);
+    impl::pack_owned_verify(*this, internal_comm_db(), internal_comm_list(), comm);
 
     comm.allocate_buffers();
 
-    impl::pack_owned_verify(*this, this->internal_comm_list(), comm);
+    impl::pack_owned_verify(*this, internal_comm_db(), internal_comm_list(), comm);
 
     comm.communicate();
 
@@ -5766,7 +5823,7 @@ void BulkData::internal_resolve_sharing_and_ghosting_for_sides(bool connectFaces
     stk::mesh::EntityProcVec entitiesToRemoveFromSharing;
     m_meshModification.delete_shared_entities_which_are_no_longer_in_owned_closure(entitiesToRemoveFromSharing);
     
-    impl::CommEntityMods commEntityMods(*this, internal_comm_list());
+    impl::CommEntityMods commEntityMods(*this, internal_comm_db(), internal_comm_list());
     commEntityMods.communicate(impl::CommEntityMods::PACK_SHARED);
     m_meshModification.internal_resolve_shared_modify_delete(commEntityMods.get_shared_mods(), entitiesToRemoveFromSharing, entitiesNoLongerShared);
     internal_resolve_shared_part_membership_for_element_death();
