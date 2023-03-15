@@ -510,12 +510,10 @@ protected:
     const SC one  = STS::one ();
 
     // timers
-    Teuchos::RCP< Teuchos::Time > spmvTimer  = Teuchos::TimeMonitor::getNewCounter ("Gmres::matrix-apply ");
-    Teuchos::RCP< Teuchos::Time > precTimer  = Teuchos::TimeMonitor::getNewCounter ("Gmres::precondition ");
-    Teuchos::RCP< Teuchos::Time > orthTimer  = Teuchos::TimeMonitor::getNewCounter ("Gmres::orthogonalize");
-
-    Teuchos::RCP< Teuchos::Time > totalTimer = Teuchos::TimeMonitor::getNewCounter ("Gmres::total        ");
-    Teuchos::TimeMonitor GmresTimer (*totalTimer);
+    Teuchos::RCP< Teuchos::Time > totalTimer  = Teuchos::TimeMonitor::getNewCounter ("Gmres::Total ");
+    Teuchos::RCP< Teuchos::Time >  spmvTimer  = Teuchos::TimeMonitor::getNewCounter ("Gmres::matrix-apply ");
+    Teuchos::RCP< Teuchos::Time >  precTimer  = Teuchos::TimeMonitor::getNewCounter ("Gmres::precondition ");
+    Teuchos::RCP< Teuchos::Time >  orthTimer  = Teuchos::TimeMonitor::getNewCounter ("Gmres::orthogonalize");
 
     // initialize output parameters
     SolverOutput<SC> output {};
@@ -546,6 +544,9 @@ protected:
     MV Q (B.getMap (), restart+1, zeroOut);
     vec_type P0 = * (Q.getVectorNonConst (0));
 
+{
+    Teuchos::TimeMonitor GmresTimer (*totalTimer);
+    
     // initial residual (making sure R = B - Ax)
     {
       Teuchos::TimeMonitor LocalTimer (*spmvTimer);
@@ -591,7 +592,7 @@ protected:
     std::vector<real_type> cs (restart);
     std::vector<SC> sn (restart);
 
-    #define HAVE_TPETRA_DEBUG
+    //#define HAVE_TPETRA_DEBUG
     #ifdef HAVE_TPETRA_DEBUG
     dense_matrix_type H2 (restart+1, restart,   true);
     dense_matrix_type H3 (restart+1, restart,   true);
@@ -768,6 +769,7 @@ protected:
         }
       }
     }
+}
 
     // return residual norm as B
     Tpetra::deep_copy (B, R);
