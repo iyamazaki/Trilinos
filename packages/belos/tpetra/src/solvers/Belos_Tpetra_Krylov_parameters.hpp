@@ -90,6 +90,7 @@ public:
   int maxNumIters = 1000;
   int resCycle = 30;
   int stepSize = 5;
+  int sketchDom = 30;
   bool needToScale = true;
   bool needToReortho = false;
   bool delayedNorm = true;

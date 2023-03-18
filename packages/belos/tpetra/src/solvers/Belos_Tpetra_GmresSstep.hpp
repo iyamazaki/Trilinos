@@ -264,6 +264,9 @@ public:
 
     const int stepSize = defaultValues ? 5 : this->input_.stepSize;
     params.set ("Step Size", stepSize );
+
+    const int sketchDom = defaultValues ? this->input_.resCycle : this->input_.sketchDom;
+    params.set ("Sketch Domain", sketchDom );
   }
 
   virtual void
@@ -271,6 +274,9 @@ public:
     base_type::setParameters (params);
     int stepSize = params.get<int> ("Step Size", this->input_.stepSize);
     this->input_.stepSize = stepSize;
+
+    int sketchDom = params.get<int> ("Sketch Domain", this->input_.resCycle);
+    this->input_.sketchDom = sketchDom;
 
     bool computeRitzValuesOnFly 
       = params.get<bool> ("Compute Ritz Values on Fly", this->input_.computeRitzValuesOnFly);
@@ -309,7 +315,8 @@ private:
     int restart = input.resCycle;
     int step = stepSize;
     const SC zero = STS::zero ();
-    const SC one  = STS::one ();
+    const SC  one  =  STS::one ();
+    const SC mone  = -STS::one ();
 
     // timers
     Teuchos::RCP< Teuchos::Time > totalTimer = Teuchos::TimeMonitor::getNewCounter("GmresSstep::Total");
@@ -362,7 +369,8 @@ private:
     vec_type P0 = * (Q.getVectorNonConst (0));
 
     // random Gaussian vectors for random sketching
-    int sketchSize = 2*(1+restart);
+    int sketchDom = input.sketchDom;
+    int sketchSize = 2*(1+sketchDom);
     dense_matrix_type  Qhat (sketchSize, restart+1, true); // projected matrix
     MV  W (B.getMap (), sketchSize, zeroOut);
     W.randomize ();
@@ -375,7 +383,7 @@ private:
       Teuchos::TimeMonitor LocalTimer (*spmvTimer);
       A.apply (X, R);
     }
-    R.update (one, B, -one);
+    R.update (one, B, mone);
     b0_norm = R.norm2 (); // initial residual norm, not preconditioned
     if (input.precoSide == "left") {
       M.apply (R, P0);
@@ -444,6 +452,7 @@ private:
     y[0] = r_norm;
 
     // Main loop
+    int currentSketchSize = 0;
     int iter = 0;
     while (output.numIters < input.maxNumIters && ! output.converged) {
       if (outPtr != nullptr) {
@@ -457,6 +466,7 @@ private:
       }
 
       // Restart cycle
+      H.putScalar (zero);
       G.putScalar (zero); // re-initialize R for randomCGS2
       for (int i = 0; i < restart+1; i++) G(i, i) = one;
       for (; iter < restart && metric > input.tol; iter+=step) {
@@ -510,6 +520,7 @@ private:
         {
           Teuchos::TimeMonitor LocalTimer (*bortTimer);
           rank = this->projectBelosBlockOrthoManager (outPtr, iter, step, Q, sketchSize, W, Qhat, G, G2);
+          currentSketchSize += step;
         }
         #ifdef HAVE_TPETRA_DEBUG
         for (int iiter = 0; iiter < step; iiter++) {
@@ -580,68 +591,250 @@ std::cout << "];" << std::endl;
         #ifndef FORM_GLOBAL_R
         updateHessenburg (iter, step, output.ritzValues, H, G);
         #endif
-#ifdef SKETCH_SSTEP_GMRES_DEBUG
-std::cout << "- H = [" <<std::endl;
-for (int i=0; i<=iter+step+1; i++) {
-  for (int j=0; j<=iter+step; j++) printf("%.16e ",H(i,j));
-  std::cout << std::endl;
-}
-std::cout << "];" << std::endl;
-#endif
 
-        if (useRandomCGS2_ && iter+step == restart) {
+        if (useRandomCGS2_ && (iter+step == restart || (iter+step)%sketchDom == 0)) {
+std::cout << " sketchDom = " << sketchDom << " currentSketchSize = " << currentSketchSize << std::endl;
+          int start_col = (iter+step)-currentSketchSize;
+          int end_col = iter+step;
+
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
 {
-  std::cout << " > calling last CholQR2" << std::endl;
+  std::cout << " > calling last CholQR2(" << start_col << ":" << end_col << ", iter=" << iter << ", step=" << step << ", restart=" << restart << ", sketch=" << sketchSize << "x" << sketchDom << ")" << std::endl;
   auto Q_h = Q.getLocalViewHost (Tpetra::Access::ReadOnly);
   std::cout << "- V_chol = [" <<std::endl;
   for (int i=0; i<Q_h.extent(0); i++) {
-    for (int j=0; j<Q_h.extent(1); j++) printf("%.16e ", Q_h(i,j));
+    for (int j=0; j<=end_col; j++) printf("%.16e ", Q_h(i,j));
+    std::cout << std::endl;
+  }
+  std::cout << "];" << std::endl;
+
+  std::cout << "- H = [" <<std::endl;
+  for (int i=0; i<1+end_col; i++) {
+    for (int j=0; j<end_col; j++) printf("%.16e ",H(i,j));
     std::cout << std::endl;
   }
   std::cout << "];" << std::endl;
 }
 #endif
+          if (start_col > 0) {
+            // call block CGS2
+            // vectors to be orthogonalized against
+            Teuchos::Range1D index_old (0, start_col-1);
+            MV Qold = *(Q.subViewNonConst (index_old));
+
+            // vectors to be orthogonalized
+            Teuchos::Range1D index(start_col, start_col+currentSketchSize);
+            MV Qnew = *(Q.subViewNonConst (index));
+
+            dense_matrix_type R_new (Teuchos::View, G2, start_col, currentSketchSize+1, 0, 0);
+            MVT::MvTransMv(one, Qold, Qnew, R_new);
+            MVT::MvTimesMatAddMv(mone, Qold, R_new, one, Qnew);
+          }
+
           // call CholQR
-          rank = recursiveCholQR (outPtr, 0, restart, Q, G2);
+          rank = recursiveCholQR (outPtr, start_col, currentSketchSize, Q, G2);
 
           // merge R 
-          dense_matrix_type Rfix (Teuchos::View, G2, restart+1, restart+1, 0, 0);
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
 std::cout << "- Rfix = [" <<std::endl;
-for (int i=0; i<restart+1; i++) {
-  for (int j=0; j<restart+1; j++) printf("%.16e ", Rfix(i,j));
+for (int i=0; i<start_col+currentSketchSize+1; i++) {
+  for (int j=0; j<currentSketchSize+1; j++) printf("%.16e ", G2(i,j));
   std::cout << std::endl;
 }
-std::cout << "];" << std::endl;a
+std::cout << "];" << std::endl;
 #endif
           #ifdef FORM_GLOBAL_R
-          dense_matrix_type Rold (Teuchos::View, G,  restart+1, restart+1, 0, 0);
+          dense_matrix_type Rold (Teuchos::View, G,  currentSketchSize+1, currentSketchSize+1, 0, 0);
           blas.TRMM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
                      Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-                     restart+1, restart+1,
+                     currentSketchSize+1, currentSketchSize+1,
                      one, Rfix.values(), Rfix.stride(),
                           Rold.values(), Rold.stride());
           #else
-          // H = R*H
-          dense_matrix_type Rold (Teuchos::View, H,  restart+1, restart, 0, 0);
-          blas.TRMM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
-                     Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-                     restart+1, restart,
-                     one, Rfix.values(), Rfix.stride(),
-                          Rold.values(), Rold.stride());
+          if (start_col > 0) {
+              // upper off-diagonals
+              {
+                  // H = H*R^{-1}
+                  dense_matrix_type H11 (Teuchos::View, H,  start_col+1, start_col, 0, 0);
+                  dense_matrix_type H12 (Teuchos::View, H,  start_col+1, currentSketchSize, 0, start_col);
+                  dense_matrix_type R12_(Teuchos::View, G2, start_col,   currentSketchSize, 0, 0);
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- H11 = [" <<std::endl;
+for (int i=0; i<start_col+1; i++) {
+  for (int j=0; j<start_col; j++) printf("%.16e ", H11(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+std::cout << "- R12 = [" <<std::endl;
+for (int i=0; i<start_col; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", R12_(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+std::cout << "- H12 = [" <<std::endl;
+for (int i=0; i<start_col+1; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", H12(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+#endif
+                  blas.GEMM (Teuchos::NO_TRANS, Teuchos::NO_TRANS,
+                             start_col+1, currentSketchSize, start_col,
+                            mone, H11.values(),  H11.stride(),
+                                  R12_.values(), R12_.stride(),
+                             one, H12.values(),  H12.stride());
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- H_off = [" <<std::endl;
+for (int i=0; i<start_col+1; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", H12(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+#endif
+                  dense_matrix_type R22 (Teuchos::View, G2, currentSketchSize, currentSketchSize, start_col, 0);
+                  blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
+                             Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                             end_col+1, currentSketchSize,
+                             one, R22.values(), R22.stride(),
+                                  H12.values(), H12.stride());
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- R22 = [" <<std::endl;
+for (int i=0; i<1+currentSketchSize; i++) {
+  for (int j=0; j<1+currentSketchSize; j++) printf("%.16e ", R22(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+#endif
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- H_off = [" <<std::endl;
+for (int i=0; i<end_col+1; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", H12(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+                  std::cout << "H12 = H(0:" << start_col-1 << ", " << start_col-1 << ":" << start_col+currentSketchSize-1 << " " << start_col << "x" << currentSketchSize+1 << ")" << std::endl;
+#endif
 
-          // H = H*R^{-1}
-          dense_matrix_type Rfix2 (Teuchos::View, G2, restart, restart, 0, 0);
-          blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
-                     Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-                     restart+1, restart,
-                     one, Rfix2.values(), Rfix2.stride(),
-                          Rold.values(),  Rold.stride());
+                  // H = R*H
+                  dense_matrix_type _H12 (Teuchos::View, H,  start_col,   currentSketchSize+1, 0,         start_col-1);
+                  dense_matrix_type _H22 (Teuchos::View, H,  currentSketchSize+1, currentSketchSize+1, start_col, start_col-1);
+                  dense_matrix_type  R12 (Teuchos::View, G2, start_col,   currentSketchSize+1, 0, 0);
+                  blas.GEMM (Teuchos::NO_TRANS, Teuchos::NO_TRANS,
+                             start_col, currentSketchSize+1, currentSketchSize+1,
+                             one,  R12.values(),  R12.stride(),
+                                  _H22.values(), _H22.stride(),
+                             one, _H12.values(), _H12.stride());
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- H_off = [" <<std::endl;
+for (int i=0; i<start_col; i++) {
+  for (int j=0; j<currentSketchSize+1; j++) printf("%.16e ", _H12(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+#endif
+              }
+
+              // "Diagonal" part
+              {
+                  // H = R*H
+                  dense_matrix_type H22_(Teuchos::View, H,  currentSketchSize+1, currentSketchSize,   start_col, start_col);
+                  dense_matrix_type R22_(Teuchos::View, G2, currentSketchSize+1, currentSketchSize+1, start_col, 0);
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << std::endl << " DIAG " << std::endl;
+std::cout << "- H22_ = [" <<std::endl;
+for (int i=0; i<currentSketchSize; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", H22_(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+std::cout << "- R22_ = [" <<std::endl;
+for (int i=0; i<currentSketchSize; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", R22_(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+#endif
+                  blas.TRMM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
+                             Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                             currentSketchSize+1, currentSketchSize,
+                             one, R22_.values(), R22_.stride(),
+                                  H22_.values(),  H22_.stride());
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- H22_ = [" <<std::endl;
+for (int i=0; i<currentSketchSize; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", H22_(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+#endif
+                  #if 0
+                  // H = H*R^{-1}
+                  //dense_matrix_type H22 (Teuchos::View, H,  sketchDom,   sketchDom-1, start_col+1, start_col+2);
+                  dense_matrix_type R22 (Teuchos::View, G2, sketchDom, sketchDom, start_col,   0);
+std::cout << "- R22 = [" <<std::endl;
+for (int i=0; i<sketchDom; i++) {
+  for (int j=0; j<sketchDom; j++) printf("%.16e ", R22(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+                  blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
+                             Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                             sketchDom, sketchDom,
+                             one, R22.values(), R22.stride(),
+                                  H22_.values(), H22_.stride());
+std::cout << "- H22_ = [" <<std::endl;
+for (int i=0; i<sketchDom; i++) {
+  for (int j=0; j<sketchDom; j++) printf("%.16e ", H22_(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+                  #endif
+              }
+          } else {
+              // H = R*H
+              dense_matrix_type H22 (Teuchos::View, H,  currentSketchSize+1, currentSketchSize,   start_col, start_col);
+              dense_matrix_type R22_(Teuchos::View, G2, currentSketchSize+1, currentSketchSize+1, start_col, 0);
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- H22 = [" <<std::endl;
+for (int i=0; i<currentSketchSize+1; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", H22(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+#endif
+              blas.TRMM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
+                         Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                         currentSketchSize+1, currentSketchSize,
+                         one, R22_.values(), R22_.stride(),
+                              H22.values(), H22.stride());
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- H22 = [" <<std::endl;
+for (int i=0; i<currentSketchSize+1; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", H22(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+#endif
+
+              // H = H*R^{-1}
+              dense_matrix_type R22 (Teuchos::View, G2, currentSketchSize, currentSketchSize, start_col, 0);
+              blas.TRSM (Teuchos::RIGHT_SIDE, Teuchos::UPPER_TRI,
+                         Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                         currentSketchSize+1, currentSketchSize,
+                         one, R22.values(), R22.stride(),
+                              H22.values(), H22.stride());
+#ifdef SKETCH_SSTEP_GMRES_DEBUG
+std::cout << "- H22 = [" <<std::endl;
+for (int i=0; i<currentSketchSize+1; i++) {
+  for (int j=0; j<currentSketchSize; j++) printf("%.16e ", H22(i,j));
+  std::cout << std::endl;
+}
+#endif
+          }
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
 std::cout << "- Hnew = [" <<std::endl;
-for (int i=0; i<restart+1; i++) {
-  for (int j=0; j<restart+1; j++) printf("%.16e ", Rold(i,j));
+for (int i=0; i<end_col+1; i++) {
+  for (int j=0; j<end_col; j++) printf("%.16e ", H(i,j));
   std::cout << std::endl;
 }
 std::cout << "];" << std::endl;
@@ -649,20 +842,21 @@ std::cout << "];" << std::endl;
   auto Q_h = Q.getLocalViewHost (Tpetra::Access::ReadOnly);
   std::cout << "- Q_chol = [" <<std::endl;
   for (int i=0; i<Q_h.extent(0); i++) {
-    for (int j=0; j<Q_h.extent(1); j++) printf("%.16e ", Q_h(i,j));
+    for (int j=0; j<=end_col; j++) printf("%.16e ", Q_h(i,j));
     std::cout << std::endl;
   }
   std::cout << "];" << std::endl;
 }
 #endif
           #endif
-        }
-        if (!useRandomCGS2_ || iter+step == restart) {
+        } // end of ortho after sketching
+
+        if (!useRandomCGS2_ || (iter+step == restart || (iter+step)%sketchDom == 0)) {
           int start_index = iter;
           int step_size = step;
           if (useRandomCGS2_) {
-            start_index = 0;
-            step_size = restart;
+            start_index = (iter+step)-currentSketchSize;
+            step_size = currentSketchSize;
           }
 
           #ifdef FORM_GLOBAL_R
@@ -698,7 +892,7 @@ std::cout << "];" << std::endl;
                 if (outPtr != nullptr) {
                   *outPtr << " > break at step = " << iiter+1 << " (" << step_size << ")" << endl;
                 }
-                step_size = iiter+1;
+                step = (iiter+1) - (iter-start_index);
                 break;
               }
             }
@@ -710,6 +904,7 @@ std::cout << "];" << std::endl;
           else {
             metric = STM::zero ();
           }
+          currentSketchSize = 0;
         }
 
         // Optionally, compute Ritz values for generating Newton basis
@@ -763,7 +958,8 @@ std::cout << "];" << std::endl;
       output.absResid = r_norm;
       output.relResid = r_norm / b0_norm;
       if (outPtr != nullptr) {
-        *outPtr << "Implicit and explicit residual norms at restart: " << r_norm_imp << ", " << r_norm << endl;
+        *outPtr << "Implicit and explicit residual norms at restart: " << r_norm_imp << ", " << r_norm
+                << " (iter = " << iter << ", " << output.numIters << ")" << endl;
       }
 
       metric = this->getConvergenceMetric (r_norm, b0_norm, input);
@@ -1211,7 +1407,7 @@ std::cout << "];" << std::endl << std::endl;
                       one,  q_all.values(), q_all.stride(),
                             q_all.values(), q_all.stride(),
                       zero, g_all.values(), g_all.stride());
-          //std::cout << "T=[" << std::endl;
+            //std::cout << "T=[" << std::endl;
             #if 1
             mag_type ortho_error(0.0);
             for (int i=0; i<n+s+1; i++) {
