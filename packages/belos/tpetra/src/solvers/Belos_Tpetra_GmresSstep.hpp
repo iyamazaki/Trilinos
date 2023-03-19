@@ -593,7 +593,6 @@ std::cout << "];" << std::endl;
         #endif
 
         if (useRandomCGS2_ && (iter+step == restart || (iter+step)%sketchDom == 0)) {
-std::cout << " sketchDom = " << sketchDom << " currentSketchSize = " << currentSketchSize << std::endl;
           int start_col = (iter+step)-currentSketchSize;
           int end_col = iter+step;
 
@@ -617,6 +616,8 @@ std::cout << " sketchDom = " << sketchDom << " currentSketchSize = " << currentS
 }
 #endif
           if (start_col > 0) {
+            Teuchos::RCP< Teuchos::Time > reorthTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::InterOrtho::ReOrtho");
+            Teuchos::TimeMonitor LocalTimer (*reorthTimer);
             // call block CGS2
             // vectors to be orthogonalized against
             Teuchos::Range1D index_old (0, start_col-1);
