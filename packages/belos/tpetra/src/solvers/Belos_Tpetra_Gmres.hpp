@@ -1008,7 +1008,15 @@ protected:
     size_t ncols = Q.getNumVectors ();
     dense_matrix_type G (ncols, ncols, true);
     MVT::MvTransMv(one, Q, Q, G);
-
+    /*{
+      auto Q_h = Q.getLocalViewHost (Tpetra::Access::ReadOnly);
+      std::cout << "- Q = [" <<std::endl;
+      for (int i=0; i<Q_h.extent(0); i++) {
+        for (int j=0; j<Q_h.extent(1); j++) printf("%.16e ", Q_h(i,j));
+        std::cout << std::endl;
+      }
+      std::cout << "];" << std::endl;
+    }*/
     // compute SVD(G)
     LO m = G.numRows ();
     LO n = G.numCols ();
