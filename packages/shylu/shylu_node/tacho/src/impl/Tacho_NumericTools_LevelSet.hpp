@@ -287,7 +287,7 @@ private:
         flop += DenseFlopCount<value_type>::Chol(m);
         if (variant == 1) {
           flop += DenseFlopCount<value_type>::Trsm(true, m, m);
-        } else if (variant == 2) {
+        } else if (variant == 2 || variant == 3) {
           flop += DenseFlopCount<value_type>::Trsm(true, m, m);
           flop += DenseFlopCount<value_type>::Trsm(true, m, n);
         }
@@ -303,7 +303,7 @@ private:
         flop += DenseFlopCount<value_type>::LDL(m);
         if (variant == 1) {
           flop += DenseFlopCount<value_type>::Trsm(true, m, m);
-        } else if (variant == 2) {
+        } else if (variant == 2 || variant == 3) {
           flop += DenseFlopCount<value_type>::Trsm(true, m, m);
           flop += DenseFlopCount<value_type>::Trsm(true, m, n);
         }
@@ -319,7 +319,7 @@ private:
         flop += DenseFlopCount<value_type>::LU(m, m);
         if (variant == 1) {
           flop += 2 * DenseFlopCount<value_type>::Trsm(true, m, m);
-        } else if (variant == 2) {
+        } else if (variant == 2 || variant == 3) {
           flop += 2 * DenseFlopCount<value_type>::Trsm(true, m, m);
           flop += 2 * DenseFlopCount<value_type>::Trsm(true, m, n);
         }
@@ -351,6 +351,7 @@ private:
   }
 
 public:
+
   ///
   /// initialization / release
   ///
@@ -437,24 +438,29 @@ public:
           const auto s = _h_supernodes(sid);
           const ordinal_type m = s.m, n = s.n, n_m = n - m;
           const ordinal_type schur_work_size = n_m * (n_m + max_factor_team_size);
-          const ordinal_type chol_factor_work_size_variants[3] = {schur_work_size, max(m * m, schur_work_size),
+          const ordinal_type chol_factor_work_size_variants[4] = {schur_work_size, max(m * m, schur_work_size),
+                                                                  m * m + schur_work_size,
                                                                   m * m + schur_work_size};
           const ordinal_type chol_factor_work_size = chol_factor_work_size_variants[variant];
           const ordinal_type ldl_factor_work_size_variant_0 = chol_factor_work_size_variants[0] + max(32 * m, m * n);
-          const ordinal_type ldl_factor_work_size_variants[3] = {ldl_factor_work_size_variant_0,
+          const ordinal_type ldl_factor_work_size_variants[4] = {ldl_factor_work_size_variant_0,
                                                                  max(m * m, ldl_factor_work_size_variant_0 + m * n_m),
+                                                                 m * m + ldl_factor_work_size_variant_0 + m * n_m,
                                                                  m * m + ldl_factor_work_size_variant_0 + m * n_m};
           const ordinal_type ldl_factor_work_size = ldl_factor_work_size_variants[variant];
-          const ordinal_type lu_factor_work_size_variants[3] = {schur_work_size, max(m * m, schur_work_size),
+          const ordinal_type lu_factor_work_size_variants[4] = {schur_work_size, max(m * m, schur_work_size),
+                                                                m * m + schur_work_size,
                                                                 m * m + schur_work_size};
           const ordinal_type lu_factor_work_size = lu_factor_work_size_variants[variant];
-          const ordinal_type factor_work_size_variants[3] = {chol_factor_work_size, ldl_factor_work_size,
+          const ordinal_type factor_work_size_variants[4] = {chol_factor_work_size, ldl_factor_work_size,
+                                                             lu_factor_work_size,
                                                              lu_factor_work_size};
 
           const ordinal_type chol_solve_work_size = (variant == 0 ? n_m : n);
           const ordinal_type ldl_solve_work_size = chol_solve_work_size;
           const ordinal_type lu_solve_work_size = chol_solve_work_size;
-          const ordinal_type solve_work_size_variants[3] = {chol_solve_work_size, ldl_solve_work_size,
+          const ordinal_type solve_work_size_variants[4] = {chol_solve_work_size, ldl_solve_work_size,
+                                                            lu_solve_work_size,
                                                             lu_solve_work_size};
 
           const ordinal_type index_work_size = this->getSolutionMethod() - 1;
@@ -513,7 +519,7 @@ public:
 
     _device_level_cut = min(device_level_cut, _nlevel);
     _device_factorize_thres = device_factorize_thres;
-    _device_solve_thres = device_solve_thres;
+    _device_solve_thres = (variant == 3 ? 0 : device_solve_thres);
 
     _h_factorize_mode = ordinal_type_array_host(do_not_initialize_tag("h_factorize_mode"), _nsupernodes);
     Kokkos::deep_copy(_h_factorize_mode, -1);
@@ -967,7 +973,7 @@ public:
       factorizeCholeskyOnDeviceVar0(pbeg, pend, h_buf_factor_ptr, work);
     else if (variant == 1)
       factorizeCholeskyOnDeviceVar1(pbeg, pend, h_buf_factor_ptr, work);
-    else if (variant == 2)
+    else if (variant == 2 || variant == 3)
       factorizeCholeskyOnDeviceVar2(pbeg, pend, h_buf_factor_ptr, work);
     else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
@@ -1513,6 +1519,131 @@ public:
     }
   }
 
+  inline void extractCRS() {
+    const ordinal_type m = _m;
+    const value_type one(1);
+
+    for (ordinal_type lvl = 0; lvl < _team_serial_level_cut; ++lvl) {
+      const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
+
+      // the first supernode in this lvl (where the CRS matrix is stored)
+      auto &s0 = _h_supernodes(_h_level_sids(pbeg));
+
+      // count nnz
+      Kokkos::resize(s0.rowptr, 1+m);
+      auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
+      Kokkos::deep_copy(h_rowptr, 0);
+
+      ordinal_type nnz = 0;
+      ordinal_type nnz_with_zeros = 0;
+      for (ordinal_type p = pbeg; p < pend; ++p) {
+        const ordinal_type sid = _h_level_sids(p);
+        if (_h_solve_mode(sid) == 0) {
+          const auto &s = _h_supernodes(sid);
+          if (s.m > 0) {
+            value_type *aptr = s.u_buf;
+            const ordinal_type offm = s.row_begin;
+            UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
+            auto h_AT = Kokkos::create_mirror_view_and_copy(host_memory_space(), AT);
+            Kokkos::deep_copy(h_AT, AT);
+            for (ordinal_type i = 0; i < s.m; i++) {
+              for (ordinal_type j = 0; j < s.n; j++) {
+                if (abs(h_AT(i,j)) > 0.0) {
+                  nnz ++;
+                  h_rowptr(1+i+offm) ++;
+                }
+              }
+            }
+          }
+          nnz_with_zeros += s.m*s.n;
+        }
+      }
+      //std::cout << " nnz = " << nnz << " / " << nnz_with_zeros << "(" << double(nnz) / double(nnz_with_zeros) << std::endl << std::endl;
+
+      // form csr
+      Kokkos::resize(s0.colind, nnz);
+      Kokkos::resize(s0.nzvals, nnz);
+      for (ordinal_type i = 0; i < m; i++) h_rowptr(i+1) += h_rowptr(i);
+      auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colind);
+      auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvals);
+
+      auto h_blk_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.sid_block_colidx);
+      auto h_gid_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.gid_colidx);
+      for (ordinal_type p = pbeg; p < pend; ++p) {
+        const ordinal_type sid = _h_level_sids(p);
+        if (_h_solve_mode(sid) == 0) {
+          const auto &s = _h_supernodes(sid);
+          if (s.m > 0) {
+            value_type *aptr = s.u_buf;
+            const ordinal_type offm = s.row_begin;
+            const ordinal_type offn = s.gid_col_begin;
+            UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
+            auto h_AT = Kokkos::create_mirror_view_and_copy(host_memory_space(), AT);
+            for (ordinal_type i = 0; i < s.m; i++) {
+              // diagonal block
+              ordinal_type j;
+              for (j = 0; j < s.m; j++) {
+                if (abs(h_AT(i,j)) > 0.0) {
+                  nnz = h_rowptr(i+offm);
+                  h_colind(nnz) = j+offm;
+                  h_nzvals(nnz) = h_AT(i,j);
+                  if (i+offm == h_colind(nnz)) {
+                    h_nzvals(nnz) -= one;
+                  }
+                  h_rowptr(i+offm) ++;
+                }
+              }
+              // off-diagonal blocksa
+              j = s.m;
+              for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
+                for (ordinal_type k = h_blk_colidx(id).second; k < h_blk_colidx(id + 1).second; k++) {
+                  if (abs(h_AT(i,j)) > 0.0) {
+                    nnz = h_rowptr(i+offm);
+                    h_colind(nnz) = h_gid_colidx(k+offn);
+                    h_nzvals(nnz) = h_AT(i,j);
+                    h_rowptr(i+offm) ++;
+                  }
+                  j++;
+                }
+              }
+              //if (j != s.n) std::cout << " " << j << " vs " << s.n << std::endl << std::endl;
+            }
+          }
+        }
+      }
+      for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
+      h_rowptr(0) = 0;
+      Kokkos::deep_copy(s0.colind, h_colind);
+      Kokkos::deep_copy(s0.nzvals, h_nzvals);
+      Kokkos::deep_copy(s0.rowptr, h_rowptr);
+
+      cusparseCreate(&s0.cusparseHandle);
+      cudaDataType computeType;
+      if (std::is_same<value_type, double>::value) {
+        computeType = CUDA_R_64F;
+      } else if (std::is_same<value_type, float>::value) {
+        computeType = CUDA_R_32F;
+      } else {
+        TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
+                                 "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
+      }
+      // create matrix
+      nnz = s0.colind.extent(0);
+      cusparseCreateCsr(&s0.A_cusparse, m, m, nnz,
+                        s0.rowptr.data(), s0.colind.data(), s0.nzvals.data(),
+                        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                        CUSPARSE_INDEX_BASE_ZERO, computeType);
+      size_t buffer_size_A;
+      cusparseDnVecDescr_t vecX, vecY;
+      Kokkos::resize(s0.w, m, 1);
+      cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
+      cusparseCreateDnVec(&vecY, m, s0.w.data(), computeType);
+      cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &one, s0.A_cusparse, vecX, &one, vecY,
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, &buffer_size_A);
+      Kokkos::resize(s0.buffer_A, buffer_size_A);
+    }
+  }
+
   ///
   /// Level set factorize
   ///
@@ -1569,7 +1700,7 @@ public:
             team_policy_update;
 #else
         typedef Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Static>, exec_space,
-                                   typename functor_type::template FactorizeTag<variant>>
+                                   typename functor_type::template FactorizeTag<(variant == 3 ? 2 : variant)>>
             team_policy_factor;
         typedef Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Static>, exec_space, typename functor_type::UpdateTag>
             team_policy_update;
@@ -1645,7 +1776,10 @@ public:
       }
     } // end of Cholesky
     stat.t_factor = timer.seconds();
-
+    if (variant == 3) {
+      // compress each partitioned inverse at each level into CRS matrix
+      extractCRS();
+    }
     timer.reset();
     {
 #if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
@@ -1762,6 +1896,61 @@ public:
     }
   }
 
+  inline void solveCholeskyLowerOnDeviceVar2_SpMV(const ordinal_type pbeg, const ordinal_type pend,
+                                                  const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
+    const ordinal_type m = t.extent(0);
+    const ordinal_type nrhs = t.extent(1);
+
+    auto &s0 = _h_supernodes(_h_level_sids(pbeg));
+
+#if defined(KOKKOS_ENABLE_CUDA)
+    cudaDataType computeType;
+    if (std::is_same<value_type, double>::value) {
+      computeType = CUDA_R_64F;
+    } else if (std::is_same<value_type, float>::value) {
+      computeType = CUDA_R_32F;
+    } else {
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
+                               "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
+    }
+
+    // create vectors
+    cusparseDnVecDescr_t vecX, vecY;
+    cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
+    cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
+    // SpMV
+    Kokkos::deep_copy(s0.w, t);
+
+    const value_type one(1);
+    cusparseStatus_t status;
+    status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
+                          &one, s0.A_cusparse, 
+                                vecX,
+                          &one, vecY,
+                          computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data());
+    if (CUSPARSE_STATUS_SUCCESS != status) {
+       printf( " Failed cusparseSpMV for SpMV\n" );
+    }
+#else
+    auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
+    auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colind);
+    auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvals);
+
+    auto h_w = Kokkos::create_mirror_view(host_memory_space(), w);
+    auto h_t = Kokkos::create_mirror_view(host_memory_space(), t);
+    Kokkos::deep_copy(h_w, t);
+    Kokkos::deep_copy(h_t, t);
+    for (ordinal_type i = 0; i < m ; i++) {
+      for (int k = h_rowptr(i); k < h_rowptr(i+1); k++) {
+        for (int j = 0; j < nrhs; j++) {
+          h_w(h_colind(k), j) += h_nzvals(k) * h_t(i, j);
+        }
+      }
+    }
+    Kokkos::deep_copy(t, h_w);
+#endif
+  }
+
   inline void solveCholeskyLowerOnDeviceVar2(const ordinal_type pbeg, const ordinal_type pend,
                                              const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     const ordinal_type nrhs = t.extent(1);
@@ -1802,6 +1991,7 @@ public:
     }
   }
 
+  // !!!! NOTE: remove info !!!!
   inline void solveCholeskyLowerOnDevice(const ordinal_type pbeg, const ordinal_type pend,
                                          const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     if (variant == 0)
@@ -1810,6 +2000,8 @@ public:
       solveCholeskyLowerOnDeviceVar1(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 2)
       solveCholeskyLowerOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
+    else if (variant == 3)
+      solveCholeskyLowerOnDeviceVar2_SpMV(pbeg, pend, h_buf_solve_ptr, t);
     else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyLowerOnDevice, algorithm variant is not supported");
@@ -1915,6 +2107,61 @@ public:
     }
   }
 
+  inline void solveCholeskyUpperOnDeviceVar2_SpMV(const ordinal_type pbeg, const ordinal_type pend,
+                                                  const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
+    const ordinal_type m = t.extent(0);
+    const ordinal_type nrhs = t.extent(1);
+
+    auto &s0 = _h_supernodes(_h_level_sids(pbeg));
+
+#if defined(KOKKOS_ENABLE_CUDA)
+    cudaDataType computeType;
+    if (std::is_same<value_type, double>::value) {
+      computeType = CUDA_R_64F;
+    } else if (std::is_same<value_type, float>::value) {
+      computeType = CUDA_R_32F;
+    } else {
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
+                               "LevelSetTools::solveCholeskyUpperOnDevice: ComputeSPMV only supported double or float");
+    }
+
+    // create vectors
+    cusparseDnVecDescr_t vecX, vecY;
+    cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
+    cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
+    // SpMV
+    Kokkos::deep_copy(s0.w, t);
+
+    const value_type one(1);
+    cusparseStatus_t status;
+    status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                          &one, s0.A_cusparse, 
+                                vecX,
+                          &one, vecY,
+                          computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data());
+    if (CUSPARSE_STATUS_SUCCESS != status) {
+       printf( " Failed cusparseSpMV for SpMV\n" );
+    }
+#else
+    auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
+    auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colind);
+    auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvals);
+
+    auto h_w = Kokkos::create_mirror_view(host_memory_space(), w);
+    auto h_t = Kokkos::create_mirror_view(host_memory_space(), t);
+    Kokkos::deep_copy(h_w, t);
+    Kokkos::deep_copy(h_t, t);
+    for (ordinal_type i = 0; i < m ; i++) {
+      for (int k = h_rowptr(i); k < h_rowptr(i+1); k++) {
+        for (int j = 0; j < nrhs; j++) {
+          h_w(i, j) += h_nzvals(k) * h_t(h_colind(k), j);
+        }
+      }
+    }
+    Kokkos::deep_copy(t, h_w);
+#endif
+  }
+
   inline void solveCholeskyUpperOnDeviceVar2(const ordinal_type pbeg, const ordinal_type pend,
                                              const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     const ordinal_type nrhs = t.extent(1);
@@ -1962,6 +2209,8 @@ public:
       solveCholeskyUpperOnDeviceVar1(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 2)
       solveCholeskyUpperOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
+    else if (variant == 3)
+      solveCholeskyUpperOnDeviceVar2_SpMV(pbeg, pend, h_buf_solve_ptr, t);
     else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyUpperOnDevice, algorithm variant is not supported");
@@ -2771,9 +3020,11 @@ public:
             solveCholeskyLowerOnDevice(pbeg, pend, h_buf_solve_ptr, t);
             Kokkos::fence();
 
-            Kokkos::parallel_for("update lower", policy_update_with_work_property, functor);
-            ++stat_level.n_kernel_launching;
-            exec_space().fence();
+            if (variant != 3) {
+              Kokkos::parallel_for("update lower", policy_update_with_work_property, functor);
+              ++stat_level.n_kernel_launching;
+              exec_space().fence();
+            }
           }
         }
       } // end of lower tri solve
@@ -2828,14 +3079,15 @@ public:
             ++stat_level.n_kernel_launching;
             exec_space().fence();
 
-            if (lvl < _device_level_cut) {
-              // do nothing
-              // Kokkos::parallel_for("solve upper", policy_solve, functor);
-            } else {
-              Kokkos::parallel_for("solve upper", policy_solve_with_work_property, functor);
-              ++stat_level.n_kernel_launching;
+            if (variant != 3) {
+              if (lvl < _device_level_cut) {
+                // do nothing
+                // Kokkos::parallel_for("solve upper", policy_solve, functor);
+              } else {
+                Kokkos::parallel_for("solve upper", policy_solve_with_work_property, functor);
+                ++stat_level.n_kernel_launching;
+              }
             }
-
             const auto h_buf_solve_ptr = Kokkos::subview(_h_buf_solve_nrhs_ptr, range_solve_buf_ptr);
             solveCholeskyUpperOnDevice(pbeg, pend, h_buf_solve_ptr, t);
             Kokkos::fence();

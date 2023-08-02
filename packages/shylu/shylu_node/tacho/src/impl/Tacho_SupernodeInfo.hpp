@@ -20,6 +20,9 @@ Sandia National Laboratories, Albuquerque, NM, USA
 #define __TACHO_SUPERNODE_INFO_HPP__
 
 #include "Tacho_Util.hpp"
+#if defined(KOKKOS_ENABLE_CUDA)
+ #include <cusparse.h>
+#endif
 
 /// \file Tacho_SupernodeInfo.hpp
 /// \author Kyungjoo Kim (kyukim@sandia.gov)
@@ -117,6 +120,17 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     value_type *l_buf, *u_buf;
 
     bool do_not_apply_pivots;
+
+    // for using SpMV
+    Kokkos::View<int *, device_type> rowptr;
+    Kokkos::View<int *, device_type> colind;
+    Kokkos::View<value_type *, device_type> nzvals;
+    Kokkos::View<value_type**, device_type> w;
+    Kokkos::View<value_type *, device_type> buffer_A;
+#if defined(KOKKOS_ENABLE_CUDA)
+    cusparseHandle_t cusparseHandle;
+    cusparseSpMatDescr_t A_cusparse;
+#endif
 
     KOKKOS_INLINE_FUNCTION
     Supernode()
