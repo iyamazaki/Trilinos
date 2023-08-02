@@ -20,20 +20,18 @@ APPEND_GLOB(HEADERS ${DIR}/*.h)
 # NOTE: Once the deprecated code is removed this entire block should be replaced with
 # APPEND_GLOB(HEADERS ${DIR}/*.hpp)
 # APPEND_GLOB(SOURCES ${DIR}/*.cpp)
-IF (NOT ${PACKAGE_NAME}_ENABLE_DEPRECATED_CODE)
-  APPEND_SET(HEADERS
-    Tpetra_KokkosCompat_DefaultNode.hpp
-    Tpetra_KokkosCompat_ClassicNodeAPI_Wrapper.hpp
-  )
 
-  APPEND_SET(SOURCES
-    Tpetra_KokkosCompat_ClassicNodeAPI_Wrapper.cpp
-  )
-ELSE()
-  APPEND_SET(HEADERS
-    Tpetra_KokkosCompat_DefaultNode.hpp
-    Tpetra_KokkosCompat_ClassicNodeAPI_Wrapper.hpp
+APPEND_SET(HEADERS
+  Tpetra_KokkosCompat_DefaultNode.hpp
+  Tpetra_KokkosCompat_ClassicNodeAPI_Wrapper.hpp
+)
 
+APPEND_SET(SOURCES
+  Tpetra_KokkosCompat_ClassicNodeAPI_Wrapper.cpp
+)
+
+IF (${PACKAGE_NAME}_ENABLE_DEPRECATED_CODE OR Tpetra_ENABLE_DEPRECATED_CODE)
+  APPEND_SET(HEADERS
     Kokkos_BufferMacros.hpp 
     KokkosCompat_ClassicNodeAPI_Wrapper.hpp
     Kokkos_ConfigDefs.hpp
@@ -43,23 +41,12 @@ ELSE()
     Kokkos_NodeAPIConfigDefs.hpp
     Kokkos_Version.hpp
   )
-
-  APPEND_SET(SOURCES
-    Tpetra_KokkosCompat_ClassicNodeAPI_Wrapper.cpp
-  )
 ENDIF()
 
 # Must glob the binary dir last to get all of the auto-generated headers
 TRIBITS_SET_AND_INC_DIRS(DIR ${CMAKE_CURRENT_BINARY_DIR})
 APPEND_GLOB(HEADERS ${DIR}/*.hpp)
 APPEND_SET(HEADERS ${DIR}/${PACKAGE_NAME}_config.h )
-
-
-# Sanity Checking of Macros
-ASSERT_DEFINED(Kokkos_ENABLE_OPENMP)
-ASSERT_DEFINED(Kokkos_ENABLE_THREADS)
-ASSERT_DEFINED(Kokkos_ENABLE_CUDA)
-ASSERT_DEFINED(Kokkos_ENABLE_SERIAL)
 
 
 

@@ -47,6 +47,7 @@
 #define MUELU_PERFMODELS_HPP
 
 #include "MueLu_ConfigDefs.hpp"
+#include "Xpetra_Import_fwd.hpp"
 
 #include <vector>
 #include <ostream>
@@ -77,6 +78,7 @@ namespace MueLu {
 
     /* This version is for table interpolation and works on chars, so the LOG_MAX_SIZE is for bytes */
     void stream_vector_make_table(int KERNEL_REPEATS, int LOG_MAX_SIZE=20);
+    bool has_stream_vector_table() const {return stream_sizes_.size() > 0;}
 
     /* Lookup in the stream_vector table */
     double stream_vector_copy_lookup(int SIZE_IN_BYTES);
@@ -90,8 +92,8 @@ namespace MueLu {
     double latency_corrected_stream_vector_lookup(int SIZE_IN_BYTES);   
 
     /* Print table */
-    void print_stream_vector_table(std::ostream & out);
-    void print_latency_corrected_stream_vector_table(std::ostream & out);
+    void print_stream_vector_table(std::ostream & out, const std::string & prefix="");
+    void print_latency_corrected_stream_vector_table(std::ostream & out, const std::string & prefix="");
 
     /* A latency test between two processes based upon the MVAPICH OSU Micro-Benchmarks.
      * The sender process sends a message and then waits for confirmation of reception.
@@ -101,29 +103,49 @@ namespace MueLu {
      * See further: https://mvapich.cse.ohio-state.edu/benchmarks/
      */    
     void pingpong_make_table(int KERNEL_REPEATS, int LOG_MAX_SIZE, const RCP<const Teuchos::Comm<int> > &comm);
+    bool has_pingpong_table() const {return pingpong_sizes_.size() > 0;}
 
-    /* Lookup in the stream_vector table */
+    /* Lookup in the pingpong_vector table */
     double pingpong_host_lookup(int SIZE_IN_BYTES);
     double pingpong_device_lookup(int SIZE_IN_BYTES);
 
     /* Print table */
-    void print_pingpong_table(std::ostream & out);
+    void print_pingpong_table(std::ostream & out, const std::string & prefix="");
 
-    
+    /* A halo-exchange based ping-pong, inspired by halo-mode in MPPTEST from ANL.
+     * Here we use exactly the communication pattern specified in the import object
+     * and send messages accordingly.  We vary the size in bytes sent per message,
+     * which should capture max-rate effects to some degree.
+     *
+     * See further: https://www.mcs.anl.gov/research/projects/mpi/mpptest/
+     */
+    void halopong_make_table(int KERNEL_REPEATS, int LOG_MAX_SIZE, const RCP<const Xpetra::Import<LocalOrdinal,GlobalOrdinal,Node> > & import);
+    bool has_halopong_table() const {return halopong_sizes_.size() > 0;}
+
+    /* Lookup in the halopong_vector table */
+    double halopong_host_lookup(int SIZE_IN_BYTES_PER_MESSAGE);
+    double halopong_device_lookup(int SIZE_IN_BYTES_PER_MESSAGE);
+
+    /* Print table */
+    void print_halopong_table(std::ostream & out, const std::string & prefix="");
+
+
+
     /* Estimate launch latency based on the cost of submitting an empty Kokkos::parallel_for.
      * This necessary to correct the memory bandwidth costs for models on high latency platforms, 
      * e.g., GPUS.
      */
     void launch_latency_make_table(int KERNEL_REPEATS);
+    bool has_launch_latency_table() const  {return launch_and_wait_latency_ > 0;}
 
     /* Lookup launch latency */
     double launch_latency_lookup();
        
     /* Print table */
-    void print_launch_latency_table(std::ostream & out);
+    void print_launch_latency_table(std::ostream & out, const std::string & prefix="");
 
   private:
-    void print_stream_vector_table_impl(std::ostream & out,bool use_latency_correction);    
+    void print_stream_vector_table_impl(std::ostream & out,bool use_latency_correction, const std::string & prefix);    
 
 
     std::vector<int>    stream_sizes_;
@@ -135,6 +157,10 @@ namespace MueLu {
     std::vector<int>     pingpong_sizes_;
     std::vector<double>  pingpong_host_times_;
     std::vector<double>  pingpong_device_times_;
+
+    std::vector<int>     halopong_sizes_;
+    std::vector<double>  halopong_host_times_;
+    std::vector<double>  halopong_device_times_;
 
     double launch_and_wait_latency_;
 

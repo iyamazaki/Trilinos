@@ -11,9 +11,6 @@ using AggregateQualityEstimateFactory [[maybe_unused]] = MueLu::AggregateQuality
 #ifdef MUELU_AMALGAMATIONFACTORY_SHORT
 using AmalgamationFactory [[maybe_unused]] = MueLu::AmalgamationFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>;
 #endif
-#ifdef MUELU_AMALGAMATIONFACTORY_KOKKOS_SHORT
-using AmalgamationFactory_kokkos [[maybe_unused]] = MueLu::AmalgamationFactory_kokkos<Scalar,LocalOrdinal,GlobalOrdinal,Node>;
-#endif
 #ifdef MUELU_AMESOS2SMOOTHER_SHORT
 using Amesos2Smoother [[maybe_unused]] = MueLu::Amesos2Smoother<Scalar,LocalOrdinal,GlobalOrdinal,Node>;
 #endif
@@ -271,6 +268,9 @@ using RepartitionBlockDiagonalFactory [[maybe_unused]] = MueLu::RepartitionBlock
 #endif
 #ifdef MUELU_REPARTITIONHEURISTICFACTORY_SHORT
 using RepartitionHeuristicFactory [[maybe_unused]] = MueLu::RepartitionHeuristicFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>;
+#endif
+#ifdef MUELU_COMBINEPFACTORY_SHORT
+using CombinePFactory [[maybe_unused]] = MueLu::CombinePFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>;
 #endif
 #ifdef MUELU_REPLICATEPFACTORY_SHORT
 using ReplicatePFactory [[maybe_unused]] = MueLu::ReplicatePFactory<Scalar,LocalOrdinal,GlobalOrdinal,Node>;

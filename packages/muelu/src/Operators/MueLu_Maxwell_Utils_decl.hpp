@@ -51,10 +51,7 @@
 
 #include "Xpetra_Map_fwd.hpp"
 #include "Xpetra_Matrix_fwd.hpp"
-#include "Xpetra_MatrixFactory_fwd.hpp"
-#include "Xpetra_MultiVectorFactory_fwd.hpp"
 #include "Xpetra_VectorFactory_fwd.hpp"
-#include "Xpetra_CrsMatrixWrap_fwd.hpp"
 
 #include "MueLu_Level_fwd.hpp"
 #include "MueLu_ThresholdAFilterFactory_fwd.hpp"
@@ -128,9 +125,9 @@ namespace MueLu {
     static void setMatvecParams(Matrix& A, RCP<ParameterList> matvecParams);
 
 
-    // Performs an RAP
+    //! Performs an P^T AP
     static RCP<Xpetra::Matrix<Scalar,LocalOrdinal,GlobalOrdinal,Node> >
-    PtAPWrapper(RCP<Matrix>& A,RCP<Matrix>& P, Teuchos::ParameterList &params, std::string & label);
+    PtAPWrapper(const RCP<Matrix>& A,const RCP<Matrix>& P, Teuchos::ParameterList &params, std::string & label);
 
   };
 

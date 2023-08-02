@@ -535,7 +535,8 @@ macro(tribits_process_packages_and_dirs_lists  REPOSITORY_NAME  REPOSITORY_DIR)
 
       endif()
 
-      if (EXISTS ${PACKAGE_ABS_DIR})
+      set(packageDependenciesFile "${PACKAGE_ABS_DIR}/cmake/Dependencies.cmake")
+      if (EXISTS "${packageDependenciesFile}")
         set(PACKAGE_EXISTS TRUE)
       else()
         set(PACKAGE_EXISTS FALSE)
@@ -557,9 +558,16 @@ macro(tribits_process_packages_and_dirs_lists  REPOSITORY_NAME  REPOSITORY_DIR)
         )
         message(
           "\n***"
-          "\n*** Error, the package ${TRIBITS_PACKAGE} directory ${PACKAGE_ABS_DIR} does not exist!"
+          "\n*** Error, the package ${TRIBITS_PACKAGE} dependencies file"
+	    " '${packageDependenciesFile}' does *NOT* exist!"
           "\n***\n" )
         message(FATAL_ERROR "Stopping due to above error!")
+      elseif((NOT PACKAGE_EXISTS) AND (EXISTS "${PACKAGE_ABS_DIR}")
+          AND (${PROJECT_NAME}_ASSERT_DEFINED_DEPENDENCIES STREQUAL "WARNING")
+        )
+        message(WARNING "${TRIBITS_PACKAGE}: Package base directory '${PACKAGE_ABS_DIR}'"
+	  " exists but the dependencies file '${packageDependenciesFile}' does *NOT*"
+	  " exist!  Package is being ignored anyway!")
       endif()
 
       if (PACKAGE_EXISTS OR ${PROJECT_NAME}_IGNORE_PACKAGE_EXISTS_CHECK)
@@ -572,6 +580,7 @@ macro(tribits_process_packages_and_dirs_lists  REPOSITORY_NAME  REPOSITORY_DIR)
         set(${TRIBITS_PACKAGE}_PARENT_REPOSITORY ${REPOSITORY_NAME})
         tribits_insert_standard_package_options(${TRIBITS_PACKAGE}  ${PACKAGE_TESTGROUP})
         set(${TRIBITS_PACKAGE}_PACKAGE_BUILD_STATUS INTERNAL)
+        set(${TRIBITS_PACKAGE}_IS_TRIBITS_COMPLIANT TRUE)
       else()
         if (${PROJECT_NAME}_VERBOSE_CONFIGURE)
           message(
@@ -593,6 +602,7 @@ macro(tribits_process_packages_and_dirs_lists  REPOSITORY_NAME  REPOSITORY_DIR)
         print_var(${TRIBITS_PACKAGE}_PARENT_PACKAGE)
         print_var(${TRIBITS_PACKAGE}_PARENT_REPOSITORY)
         print_var(${TRIBITS_PACKAGE}_PACKAGE_BUILD_STATUS)
+        print_var(${TRIBITS_PACKAGE}_IS_TRIBITS_COMPLIANT)
       endif()
 
       if (TRIBITS_PROCESS_PACKAGES_AND_DIRS_LISTS_VERBOSE)

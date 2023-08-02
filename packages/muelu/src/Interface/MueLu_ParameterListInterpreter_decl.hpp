@@ -62,7 +62,6 @@
 #include "MueLu_CoarseMapFactory_fwd.hpp"
 #include "MueLu_ConstraintFactory_fwd.hpp"
 #include "MueLu_CoordinatesTransferFactory_fwd.hpp"
-#include "MueLu_CoupledAggregationFactory_fwd.hpp"
 #include "MueLu_DirectSolver_fwd.hpp"
 #include "MueLu_EminPFactory_fwd.hpp"
 #include "MueLu_FacadeClassBase.hpp"
@@ -203,8 +202,9 @@ namespace MueLu {
 
     //! Easy interpreter stuff
     //@{
-    // These two variables are only needed to print out proper [default]
+    // These three variables are only needed to print out proper [default]
     bool changedPRrebalance_;
+    bool changedPRViaCopyrebalance_;
     bool changedImplicitTranspose_;
 
     void SetEasyParameterList(const Teuchos::ParameterList& paramList);
@@ -251,6 +251,8 @@ namespace MueLu {
     void UpdateFactoryManager_PG(Teuchos::ParameterList& paramList, const Teuchos::ParameterList& defaultList, FactoryManager& manager,
                                  int levelID, std::vector<keep_pair>& keeps) const;
     void UpdateFactoryManager_Replicate(Teuchos::ParameterList& paramList, const Teuchos::ParameterList& defaultList, FactoryManager& manager,
+                                 int levelID, std::vector<keep_pair>& keeps) const;
+    void UpdateFactoryManager_Combine(Teuchos::ParameterList& paramList, const Teuchos::ParameterList& defaultList, FactoryManager& manager,
                                  int levelID, std::vector<keep_pair>& keeps) const;
     void UpdateFactoryManager_Matlab(Teuchos::ParameterList& paramList, const Teuchos::ParameterList& defaultList, FactoryManager& manager,
                                      int levelID, std::vector<keep_pair>& keeps) const;

@@ -59,7 +59,6 @@
 
 #include "MueLu_Hierarchy_decl.hpp"
 
-#include "MueLu_BoostGraphviz.hpp"
 #include "MueLu_FactoryManager.hpp"
 #include "MueLu_HierarchyUtils.hpp"
 #include "MueLu_TopRAPFactory.hpp"
@@ -68,7 +67,6 @@
 #include "MueLu_Monitor.hpp"
 #include "MueLu_PerfUtils.hpp"
 #include "MueLu_PFactory.hpp"
-#include "MueLu_SmootherFactoryBase.hpp"
 #include "MueLu_SmootherFactory.hpp"
 #include "MueLu_SmootherBase.hpp"
 
@@ -82,7 +80,7 @@ namespace MueLu {
   Hierarchy<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Hierarchy()
     : maxCoarseSize_(GetDefaultMaxCoarseSize()), implicitTranspose_(GetDefaultImplicitTranspose()),
       fuseProlongationAndUpdate_(GetDefaultFuseProlongationAndUpdate()),
-      doPRrebalance_(GetDefaultPRrebalance()), isPreconditioner_(true), Cycle_(GetDefaultCycle()), WCycleStartLevel_(0),
+      doPRrebalance_(GetDefaultPRrebalance()), doPRViaCopyrebalance_(false), isPreconditioner_(true), Cycle_(GetDefaultCycle()), WCycleStartLevel_(0),
       scalingFactor_(Teuchos::ScalarTraits<double>::one()), lib_(Xpetra::UseTpetra), isDumpingEnabled_(false), dumpLevel_(-2), rate_(-1),
       sizeOfAllocatedLevelMultiVectors_(0)
   {
@@ -101,7 +99,7 @@ namespace MueLu {
   Hierarchy<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Hierarchy(const RCP<Matrix>& A)
     : maxCoarseSize_(GetDefaultMaxCoarseSize()), implicitTranspose_(GetDefaultImplicitTranspose()),
       fuseProlongationAndUpdate_(GetDefaultFuseProlongationAndUpdate()),
-      doPRrebalance_(GetDefaultPRrebalance()), isPreconditioner_(true), Cycle_(GetDefaultCycle()), WCycleStartLevel_(0),
+      doPRrebalance_(GetDefaultPRrebalance()), doPRViaCopyrebalance_(false), isPreconditioner_(true), Cycle_(GetDefaultCycle()), WCycleStartLevel_(0),
       scalingFactor_(Teuchos::ScalarTraits<double>::one()), isDumpingEnabled_(false), dumpLevel_(-2), rate_(-1),
       sizeOfAllocatedLevelMultiVectors_(0)
   {

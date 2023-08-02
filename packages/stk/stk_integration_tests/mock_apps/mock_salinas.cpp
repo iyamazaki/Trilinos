@@ -4,7 +4,6 @@
 #include <stk_coupling/Utils.hpp>
 #include <stk_coupling/SplitComms.hpp>
 #include <stk_coupling/SyncInfo.hpp>
-#include <stk_coupling/Version.hpp>
 #include <stk_transfer/ReducedDependencyGeometricTransfer.hpp>
 #include <stk_util/command_line/CommandLineParserUtils.hpp>
 #include <stk_util/util/ReportHandler.hpp>
@@ -14,8 +13,8 @@
 #include "MockUtils.hpp"
 #include "StkMesh.hpp"
 #include "MockMeshUtils.hpp"
+#include "StkSendAdapter.hpp"
 #include "StkRecvAdapter.hpp"
-#include "EmptySendAdapter.hpp"
 #include "RecvInterpolate.hpp"
 #include <iostream>
 #include <sstream>
@@ -23,7 +22,7 @@
 class MockSalinas
 {
   using RecvTransfer = stk::transfer::ReducedDependencyGeometricTransfer<
-                                    mock::RecvInterpolate<mock::EmptySendAdapter, mock::StkRecvAdapter>>;
+                                    mock::RecvInterpolate<mock::StkSendAdapter, mock::StkRecvAdapter>>;
 public:
   MockSalinas()
     : m_appName("Mock-Salinas"),
@@ -98,7 +97,7 @@ public:
     }
 
     std::vector<std::string> fieldNames = {"traction", "temperature"};
-    mock_utils::read_mesh(splitComm, meshFileName, fieldNames, m_mesh);
+    mock_utils::read_mesh(splitComm, meshFileName, "surface_1", fieldNames, m_mesh);
     m_currentTime = 0.0;
     m_finalTime = 1.0;
   }
@@ -174,11 +173,11 @@ public:
   void check_field_sizes(std::vector<std::pair<std::string,int>> sendFields,
                          std::vector<std::pair<std::string,int>> recvFields)
   {
-    ThrowRequireMsg(sendFields.size() == recvFields.size(), "Number of send-fields ("
+    STK_ThrowRequireMsg(sendFields.size() == recvFields.size(), "Number of send-fields ("
        <<sendFields.size()<<") doesn't match number of recv-fields ("<<recvFields.size()
        <<")");
     for (unsigned i=0; i<sendFields.size(); ++i) {
-      ThrowRequireMsg(sendFields[i].second == recvFields[i].second,
+      STK_ThrowRequireMsg(sendFields[i].second == recvFields[i].second,
         "Send-field size ("<<sendFields[i].first<<","<<sendFields[i].second<<") "
         <<"doesn't match Recv-field size ("<<recvFields[i].first<<","<<recvFields[i].second<<")");
     }   
@@ -204,10 +203,10 @@ public:
     check_field_sizes(otherSendFields, myRecvFields);
 
     MPI_Comm pairwiseComm = m_splitComms.get_pairwise_comm(m_otherColor);
-    std::shared_ptr<mock::EmptySendAdapter> sendAdapter;
+    std::shared_ptr<mock::StkSendAdapter> nullSendAdapter;
     std::shared_ptr<mock::StkRecvAdapter> recvAdapter =
        std::make_shared<mock::StkRecvAdapter>(pairwiseComm, *m_mesh, m_recvFieldName);
-    m_recvTransfer.reset(new RecvTransfer(sendAdapter, recvAdapter, "MockSalinasRecvTransfer", pairwiseComm));
+    m_recvTransfer.reset(new RecvTransfer(nullSendAdapter, recvAdapter, "MockSalinasRecvTransfer", pairwiseComm));
 
     m_recvTransfer->coarse_search();
     m_recvTransfer->communication();
@@ -219,11 +218,11 @@ public:
     if (m_doingRecvTransfer) {
       m_mesh->set_stk_field_values(m_recvFieldName, 0.0);
       m_recvTransfer->apply();
-      ThrowRequire(m_recvTransfer->meshb()->called_update_values);
+      STK_ThrowRequire(m_recvTransfer->meshb()->called_update_values);
 
       const double expectedFieldValue = (m_otherAppName=="Mock-Sparc" ? 4.4 : 9.9);
       const bool valuesMatch = m_mesh->verify_stk_field_values(m_recvFieldName, expectedFieldValue);
-      ThrowRequireMsg(valuesMatch, "Mock-Salinas error, field-values are not correct after transfer");
+      STK_ThrowRequireMsg(valuesMatch, "Mock-Salinas error, field-values are not correct after transfer");
     }
   }
 

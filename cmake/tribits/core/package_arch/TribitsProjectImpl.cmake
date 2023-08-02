@@ -61,6 +61,7 @@ include(TribitsConstants)
 tribits_asesrt_minimum_cmake_version()
 include(TribitsCMakePolicies  NO_POLICY_SCOPE)
 
+# TriBITS package_arch includes
 include(TribitsIncludeDirectories)
 include(TribitsFindPythonInterp)
 include(TribitsGlobalMacros)
@@ -68,7 +69,10 @@ include(TribitsConfigureCTestCustom)
 include(TribitsGenerateResourceSpecFile)
 include(TribitsPackageDependencies)
 include(TribitsPrintDependencyInfo)
+include(TribitsPackagingSupport)
+include(TribitsConfigureTiming)
 
+# TriBITS utils includes
 include(AdvancedSet)
 include(AdvancedOption)
 include(TimingUtils)
@@ -189,10 +193,6 @@ macro(tribits_project_impl)
   #
   # G) Go get the information for all enabled TPLS
   #
-
-  message("")
-  message("Getting information for all enabled external packages/TPLs ...")
-  message("")
 
   tribits_process_enabled_tpls()
 

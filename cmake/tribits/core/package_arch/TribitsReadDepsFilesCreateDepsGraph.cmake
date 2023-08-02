@@ -182,8 +182,7 @@ macro(tribits_read_all_package_deps_files_create_deps_graph)
   set(${PROJECT_NAME}_DEFINED_INTERNAL_PACKAGES "") # Packages and subpackages
 
   foreach(TRIBITS_PACKAGE  IN LISTS ${PROJECT_NAME}_DEFINED_INTERNAL_TOPLEVEL_PACKAGES)
-    tribits_read_toplevel_package_deps_files_add_to_graph(${TRIBITS_PACKAGE}
-      ${${TRIBITS_PACKAGE}_REL_SOURCE_DIR})
+    tribits_read_toplevel_package_deps_files_add_to_graph(${TRIBITS_PACKAGE})
   endforeach()
 
   list(LENGTH ${PROJECT_NAME}_DEFINED_INTERNAL_PACKAGES
@@ -203,7 +202,7 @@ endmacro()
 #   tribits_read_external_package_deps_files_add_to_graph(<tplName>)
 #
 # This reads in the file ``${<tplName>_DEPENDENCIES_FILE}`` and sets the
-# varaible::
+# variable::
 #
 #   <tplName>_LIB_DEFINED_DEPENDENCIES
 #
@@ -456,15 +455,21 @@ macro(tribits_process_package_dependencies_lists  packageName)
   set(${packageName}_LIB_DEFINED_DEPENDENCIES "")
   set(${packageName}_TEST_DEFINED_DEPENDENCIES "")
 
+  # Append the XXX_TPLS list on the end of the XXX_PACKAGES list
+  list(APPEND LIB_REQUIRED_DEP_PACKAGES ${LIB_REQUIRED_DEP_TPLS})
+  list(APPEND LIB_OPTIONAL_DEP_PACKAGES ${LIB_OPTIONAL_DEP_TPLS})
+  list(APPEND TEST_REQUIRED_DEP_PACKAGES ${TEST_REQUIRED_DEP_TPLS})
+  list(APPEND TEST_OPTIONAL_DEP_PACKAGES ${TEST_OPTIONAL_DEP_TPLS})
+  set(LIB_REQUIRED_DEP_TPLS "")
+  set(LIB_OPTIONAL_DEP_TPLS "")
+  set(TEST_REQUIRED_DEP_TPLS "")
+  set(TEST_OPTIONAL_DEP_TPLS "")
+
   # Fill the backward dependency vars
   tribits_set_dep_packages(${packageName} LIB  REQUIRED  PACKAGES)
   tribits_set_dep_packages(${packageName} LIB  OPTIONAL  PACKAGES)
-  tribits_set_dep_packages(${packageName} LIB  REQUIRED  TPLS)
-  tribits_set_dep_packages(${packageName} LIB  OPTIONAL  TPLS)
   tribits_set_dep_packages(${packageName} TEST  REQUIRED  PACKAGES)
   tribits_set_dep_packages(${packageName} TEST  OPTIONAL  PACKAGES)
-  tribits_set_dep_packages(${packageName} TEST  REQUIRED  TPLS)
-  tribits_set_dep_packages(${packageName} TEST  OPTIONAL  TPLS)
 
   # Fill forward deps lists #63
   tribits_append_forward_dep_packages(${packageName}  LIB)
@@ -512,7 +517,7 @@ macro(tribits_set_dep_packages  packageName  testOrLib  requiredOrOptional  pkgs
     if (${depPkg} STREQUAL ${packageName})
       tribits_abort_on_self_dep("${packageName}" "${inputListType}")
     endif()
-    tribits_is_pkg_defined(${depPkg} ${pkgsOrTpls} depPkgIsDefined)
+    tribits_is_pkg_defined(${depPkg} depPkgIsDefined)
     if (depPkgIsDefined)
       list(APPEND ${packageName}_${testOrLib}_DEFINED_DEPENDENCIES ${depPkg})
       if ("${requiredOrOptional}"  STREQUAL  "REQUIRED")
@@ -534,18 +539,12 @@ endmacro()
 
 # Determine if a (internal or external) package is defined or not
 #
-function(tribits_is_pkg_defined  depPkg  pkgsOrTpls  depPkgIsDefinedOut)
+function(tribits_is_pkg_defined  depPkg    depPkgIsDefinedOut)
   set(depPkgIsDefined  FALSE)
-  if (pkgsOrTpls STREQUAL "PACKAGES")
-    if (${depPkg}_SOURCE_DIR)
-      set(depPkgIsDefined  TRUE)
-    endif()
-  elseif(pkgsOrTpls STREQUAL "TPLS")
-    if (${depPkg}_FINDMOD)
-      set(depPkgIsDefined  TRUE)
-    endif()
-  else()
-    message(FATAL_ERROR "Invalid value for pkgsOrTpls = '${pkgsOrTpls}'")
+  if (${depPkg}_SOURCE_DIR)
+    set(depPkgIsDefined  TRUE)
+  elseif(${depPkg}_FINDMOD)
+    set(depPkgIsDefined  TRUE)
   endif()
   set(${depPkgIsDefinedOut} ${depPkgIsDefined} PARENT_SCOPE)
 endfunction()
@@ -554,10 +553,10 @@ endfunction()
 # Implementation macro for tribits_set_dep_packages() to deal with a package
 # that is not defined by TriBITS.
 #
-# ToDo #63: This may need to be modified when dealing with TriBITS-compatible
+# ToDo #63: This may need to be modified when dealing with TriBITS-compliant
 # packages already installed out on the system.  We may need a mode where we
 # don't assert packages that are not defined but instead just assume they are
-# TriBITS-compatible packages already installed.
+# TriBITS-compliant packages already installed.
 #
 macro(tribits_set_dep_packages__handle_undefined_pkg  packageName  depPkg
     requiredOrOptional  pkgsOrTpls  packageEnableVar
@@ -959,6 +958,8 @@ macro(tribits_read_subpackage_deps_file_add_to_graph  PACKAGE_NAME
     tribits_assert_read_dependency_vars(${SUBPACKAGE_FULLNAME})
 
     tribits_process_package_dependencies_lists(${SUBPACKAGE_FULLNAME})
+
+    set(${SUBPACKAGE_FULLNAME}_IS_TRIBITS_COMPLIANT TRUE)
 
     set(${SUBPACKAGE_FULLNAME}_REGRESSION_EMAIL_LIST
       ${${PACKAGE_NAME}_REGRESSION_EMAIL_LIST})

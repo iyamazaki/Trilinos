@@ -13,8 +13,6 @@
 
 #cmakedefine HAVE_MUELU_EXPLICIT_INSTANTIATION
 
-#cmakedefine HAVE_MUELU_PROFILING
-
 #cmakedefine HAVE_MUELU_GOOGLE_PERFTOOLS
 
 #cmakedefine HAVE_MUELU_EXPERIMENTAL
@@ -85,8 +83,6 @@
 #cmakedefine HAVE_MUELU_MATLAB
 
 #cmakedefine HAVE_MUELU_AMGX
-
-#cmakedefine HAVE_MUELU_CGAL
 
 #cmakedefine HAVE_MUELU_VIENNACL
 

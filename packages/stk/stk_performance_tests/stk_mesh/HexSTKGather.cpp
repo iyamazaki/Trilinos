@@ -47,7 +47,6 @@
 #include <stk_mesh/base/BulkData.hpp>
 #include <stk_mesh/base/MetaData.hpp>
 #include <stk_mesh/base/GetBuckets.hpp>
-#include <stk_mesh/base/MemoryUsage.hpp>
 #include <stk_mesh/base/Field.hpp>
 
 namespace stk {
@@ -70,7 +69,7 @@ void do_stk_gather_test(stk::mesh::BulkData& bulk, std::vector<double>& sum_cent
   std::vector<double> elem_centroid(spatial_dim, 0);
 
   const VectorField * coord_field = meta.get_field<double>(stk::topology::NODE_RANK, "coordinates");
-  ThrowAssert(coord_field != nullptr);
+  STK_ThrowAssert(coord_field != nullptr);
 
   Selector local = meta.locally_owned_part();
 
