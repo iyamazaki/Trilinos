@@ -1617,6 +1617,11 @@ public:
       Kokkos::deep_copy(s0.nzvals, h_nzvals);
       Kokkos::deep_copy(s0.rowptr, h_rowptr);
 
+      Kokkos::resize(s0.w, m, 1);
+
+      size_t buffer_size_At = 0;
+      s0.buffer_size_A = 0;
+#if defined(KOKKOS_ENABLE_CUDA)
       cusparseCreate(&s0.cusparseHandle);
       cudaDataType computeType;
       if (std::is_same<value_type, double>::value) {
@@ -1633,14 +1638,56 @@ public:
                         s0.rowptr.data(), s0.colind.data(), s0.nzvals.data(),
                         CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                         CUSPARSE_INDEX_BASE_ZERO, computeType);
-      size_t buffer_size_A;
       cusparseDnVecDescr_t vecX, vecY;
-      Kokkos::resize(s0.w, m, 1);
       cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
       cusparseCreateDnVec(&vecY, m, s0.w.data(), computeType);
       cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &one, s0.A_cusparse, vecX, &one, vecY,
-                              computeType, CUSPARSE_MV_ALG_DEFAULT, &buffer_size_A);
-      Kokkos::resize(s0.buffer_A, buffer_size_A);
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_A);
+      cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &one, s0.A_cusparse, vecX, &one, vecY,
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, &buffer_size_At);
+#elif defined(KOKKOS_ENABLE_HIP)
+      rocsparse_create_handle(&s0.rocsparseHandle);
+      rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
+      if (std::is_same<value_type, float>::value) {
+        rocsparse_compute_type = rocsparse_datatype_f32_r;
+      }
+
+      // create matrix
+      rocsparse_create_csr_descr(&(s0.descrA), m, m, nnz,
+                                 s0.rowptr.data(), s0.colind.data(), s0.nzvals.data(),
+                                 rocsparse_indextype_i32, rocsparse_indextype_i32, rocsparse_index_base_zero, rocsparse_compute_type);
+      rocsparse_dnvec_descr vecX, vecY;
+      rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
+      rocsparse_create_dnvec_descr(&vecY, m, (void*)s0.w.data(), rocsparse_compute_type);
+      #if ROCM_VERSION >= 50400
+      rocsparse_spmv_ex
+      #else
+      rocsparse_spmv
+      #endif
+          (s0.rocsparseHandle, rocsparse_operation_none,
+           &one, s0.descrA, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+	   #if ROCM_VERSION >= 50400
+           rocsparse_spmv_stage_buffer_size,
+           #endif
+           &s0.buffer_size_A, nullptr);
+      #if ROCM_VERSION >= 50400
+      rocsparse_spmv_ex
+      #else
+      rocsparse_spmv
+      #endif
+          (s0.rocsparseHandle, rocsparse_operation_transpose,
+           &one, s0.descrA, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+	   #if ROCM_VERSION >= 50400
+           rocsparse_spmv_stage_buffer_size,
+           #endif
+           &buffer_size_At, nullptr);
+#endif
+      s0.buffer_size_A = (buffer_size_At > s0.buffer_size_A ? buffer_size_At : s0.buffer_size_A);
+      if (s0.buffer_size_A > 0) {
+        Kokkos::resize(s0.buffer_A, s0.buffer_size_A);
+      }
     }
   }
 
@@ -1899,7 +1946,6 @@ public:
   inline void solveCholeskyLowerOnDeviceVar2_SpMV(const ordinal_type pbeg, const ordinal_type pend,
                                                   const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     const ordinal_type m = t.extent(0);
-    const ordinal_type nrhs = t.extent(1);
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
@@ -1922,22 +1968,50 @@ public:
     Kokkos::deep_copy(s0.w, t);
 
     const value_type one(1);
-    cusparseStatus_t status;
-    status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
+    if (CUSPARSE_STATUS_SUCCESS !=
+        status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
                           &one, s0.A_cusparse, 
                                 vecX,
                           &one, vecY,
-                          computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data());
-    if (CUSPARSE_STATUS_SUCCESS != status) {
+                          computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data()))
+    {
        printf( " Failed cusparseSpMV for SpMV\n" );
     }
+#elif defined(KOKKOS_ENABLE_HIP)
+    rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
+    if (std::is_same<value_type, float>::value) {
+      rocsparse_compute_type = rocsparse_datatype_f32_r;
+    }
+    rocsparse_dnvec_descr vecX, vecY;
+    rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
+    rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
+
+    const value_type one(1);
+    if (rocsparse_status_success !=
+      #if ROCM_VERSION >= 50400
+      rocsparse_spmv_ex
+      #else
+      rocsparse_spmv
+      #endif
+          (s0.rocsparseHandle, rocsparse_operation_transpose,
+           &one, s0.descrA, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+           #if ROCM_VERSION >= 50400
+	   rocsparse_spmv_stage_compute,
+           #endif
+           &s0.buffer_size_A, (void*)s0.buffer_A.data()))
+    {
+      printf( " Failed rocsparse_spmv\n" );
+    }
 #else
+    const ordinal_type nrhs = t.extent(1);
+
     auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
     auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colind);
     auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvals);
 
-    auto h_w = Kokkos::create_mirror_view(host_memory_space(), w);
-    auto h_t = Kokkos::create_mirror_view(host_memory_space(), t);
+    auto h_w = Kokkos::create_mirror_view(host_memory_space(), s0.w);
+    auto h_t = Kokkos::create_mirror_view(host_memory_space(),    t);
     Kokkos::deep_copy(h_w, t);
     Kokkos::deep_copy(h_t, t);
     for (ordinal_type i = 0; i < m ; i++) {
@@ -1991,7 +2065,6 @@ public:
     }
   }
 
-  // !!!! NOTE: remove info !!!!
   inline void solveCholeskyLowerOnDevice(const ordinal_type pbeg, const ordinal_type pend,
                                          const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     if (variant == 0)
@@ -2110,7 +2183,6 @@ public:
   inline void solveCholeskyUpperOnDeviceVar2_SpMV(const ordinal_type pbeg, const ordinal_type pend,
                                                   const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     const ordinal_type m = t.extent(0);
-    const ordinal_type nrhs = t.extent(1);
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
@@ -2142,13 +2214,40 @@ public:
     if (CUSPARSE_STATUS_SUCCESS != status) {
        printf( " Failed cusparseSpMV for SpMV\n" );
     }
+#elif defined(KOKKOS_ENABLE_HIP)
+    rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
+    if (std::is_same<value_type, float>::value) {
+      rocsparse_compute_type = rocsparse_datatype_f32_r;
+    }
+    rocsparse_dnvec_descr vecX, vecY;
+    rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
+    rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
+
+    const value_type one(1);
+    if (rocsparse_status_success !=
+      #if ROCM_VERSION >= 50400
+      rocsparse_spmv_ex
+      #else
+      rocsparse_spmv
+      #endif
+          (s0.rocsparseHandle, rocsparse_operation_none,
+           &one, s0.descrA, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+           #if ROCM_VERSION >= 50400
+	   rocsparse_spmv_stage_compute,
+           #endif
+           &s0.buffer_size_A, (void*)s0.buffer_A.data()))
+    {
+      printf( " Failed rocsparse_spmv\n" );
+    }
 #else
+    const ordinal_type nrhs = t.extent(1);
     auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
     auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colind);
     auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvals);
 
-    auto h_w = Kokkos::create_mirror_view(host_memory_space(), w);
-    auto h_t = Kokkos::create_mirror_view(host_memory_space(), t);
+    auto h_w = Kokkos::create_mirror_view(host_memory_space(), s0.w);
+    auto h_t = Kokkos::create_mirror_view(host_memory_space(),    t);
     Kokkos::deep_copy(h_w, t);
     Kokkos::deep_copy(h_t, t);
     for (ordinal_type i = 0; i < m ; i++) {
