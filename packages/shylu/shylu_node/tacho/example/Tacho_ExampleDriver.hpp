@@ -192,6 +192,10 @@ template <typename value_type> int driver(int argc, char *argv[]) {
     double initi_time = timer.seconds();
 
     /// symbolic structure can be reused
+    {
+      // warm-up
+      solver.factorize(values_on_device);
+    }
     timer.reset();
     for (int i = 0; i < nfacts; ++i) {
       solver.factorize(values_on_device);
@@ -213,8 +217,18 @@ template <typename value_type> int driver(int argc, char *argv[]) {
       }
     }
 
-    std::cout << std::endl;
     double solve_time = 0.0;
+    {
+      // warm-up
+      timer.reset();
+      solver.solve(x, b, t);
+      solve_time = timer.seconds();
+      const double res = solver.computeRelativeResidual(values_on_device, x, b);
+      std::cout << "TachoSolver (warm-up): residual = " << res << " time " << solve_time << "\n";
+    }
+    std::cout << std::endl;
+
+    solve_time = 0.0;
     for (int i = 0; i < nsolves; ++i) {
       timer.reset();
       solver.solve(x, b, t);
