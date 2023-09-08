@@ -1602,9 +1602,39 @@ public:
       Kokkos::deep_copy(s0.nzvals, h_nzvals);
       Kokkos::deep_copy(s0.rowptr, h_rowptr);
 
+      // transpose
+      nnz = h_rowptr[m];
+      Kokkos::resize(s0.rowptrT, 1+m);
+      Kokkos::resize(s0.colindT, nnz);
+      Kokkos::resize(s0.nzvalsT, nnz);
+      auto h_rowptrT = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrT);
+      auto h_colindT = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colindT);
+      auto h_nzvalsT = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvalsT);
+      Kokkos::deep_copy(h_rowptrT, 0);
+      for (ordinal_type i = 0; i < m; i++) {
+        for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) {
+          h_rowptrT(h_colind(k)+1) ++;
+	}
+      }
+      for (ordinal_type i = 0; i < m; i++) h_rowptrT(i+1) += h_rowptrT(i);
+      for (ordinal_type i = 0; i < m; i++) {
+        for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) {
+          nnz = h_rowptrT(h_colind(k));
+	  h_colindT(nnz) = i;
+	  h_nzvalsT(nnz) = h_nzvals(k);
+	  h_rowptrT(h_colind(k)) ++;
+	}
+      }
+      for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
+      h_rowptr(0) = 0;
+      Kokkos::deep_copy(s0.colindT, h_colindT);
+      Kokkos::deep_copy(s0.nzvalsT, h_nzvalsT);
+      Kokkos::deep_copy(s0.rowptrT, h_rowptrT);
+
+      // workspace
       Kokkos::resize(s0.w, m, 1);
 
-      size_t buffer_size_At = 0;
+      s0.buffer_size_At = 0;
       s0.buffer_size_A = 0;
 #if defined(KOKKOS_ENABLE_CUDA)
       cusparseCreate(&s0.cusparseHandle);
@@ -1629,7 +1659,9 @@ public:
       cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &one, s0.A_cusparse, vecX, &one, vecY,
                               computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_A);
       cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &one, s0.A_cusparse, vecX, &one, vecY,
-                              computeType, CUSPARSE_MV_ALG_DEFAULT, &buffer_size_At);
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_At);
+      Kokkos::resize(s0.buffer_A,  s0.buffer_size_A);
+      Kokkos::resize(s0.buffer_At, s0.buffer_size_At);
 #elif defined(KOKKOS_ENABLE_HIP)
       rocsparse_create_handle(&s0.rocsparseHandle);
       rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
@@ -1644,6 +1676,7 @@ public:
       rocsparse_dnvec_descr vecX, vecY;
       rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
       rocsparse_create_dnvec_descr(&vecY, m, (void*)s0.w.data(), rocsparse_compute_type);
+      // workspace
       #if ROCM_VERSION >= 50400
       rocsparse_spmv_ex
       #else
@@ -1656,23 +1689,77 @@ public:
            rocsparse_spmv_stage_buffer_size,
            #endif
            &s0.buffer_size_A, nullptr);
+      if (s0.buffer_size_A > 0) {
+        Kokkos::resize(s0.buffer_A, s0.buffer_size_A);
+      }
       #if ROCM_VERSION >= 50400
+      // preprocess
       rocsparse_spmv_ex
-      #else
-      rocsparse_spmv
+          (s0.rocsparseHandle, rocsparse_operation_none,
+           &one, s0.descrA, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+            rocsparse_spmv_stage_preprocess,
+           &s0.buffer_size_A, s0.buffer_A);
       #endif
+      s0.spmv_explciit_transpose = false;
+      if (s0.spmv_explciit_transpose) {
+        // create matrix (transpose)
+        rocsparse_create_csr_descr(&(s0.descrAt), m, m, nnz,
+                                   s0.rowptrT.data(), s0.colindT.data(), s0.nzvalsT.data(),
+                                   rocsparse_indextype_i32, rocsparse_indextype_i32, rocsparse_index_base_zero, rocsparse_compute_type);
+        // workspace
+        #if ROCM_VERSION >= 50400
+        rocsparse_spmv_ex
+        #else
+        rocsparse_spmv
+        #endif
+          (s0.rocsparseHandle, rocsparse_operation_none,
+           &one, s0.descrAt, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+	   #if ROCM_VERSION >= 50400
+           rocsparse_spmv_stage_buffer_size,
+           #endif
+           &s0.buffer_size_At, nullptr);
+        if (s0.buffer_size_At > 0) {
+          Kokkos::resize(s0.buffer_At, s0.buffer_size_At);
+        }
+        #if ROCM_VERSION >= 50400
+        // preprocess
+        rocsparse_spmv_ex
+          (s0.rocsparseHandle, rocsparse_operation_none,
+           &one, s0.descrAt, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+            rocsparse_spmv_stage_preprocess,
+           &s0.buffer_size_At, s0.buffer_At);
+        #endif
+      } else {
+        // workspace (transpose)
+        #if ROCM_VERSION >= 50400
+        rocsparse_spmv_ex
+        #else
+        rocsparse_spmv
+        #endif
           (s0.rocsparseHandle, rocsparse_operation_transpose,
            &one, s0.descrA, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
 	   #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
-           &buffer_size_At, nullptr);
+           &s0.buffer_size_At, nullptr);
+        if (s0.buffer_size_At > 0) {
+          Kokkos::resize(s0.buffer_At, s0.buffer_size_At);
+        }
+        #if ROCM_VERSION >= 50400
+        // preprocess
+        rocsparse_spmv_ex
+          (s0.rocsparseHandle, rocsparse_operation_transpose,
+           &one, s0.descrA, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+            rocsparse_spmv_stage_preprocess,
+           &s0.buffer_size_At, s0.buffer_At);
+        #endif
+      } 
 #endif
-      s0.buffer_size_A = (buffer_size_At > s0.buffer_size_A ? buffer_size_At : s0.buffer_size_A);
-      if (s0.buffer_size_A > 0) {
-        Kokkos::resize(s0.buffer_A, s0.buffer_size_A);
-      }
     }
   }
 
@@ -1913,6 +2000,7 @@ public:
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
+    Kokkos::deep_copy(s0.w, t);
 #if defined(KOKKOS_ENABLE_CUDA)
     cudaDataType computeType;
     if (std::is_same<value_type, double>::value) {
@@ -1929,8 +2017,6 @@ public:
     cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
     cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
     // SpMV
-    Kokkos::deep_copy(s0.w, t);
-
     const value_type one(1);
     if (CUSPARSE_STATUS_SUCCESS !=
         status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
@@ -1951,21 +2037,40 @@ public:
     rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
 
     const value_type one(1);
-    if (rocsparse_status_success !=
-      #if ROCM_VERSION >= 50400
-      rocsparse_spmv_ex
-      #else
-      rocsparse_spmv
-      #endif
+    if (s0.spmv_explciit_transpose) {
+      if (rocsparse_status_success !=
+        #if ROCM_VERSION >= 50400
+        rocsparse_spmv_ex
+        #else
+        rocsparse_spmv
+        #endif
+          (s0.rocsparseHandle, rocsparse_operation_none,
+           &one, s0.descrAt, vecX, &one, vecY,
+           rocsparse_compute_type, rocsparse_spmv_alg_default,
+           #if ROCM_VERSION >= 50400
+	   rocsparse_spmv_stage_compute,
+           #endif
+           &s0.buffer_size_At, (void*)s0.buffer_At.data()))
+      {
+        printf( " Failed rocsparse_spmv\n" );
+      }
+    } else {
+      if (rocsparse_status_success !=
+        #if ROCM_VERSION >= 50400
+        rocsparse_spmv_ex
+        #else
+        rocsparse_spmv
+        #endif
           (s0.rocsparseHandle, rocsparse_operation_transpose,
            &one, s0.descrA, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
 	   rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_A, (void*)s0.buffer_A.data()))
-    {
-      printf( " Failed rocsparse_spmv\n" );
+           &s0.buffer_size_At, (void*)s0.buffer_At.data()))
+      {
+        printf( " Failed rocsparse_spmv\n" );
+      }
     }
 #else
     const ordinal_type nrhs = t.extent(1);
@@ -2147,6 +2252,7 @@ public:
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
+    Kokkos::deep_copy(s0.w, t);
 #if defined(KOKKOS_ENABLE_CUDA)
     cudaDataType computeType;
     if (std::is_same<value_type, double>::value) {
@@ -2163,8 +2269,6 @@ public:
     cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
     cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
     // SpMV
-    Kokkos::deep_copy(s0.w, t);
-
     const value_type one(1);
     cusparseStatus_t status;
     status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,

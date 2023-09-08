@@ -23,7 +23,9 @@ Sandia National Laboratories, Albuquerque, NM, USA
 #if defined(KOKKOS_ENABLE_CUDA)
  #include <cusparse.h>
 #elif defined(KOKKOS_ENABLE_HIP)
+ #include <rocm_version.h>
  #include <rocsparse.h>
+ #define ROCM_VERSION ROCM_VERSION_MAJOR * 10000 + ROCM_VERSION_MINOR * 100 + ROCM_VERSION_PATCH
 #endif
 
 /// \file Tacho_SupernodeInfo.hpp
@@ -127,6 +129,11 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     Kokkos::View<int *, device_type> rowptr;
     Kokkos::View<int *, device_type> colind;
     Kokkos::View<value_type *, device_type> nzvals;
+
+    Kokkos::View<int *, device_type> rowptrT;
+    Kokkos::View<int *, device_type> colindT;
+    Kokkos::View<value_type *, device_type> nzvalsT;
+
     Kokkos::View<value_type**, device_type> w;
     Kokkos::View<value_type *, device_type> buffer_A;
     size_t buffer_size_A;
@@ -134,8 +141,13 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     cusparseHandle_t cusparseHandle;
     cusparseSpMatDescr_t A_cusparse;
 #elif defined(KOKKOS_ENABLE_HIP)
+    Kokkos::View<value_type *, device_type> buffer_At;
+    size_t buffer_size_At;
+
+    bool spmv_explciit_transpose;
     rocsparse_handle rocsparseHandle;
     rocsparse_spmat_descr descrA;
+    rocsparse_spmat_descr descrAt;
 #endif
 
     KOKKOS_INLINE_FUNCTION
