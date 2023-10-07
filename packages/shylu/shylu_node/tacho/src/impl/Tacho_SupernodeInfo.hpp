@@ -144,7 +144,7 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     Kokkos::View<value_type *, device_type> buffer_At;
     size_t buffer_size_At;
 
-    bool spmv_explciit_transpose;
+    bool spmv_explcit_transpose;
     rocsparse_handle rocsparseHandle;
     rocsparse_spmat_descr descrA;
     rocsparse_spmat_descr descrAt;
