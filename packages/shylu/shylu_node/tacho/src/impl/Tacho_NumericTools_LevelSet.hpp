@@ -1531,7 +1531,7 @@ public:
 
       // count nnz
       Kokkos::resize(s0.rowptr, 1+m);
-      auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
+      auto h_rowptr = Kokkos::create_mirror_view(host_memory_space(), s0.rowptr);
       Kokkos::deep_copy(h_rowptr, 0);
 
       ordinal_type nnz = 0;
@@ -1564,8 +1564,8 @@ public:
       Kokkos::resize(s0.colind, nnz);
       Kokkos::resize(s0.nzvals, nnz);
       for (ordinal_type i = 0; i < m; i++) h_rowptr(i+1) += h_rowptr(i);
-      auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colind);
-      auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvals);
+      auto h_colind = Kokkos::create_mirror_view(host_memory_space(), s0.colind);
+      auto h_nzvals = Kokkos::create_mirror_view(host_memory_space(), s0.nzvals);
 
       auto h_blk_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.sid_block_colidx);
       auto h_gid_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.gid_colidx);
@@ -1582,7 +1582,7 @@ public:
             for (ordinal_type i = 0; i < s.m; i++) {
               // diagonal block
               ordinal_type j;
-              for (j = 0; j < s.m; j++) {
+              for (j = i; j < s.m; j++) {
                 if (abs(h_AT(i,j)) > 0.0) {
                   nnz = h_rowptr(i+offm);
                   h_colind(nnz) = j+offm;
@@ -1616,41 +1616,56 @@ public:
       Kokkos::deep_copy(s0.colind, h_colind);
       Kokkos::deep_copy(s0.nzvals, h_nzvals);
       Kokkos::deep_copy(s0.rowptr, h_rowptr);
+      /*{
+        char filename[200];
+        sprintf(filename,"L_%d.dat", lvl);
+        FILE *fp = fopen(filename,"w");
+        for (ordinal_type i = 0; i < m; i++) for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) fprintf(fp,"%d %d %e\n",i,h_colind(k),h_nzvals(k));
+        fclose(fp);
+      }*/
 
       // transpose
       nnz = h_rowptr[m];
       Kokkos::resize(s0.rowptrT, 1+m);
       Kokkos::resize(s0.colindT, nnz);
       Kokkos::resize(s0.nzvalsT, nnz);
-      auto h_rowptrT = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrT);
-      auto h_colindT = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colindT);
-      auto h_nzvalsT = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvalsT);
+      auto h_rowptrT = Kokkos::create_mirror_view(host_memory_space(), s0.rowptrT);
+      auto h_colindT = Kokkos::create_mirror_view(host_memory_space(), s0.colindT);
+      auto h_nzvalsT = Kokkos::create_mirror_view(host_memory_space(), s0.nzvalsT);
       Kokkos::deep_copy(h_rowptrT, 0);
       for (ordinal_type i = 0; i < m; i++) {
         for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) {
           h_rowptrT(h_colind(k)+1) ++;
-	}
+        }
       }
       for (ordinal_type i = 0; i < m; i++) h_rowptrT(i+1) += h_rowptrT(i);
       for (ordinal_type i = 0; i < m; i++) {
         for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) {
           nnz = h_rowptrT(h_colind(k));
-	  h_colindT(nnz) = i;
-	  h_nzvalsT(nnz) = h_nzvals(k);
-	  h_rowptrT(h_colind(k)) ++;
-	}
+          h_colindT(nnz) = i;
+          h_nzvalsT(nnz) = h_nzvals(k);
+          h_rowptrT(h_colind(k)) ++;
+        }
       }
-      for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
-      h_rowptr(0) = 0;
+      for (ordinal_type i = m; i > 0 ; i--) h_rowptrT(i) = h_rowptrT(i-1);
+      h_rowptrT(0) = 0;
       Kokkos::deep_copy(s0.colindT, h_colindT);
       Kokkos::deep_copy(s0.nzvalsT, h_nzvalsT);
       Kokkos::deep_copy(s0.rowptrT, h_rowptrT);
+      /*{
+        char filename[200];
+        sprintf(filename,"Lt_%d.dat", lvl);
+        FILE *fp = fopen(filename,"w");
+        for (ordinal_type i = 0; i < m; i++) for (ordinal_type k = h_rowptrT(i); k < h_rowptrT(i+1); k++) fprintf(fp,"%d %d %e\n",i,h_colindT(k),h_nzvalsT(k));
+        fclose(fp);
+      }*/
 
       // workspace
       Kokkos::resize(s0.w, m, 1);
 
       s0.buffer_size_At = 0;
       s0.buffer_size_A = 0;
+      nnz = s0.colind.extent(0);
 #if defined(KOKKOS_ENABLE_CUDA)
       cusparseCreate(&s0.cusparseHandle);
       cudaDataType computeType;
@@ -1663,7 +1678,6 @@ public:
                                  "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
       }
       // create matrix
-      nnz = s0.colind.extent(0);
       cusparseCreateCsr(&s0.A_cusparse, m, m, nnz,
                         s0.rowptr.data(), s0.colind.data(), s0.nzvals.data(),
                         CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
@@ -1700,7 +1714,7 @@ public:
           (s0.rocsparseHandle, rocsparse_operation_none,
            &one, s0.descrA, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
-	   #if ROCM_VERSION >= 50400
+           #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
            &s0.buffer_size_A, nullptr);
@@ -1713,11 +1727,11 @@ public:
           (s0.rocsparseHandle, rocsparse_operation_none,
            &one, s0.descrA, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
-            rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_A, s0.buffer_A);
+           rocsparse_spmv_stage_preprocess,
+           &s0.buffer_size_A, (void*)s0.buffer_A.data());
       #endif
-      s0.spmv_explciit_transpose = false;
-      if (s0.spmv_explciit_transpose) {
+      s0.spmv_explcit_transpose = true;
+      if (s0.spmv_explcit_transpose) {
         // create matrix (transpose)
         rocsparse_create_csr_descr(&(s0.descrAt), m, m, nnz,
                                    s0.rowptrT.data(), s0.colindT.data(), s0.nzvalsT.data(),
@@ -1731,7 +1745,7 @@ public:
           (s0.rocsparseHandle, rocsparse_operation_none,
            &one, s0.descrAt, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
-	   #if ROCM_VERSION >= 50400
+           #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
            &s0.buffer_size_At, nullptr);
@@ -1745,7 +1759,7 @@ public:
            &one, s0.descrAt, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_At, s0.buffer_At);
+           &s0.buffer_size_At, (void*)s0.buffer_At.data());
         #endif
       } else {
         // workspace (transpose)
@@ -1757,7 +1771,7 @@ public:
           (s0.rocsparseHandle, rocsparse_operation_transpose,
            &one, s0.descrA, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
-	   #if ROCM_VERSION >= 50400
+           #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
            &s0.buffer_size_At, nullptr);
@@ -1771,7 +1785,7 @@ public:
            &one, s0.descrA, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_At, s0.buffer_At);
+           &s0.buffer_size_At, (void*)s0.buffer_At.data());
         #endif
       } 
 #endif
@@ -2073,7 +2087,7 @@ public:
     rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
 
     const value_type one(1);
-    if (s0.spmv_explciit_transpose) {
+    if (s0.spmv_explcit_transpose) {
       if (rocsparse_status_success !=
         #if ROCM_VERSION >= 50400
         rocsparse_spmv_ex
@@ -2084,7 +2098,7 @@ public:
            &one, s0.descrAt, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
-	   rocsparse_spmv_stage_compute,
+           rocsparse_spmv_stage_compute,
            #endif
            &s0.buffer_size_At, (void*)s0.buffer_At.data()))
       {
@@ -2101,7 +2115,7 @@ public:
            &one, s0.descrA, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
-	   rocsparse_spmv_stage_compute,
+           rocsparse_spmv_stage_compute,
            #endif
            &s0.buffer_size_At, (void*)s0.buffer_At.data()))
       {
@@ -2111,22 +2125,35 @@ public:
 #else
     const ordinal_type nrhs = t.extent(1);
 
-    auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
-    auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colind);
-    auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvals);
-
     auto h_w = Kokkos::create_mirror_view(host_memory_space(), s0.w);
     auto h_t = Kokkos::create_mirror_view(host_memory_space(),    t);
-    Kokkos::deep_copy(h_w, t);
+    Kokkos::deep_copy(h_w, s0.w);
     Kokkos::deep_copy(h_t, t);
-    for (ordinal_type i = 0; i < m ; i++) {
-      for (int k = h_rowptr(i); k < h_rowptr(i+1); k++) {
-        for (int j = 0; j < nrhs; j++) {
-          h_w(h_colind(k), j) += h_nzvals(k) * h_t(i, j);
+
+    if (s0.spmv_explcit_transpose) {
+      auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrT);
+      auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colindT);
+      auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvalsT);
+      for (ordinal_type i = 0; i < m ; i++) {
+        for (int k = h_rowptr(i); k < h_rowptr(i+1); k++) {
+          for (int j = 0; j < nrhs; j++) {
+            h_t(i, j) += h_nzvals(k) * h_w(h_colind(k), j);
+          }
+        }
+      }
+    } else {
+      auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
+      auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colind);
+      auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvals);
+      for (ordinal_type i = 0; i < m ; i++) {
+        for (int k = h_rowptr(i); k < h_rowptr(i+1); k++) {
+          for (int j = 0; j < nrhs; j++) {
+            h_t(h_colind(k), j) += h_nzvals(k) * h_w(i, j);
+          }
         }
       }
     }
-    Kokkos::deep_copy(t, h_w);
+    Kokkos::deep_copy(t, h_t);
 #endif
   }
 
@@ -2178,9 +2205,9 @@ public:
       solveCholeskyLowerOnDeviceVar1(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 2)
       solveCholeskyLowerOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
-    else if (variant == 3)
+    else if (variant == 3) {
       solveCholeskyLowerOnDeviceVar2_SpMV(pbeg, pend, h_buf_solve_ptr, t);
-    else {
+    } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyLowerOnDevice, algorithm variant is not supported");
     }
@@ -2338,7 +2365,7 @@ public:
            &one, s0.descrA, vecX, &one, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
-	   rocsparse_spmv_stage_compute,
+           rocsparse_spmv_stage_compute,
            #endif
            &s0.buffer_size_A, (void*)s0.buffer_A.data()))
     {
@@ -2352,16 +2379,16 @@ public:
 
     auto h_w = Kokkos::create_mirror_view(host_memory_space(), s0.w);
     auto h_t = Kokkos::create_mirror_view(host_memory_space(),    t);
-    Kokkos::deep_copy(h_w, t);
+    Kokkos::deep_copy(h_w, s0.w);
     Kokkos::deep_copy(h_t, t);
     for (ordinal_type i = 0; i < m ; i++) {
       for (int k = h_rowptr(i); k < h_rowptr(i+1); k++) {
         for (int j = 0; j < nrhs; j++) {
-          h_w(i, j) += h_nzvals(k) * h_t(h_colind(k), j);
+          h_t(i, j) += h_nzvals(k) * h_w(h_colind(k), j);
         }
       }
     }
-    Kokkos::deep_copy(t, h_w);
+    Kokkos::deep_copy(t, h_t);
 #endif
   }
 
@@ -2412,9 +2439,9 @@ public:
       solveCholeskyUpperOnDeviceVar1(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 2)
       solveCholeskyUpperOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
-    else if (variant == 3)
+    else if (variant == 3) {
       solveCholeskyUpperOnDeviceVar2_SpMV(pbeg, pend, h_buf_solve_ptr, t);
-    else {
+    } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyUpperOnDevice, algorithm variant is not supported");
     }
