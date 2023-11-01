@@ -2033,11 +2033,11 @@ public:
     // SpMV
     const value_type one(1);
     if (CUSPARSE_STATUS_SUCCESS !=
-        status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
-                          &one, s0.A_cusparse, 
-                                vecX,
-                          &one, vecY,
-                          computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data()))
+        cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
+                     &one, s0.A_cusparse, 
+                           vecX,
+                     &one, vecY,
+                     computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data()))
     {
        printf( " Failed cusparseSpMV for SpMV\n" );
     }
