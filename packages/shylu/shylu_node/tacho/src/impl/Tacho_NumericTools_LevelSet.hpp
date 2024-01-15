@@ -1603,9 +1603,10 @@ public:
       Kokkos::deep_copy(s0.rowptr, h_rowptr);
       /*{
         char filename[200];
-        sprintf(filename,"L_%d.dat", lvl);
+        sprintf(filename,"L_%d.mtx", lvl);
         FILE *fp = fopen(filename,"w");
-        for (ordinal_type i = 0; i < m; i++) for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) fprintf(fp,"%d %d %e\n",i,h_colind(k),h_nzvals(k));
+	fprintf(fp,"%d %d %d\n",(int)m,(int)m,(int)h_rowptr(m));
+        for (ordinal_type i = 0; i < m; i++) for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) fprintf(fp,"%d %d %e\n",1+i,1+h_colind(k),h_nzvals(k));
         fclose(fp);
       }*/
 
@@ -1641,7 +1642,7 @@ public:
         char filename[200];
         sprintf(filename,"Lt_%d.dat", lvl);
         FILE *fp = fopen(filename,"w");
-        for (ordinal_type i = 0; i < m; i++) for (ordinal_type k = h_rowptrT(i); k < h_rowptrT(i+1); k++) fprintf(fp,"%d %d %e\n",i,h_colindT(k),h_nzvalsT(k));
+        for (ordinal_type i = 0; i < m; i++) for (ordinal_type k = h_rowptrT(i); k < h_rowptrT(i+1); k++) fprintf(fp,"%d %d %e\n",1+i,1+h_colindT(k),h_nzvalsT(k));
         fclose(fp);
       }*/
 
