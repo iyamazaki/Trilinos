@@ -1521,13 +1521,27 @@ public:
 
       ordinal_type nnz = 0;
       ordinal_type nnz_with_zeros = 0;
+      #define TACHO_INSERT_DIAGONALS
+      #ifdef TACHO_INSERT_DIAGONALS
+      // NOTE: this needs extra vector-entry copy for the non-active rows at each level for solve (copy t to w, and w back to t)
+      //       but it seems faster on AMD 250X GPU, and not much performance impact on V100
+      ordinal_type row_id = 0;
+      #endif
       for (ordinal_type p = pbeg; p < pend; ++p) {
         const ordinal_type sid = _h_level_sids(p);
         if (_h_solve_mode(sid) == 0) {
           const auto &s = _h_supernodes(sid);
+          const ordinal_type offm = s.row_begin;
+          #ifdef TACHO_INSERT_DIAGONALS
+          // insert diagonals for the missing rows between previous and this block
+          for (ordinal_type i = row_id; i < offm; i++) {
+            nnz ++;
+            h_rowptr(1+i) ++;
+          }
+          row_id = offm+s.m;
+          #endif
           if (s.m > 0) {
             value_type *aptr = s.u_buf;
-            const ordinal_type offm = s.row_begin;
             UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
             auto h_AT = Kokkos::create_mirror_view_and_copy(host_memory_space(), AT);
             Kokkos::deep_copy(h_AT, AT);
@@ -1543,6 +1557,14 @@ public:
           nnz_with_zeros += s.m*s.n;
         }
       }
+      #ifdef TACHO_INSERT_DIAGONALS
+      // insert diagonals for the trailing rows
+      for (ordinal_type i = row_id; i < m; i++) {
+        nnz ++;
+        h_rowptr(1+i) ++;
+      }
+      //printf( "nnz = %d (%d->%d)\n",nnz,row_id,m );
+      #endif
       //std::cout << " nnz = " << nnz << " / " << nnz_with_zeros << "(" << double(nnz) / double(nnz_with_zeros) << std::endl << std::endl;
 
       // form csr
@@ -1554,14 +1576,28 @@ public:
 
       auto h_blk_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.sid_block_colidx);
       auto h_gid_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.gid_colidx);
+
+      #ifdef TACHO_INSERT_DIAGONALS
+      row_id = 0;
+      #endif
       for (ordinal_type p = pbeg; p < pend; ++p) {
         const ordinal_type sid = _h_level_sids(p);
         if (_h_solve_mode(sid) == 0) {
           const auto &s = _h_supernodes(sid);
+          const ordinal_type offm = s.row_begin;
+          const ordinal_type offn = s.gid_col_begin;
+          #ifdef TACHO_INSERT_DIAGONALS
+          // insert diagonals for the missing rows between previous and this block
+          for (ordinal_type i = row_id; i < offm; i++) {
+            nnz = h_rowptr(i);
+            h_colind(nnz) = i;
+            h_nzvals(nnz) = one;
+            h_rowptr(i) ++;
+          }
+          row_id = offm+s.m;
+          #endif
           if (s.m > 0) {
             value_type *aptr = s.u_buf;
-            const ordinal_type offm = s.row_begin;
-            const ordinal_type offn = s.gid_col_begin;
             UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
             auto h_AT = Kokkos::create_mirror_view_and_copy(host_memory_space(), AT);
             for (ordinal_type i = 0; i < s.m; i++) {
@@ -1572,9 +1608,11 @@ public:
                   nnz = h_rowptr(i+offm);
                   h_colind(nnz) = j+offm;
                   h_nzvals(nnz) = h_AT(i,j);
+                  #ifndef TACHO_INSERT_DIAGONALS
                   if (i+offm == h_colind(nnz)) {
                     h_nzvals(nnz) -= one;
                   }
+                  #endif
                   h_rowptr(i+offm) ++;
                 }
               }
@@ -1596,6 +1634,15 @@ public:
           }
         }
       }
+      #ifdef TACHO_INSERT_DIAGONALS
+      // insert diagonals for the trailing rows
+      for (ordinal_type i = row_id; i < m; i++) {
+        nnz = h_rowptr(i);
+        h_colind(nnz) = i;
+        h_nzvals(nnz) = one;
+        h_rowptr(i) ++;
+      }
+      #endif
       for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
       h_rowptr(0) = 0;
       Kokkos::deep_copy(s0.colind, h_colind);
@@ -2015,7 +2062,17 @@ public:
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
+    // copy t to w
     Kokkos::deep_copy(s0.w, t);
+    #ifdef TACHO_INSERT_DIAGONALS
+    // compute t = L^{-1}*w
+    const value_type alpha (1);
+    const value_type beta  (0);
+    #else
+    // compute t = t + L^{-1}*w
+    const value_type alpha (1);
+    const value_type beta  (1);
+    #endif
 #if defined(KOKKOS_ENABLE_CUDA)
     cudaDataType computeType;
     if (std::is_same<value_type, double>::value) {
@@ -2032,12 +2089,11 @@ public:
     cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
     cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
     // SpMV
-    const value_type one(1);
     if (CUSPARSE_STATUS_SUCCESS !=
         cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
-                     &one, s0.A_cusparse, 
-                           vecX,
-                     &one, vecY,
+                     &alpha, s0.A_cusparse, 
+                             vecX,
+                     &beta,  vecY,
                      computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data()))
     {
        printf( " Failed cusparseSpMV for SpMV\n" );
@@ -2051,7 +2107,6 @@ public:
     rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
     rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
 
-    const value_type one(1);
     if (s0.spmv_explcit_transpose) {
       if (rocsparse_status_success !=
         #if ROCM_VERSION >= 50400
@@ -2060,7 +2115,7 @@ public:
         rocsparse_spmv
         #endif
           (s0.rocsparseHandle, rocsparse_operation_none,
-           &one, s0.descrAt, vecX, &one, vecY,
+           &alpha, s0.descrAt, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
@@ -2077,7 +2132,7 @@ public:
         rocsparse_spmv
         #endif
           (s0.rocsparseHandle, rocsparse_operation_transpose,
-           &one, s0.descrA, vecX, &one, vecY,
+           &alpha, s0.descrA, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
@@ -2280,7 +2335,17 @@ public:
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
+    // copy t to w
     Kokkos::deep_copy(s0.w, t);
+    #ifdef TACHO_INSERT_DIAGONALS
+    // compute t = L^{-1}*w
+    const value_type alpha (1);
+    const value_type beta  (0);
+    #else
+    // compute t = t + L^{-1}*w
+    const value_type alpha (1);
+    const value_type beta  (1);
+    #endif
 #if defined(KOKKOS_ENABLE_CUDA)
     cudaDataType computeType;
     if (std::is_same<value_type, double>::value) {
@@ -2297,12 +2362,11 @@ public:
     cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
     cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
     // SpMV
-    const value_type one(1);
     cusparseStatus_t status;
     status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                          &one, s0.A_cusparse, 
-                                vecX,
-                          &one, vecY,
+                          &alpha, s0.A_cusparse, 
+                                  vecX,
+                          &beta,  vecY,
                           computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data());
     if (CUSPARSE_STATUS_SUCCESS != status) {
        printf( " Failed cusparseSpMV for SpMV\n" );
@@ -2316,7 +2380,6 @@ public:
     rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
     rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
 
-    const value_type one(1);
     if (rocsparse_status_success !=
       #if ROCM_VERSION >= 50400
       rocsparse_spmv_ex
@@ -2324,7 +2387,7 @@ public:
       rocsparse_spmv
       #endif
           (s0.rocsparseHandle, rocsparse_operation_none,
-           &one, s0.descrA, vecX, &one, vecY,
+           &alpha, s0.descrA, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
