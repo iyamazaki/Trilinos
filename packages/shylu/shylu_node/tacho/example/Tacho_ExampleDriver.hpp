@@ -243,7 +243,6 @@ template <typename value_type> int driver(int argc, char *argv[]) {
     std::cout << " Facto Time " << facto_time / (double)nfacts << std::endl;
     std::cout << " Solve Time " << solve_time / (double)nsolves << std::endl;
     std::cout << std::endl;
-
     solver.release();
   } catch (const std::exception &e) {
     std::cerr << "Error: exception is caught: \n" << e.what() << "\n";
