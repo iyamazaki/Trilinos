@@ -2056,19 +2056,21 @@ public:
     }
   }
 
-  inline void solveCholeskyLowerOnDeviceVar2_SpMV(const ordinal_type pbeg, const ordinal_type pend,
-                                                  const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
+  inline void solveCholeskyLowerOnDeviceVar2_SpMV(const ordinal_type lvl, const ordinal_type nlvls,
+                                                  const ordinal_type pbeg, const ordinal_type pend,
+                                                  const value_type_matrix &t) {
     const ordinal_type m = t.extent(0);
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
-    // copy t to w
-    Kokkos::deep_copy(s0.w, t);
     #ifdef TACHO_INSERT_DIAGONALS
     // compute t = L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (0);
+    auto w = _h_supernodes(_h_level_sids(0)).w;
     #else
+    // copy t to w
+    Kokkos::deep_copy(s0.w, t);
     // compute t = t + L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (1);
@@ -2086,8 +2088,13 @@ public:
 
     // create vectors
     cusparseDnVecDescr_t vecX, vecY;
+    #if defined(TACHO_INSERT_DIAGONALS)
+    cusparseCreateDnVec(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), computeType);
+    cusparseCreateDnVec(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), computeType);
+    #else
     cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
     cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
+    #endif
     // SpMV
     if (CUSPARSE_STATUS_SUCCESS !=
         cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
@@ -2104,8 +2111,13 @@ public:
       rocsparse_compute_type = rocsparse_datatype_f32_r;
     }
     rocsparse_dnvec_descr vecX, vecY;
+    #if defined(TACHO_INSERT_DIAGONALS)
+    rocsparse_create_dnvec_descr(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), computeType);
+    rocsparse_create_dnvec_descr(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), computeType);
+    #else
     rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
     rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
+    #endif
 
     if (s0.spmv_explcit_transpose) {
       if (rocsparse_status_success !=
@@ -2175,6 +2187,11 @@ public:
     }
     Kokkos::deep_copy(t, h_t);
 #endif
+    #if defined(TACHO_INSERT_DIAGONALS)
+    if (lvl == 0 && (nlvls-1)%2 == 0) {
+      Kokkos::deep_copy(t, w);
+    }
+    #endif
   }
 
   inline void solveCholeskyLowerOnDeviceVar2(const ordinal_type pbeg, const ordinal_type pend,
@@ -2217,7 +2234,8 @@ public:
     }
   }
 
-  inline void solveCholeskyLowerOnDevice(const ordinal_type pbeg, const ordinal_type pend,
+  inline void solveCholeskyLowerOnDevice(const ordinal_type lvl, const ordinal_type nlvls,
+                                         const ordinal_type pbeg, const ordinal_type pend,
                                          const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     if (variant == 0)
       solveCholeskyLowerOnDeviceVar0(pbeg, pend, h_buf_solve_ptr, t);
@@ -2226,7 +2244,7 @@ public:
     else if (variant == 2)
       solveCholeskyLowerOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 3) {
-      solveCholeskyLowerOnDeviceVar2_SpMV(pbeg, pend, h_buf_solve_ptr, t);
+      solveCholeskyLowerOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
     } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyLowerOnDevice, algorithm variant is not supported");
@@ -2329,19 +2347,22 @@ public:
     }
   }
 
-  inline void solveCholeskyUpperOnDeviceVar2_SpMV(const ordinal_type pbeg, const ordinal_type pend,
-                                                  const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
+  inline void solveCholeskyUpperOnDeviceVar2_SpMV(const ordinal_type lvl, const ordinal_type nlvls,
+                                                  const ordinal_type pbeg, const ordinal_type pend,
+                                                  const value_type_matrix &t) {
     const ordinal_type m = t.extent(0);
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
-    // copy t to w
-    Kokkos::deep_copy(s0.w, t);
     #ifdef TACHO_INSERT_DIAGONALS
+    // x = t & y = w (lvl = 0,2,4)
     // compute t = L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (0);
+    auto w = _h_supernodes(_h_level_sids(0)).w; // always use first workspace
     #else
+    // copy t to w
+    Kokkos::deep_copy(s0.w, t);
     // compute t = t + L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (1);
@@ -2359,8 +2380,13 @@ public:
 
     // create vectors
     cusparseDnVecDescr_t vecX, vecY;
+    #if defined(TACHO_INSERT_DIAGONALS)
+    cusparseCreateDnVec(&vecX, m, (void*)(lvl%2 == 0 ? t.data() : w.data()), computeType);
+    cusparseCreateDnVec(&vecY, m, (void*)(lvl%2 == 0 ? w.data() : t.data()), computeType);
+    #else
     cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
     cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
+    #endif
     // SpMV
     cusparseStatus_t status;
     status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -2377,8 +2403,13 @@ public:
       rocsparse_compute_type = rocsparse_datatype_f32_r;
     }
     rocsparse_dnvec_descr vecX, vecY;
+    #if defined(TACHO_INSERT_DIAGONALS)
+    rocsparse_create_dnvec_descr(&vecX, m, (void*)(lvl%2 == 0 ?    t.data() : s0.w.data()), rocsparse_compute_type);
+    rocsparse_create_dnvec_descr(&vecY, m, (void*)(lvl%2 == 0 ? s0.w.data() :    t.data()), rocsparse_compute_type);
+    #else
     rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
     rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
+    #endif
 
     if (rocsparse_status_success !=
       #if ROCM_VERSION >= 50400
@@ -2415,6 +2446,12 @@ public:
     }
     Kokkos::deep_copy(t, h_t);
 #endif
+    #if defined(TACHO_INSERT_DIAGONALS)
+    if (lvl == nlvls-1 && lvl%2 == 0) {
+      printf( " * w -> t\n" );
+      Kokkos::deep_copy(t, w);
+    }
+    #endif
   }
 
   inline void solveCholeskyUpperOnDeviceVar2(const ordinal_type pbeg, const ordinal_type pend,
@@ -2456,7 +2493,8 @@ public:
     }
   }
 
-  inline void solveCholeskyUpperOnDevice(const ordinal_type pbeg, const ordinal_type pend,
+  inline void solveCholeskyUpperOnDevice(const ordinal_type lvl, const ordinal_type nlvls,
+                                         const ordinal_type pbeg, const ordinal_type pend,
                                          const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     if (variant == 0)
       solveCholeskyUpperOnDeviceVar0(pbeg, pend, h_buf_solve_ptr, t);
@@ -2465,7 +2503,7 @@ public:
     else if (variant == 2)
       solveCholeskyUpperOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 3) {
-      solveCholeskyUpperOnDeviceVar2_SpMV(pbeg, pend, h_buf_solve_ptr, t);
+      solveCholeskyUpperOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
     } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyUpperOnDevice, algorithm variant is not supported");
@@ -3272,7 +3310,7 @@ public:
               ++stat_level.n_kernel_launching;
             }
             const auto h_buf_solve_ptr = Kokkos::subview(_h_buf_solve_nrhs_ptr, range_solve_buf_ptr);
-            solveCholeskyLowerOnDevice(pbeg, pend, h_buf_solve_ptr, t);
+            solveCholeskyLowerOnDevice(lvl, _team_serial_level_cut, pbeg, pend, h_buf_solve_ptr, t);
             Kokkos::fence();
 
             if (variant != 3) {
@@ -3330,11 +3368,11 @@ public:
             const auto policy_solve_with_work_property = policy_solve;
             const auto policy_update_with_work_property = policy_update;
 #endif
-            Kokkos::parallel_for("update upper", policy_update_with_work_property, functor);
-            ++stat_level.n_kernel_launching;
-            exec_space().fence();
-
             if (variant != 3) {
+              Kokkos::parallel_for("update upper", policy_update_with_work_property, functor);
+              ++stat_level.n_kernel_launching;
+              exec_space().fence();
+
               if (lvl < _device_level_cut) {
                 // do nothing
                 // Kokkos::parallel_for("solve upper", policy_solve, functor);
@@ -3344,7 +3382,7 @@ public:
               }
             }
             const auto h_buf_solve_ptr = Kokkos::subview(_h_buf_solve_nrhs_ptr, range_solve_buf_ptr);
-            solveCholeskyUpperOnDevice(pbeg, pend, h_buf_solve_ptr, t);
+            solveCholeskyUpperOnDevice(lvl, _team_serial_level_cut, pbeg, pend, h_buf_solve_ptr, t);
             Kokkos::fence();
           }
         }
