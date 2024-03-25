@@ -2068,6 +2068,10 @@ public:
     const value_type alpha (1);
     const value_type beta  (0);
     auto w = _h_supernodes(_h_level_sids(0)).w;
+    #if 0
+    // copy t to w
+    Kokkos::deep_copy(s0.w, t);
+    #endif
     #else
     // copy t to w
     Kokkos::deep_copy(s0.w, t);
@@ -2112,8 +2116,8 @@ public:
     }
     rocsparse_dnvec_descr vecX, vecY;
     #if defined(TACHO_INSERT_DIAGONALS)
-    rocsparse_create_dnvec_descr(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), computeType);
-    rocsparse_create_dnvec_descr(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), computeType);
+    rocsparse_create_dnvec_descr(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), rocsparse_compute_type);
+    rocsparse_create_dnvec_descr(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), rocsparse_compute_type);
     #else
     rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
     rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
@@ -2404,8 +2408,8 @@ public:
     }
     rocsparse_dnvec_descr vecX, vecY;
     #if defined(TACHO_INSERT_DIAGONALS)
-    rocsparse_create_dnvec_descr(&vecX, m, (void*)(lvl%2 == 0 ?    t.data() : s0.w.data()), rocsparse_compute_type);
-    rocsparse_create_dnvec_descr(&vecY, m, (void*)(lvl%2 == 0 ? s0.w.data() :    t.data()), rocsparse_compute_type);
+    rocsparse_create_dnvec_descr(&vecX, m, (void*)(lvl%2 == 0 ? t.data() : w.data()), rocsparse_compute_type);
+    rocsparse_create_dnvec_descr(&vecY, m, (void*)(lvl%2 == 0 ? w.data() : t.data()), rocsparse_compute_type);
     #else
     rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
     rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
@@ -2448,7 +2452,6 @@ public:
 #endif
     #if defined(TACHO_INSERT_DIAGONALS)
     if (lvl == nlvls-1 && lvl%2 == 0) {
-      printf( " * w -> t\n" );
       Kokkos::deep_copy(t, w);
     }
     #endif
@@ -3311,9 +3314,9 @@ public:
             }
             const auto h_buf_solve_ptr = Kokkos::subview(_h_buf_solve_nrhs_ptr, range_solve_buf_ptr);
             solveCholeskyLowerOnDevice(lvl, _team_serial_level_cut, pbeg, pend, h_buf_solve_ptr, t);
-            Kokkos::fence();
 
             if (variant != 3) {
+              Kokkos::fence();
               Kokkos::parallel_for("update lower", policy_update_with_work_property, functor);
               ++stat_level.n_kernel_launching;
               exec_space().fence();
@@ -3383,7 +3386,9 @@ public:
             }
             const auto h_buf_solve_ptr = Kokkos::subview(_h_buf_solve_nrhs_ptr, range_solve_buf_ptr);
             solveCholeskyUpperOnDevice(lvl, _team_serial_level_cut, pbeg, pend, h_buf_solve_ptr, t);
-            Kokkos::fence();
+            if (variant != 3) {
+              Kokkos::fence();
+            }
           }
         }
       } /// end of upper tri solve
