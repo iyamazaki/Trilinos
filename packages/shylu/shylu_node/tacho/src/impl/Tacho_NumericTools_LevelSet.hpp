@@ -1508,146 +1508,116 @@ public:
     const ordinal_type m = _m;
     const value_type one(1);
 
+#ifdef TACHO_TIMER_
+Kokkos::Timer Timer;
+Kokkos::Timer timer;
+double time1 = 0.0;
+double time2 = 0.0;
+double time3 = 0.0;
+double time4 = 0.0;
+double time5 = 0.0;
+Timer.reset();
+#endif
     for (ordinal_type lvl = 0; lvl < _team_serial_level_cut; ++lvl) {
       const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
 
       // the first supernode in this lvl (where the CRS matrix is stored)
       auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
-      // count nnz
+      // ========================
+      // count rowptr offsets
       Kokkos::resize(s0.rowptr, 1+m);
-      auto h_rowptr = Kokkos::create_mirror_view(host_memory_space(), s0.rowptr);
-      Kokkos::deep_copy(h_rowptr, 0);
-
-      ordinal_type nnz = 0;
-      ordinal_type nnz_with_zeros = 0;
       #define TACHO_INSERT_DIAGONALS
-      #ifdef TACHO_INSERT_DIAGONALS
       // NOTE: this needs extra vector-entry copy for the non-active rows at each level for solve (copy t to w, and w back to t)
       //       but it seems faster on AMD 250X GPU, and not much performance impact on V100
-      ordinal_type row_id = 0;
-      #endif
-      for (ordinal_type p = pbeg; p < pend; ++p) {
-        const ordinal_type sid = _h_level_sids(p);
-        if (_h_solve_mode(sid) == 0) {
-          const auto &s = _h_supernodes(sid);
-          const ordinal_type offm = s.row_begin;
-          #ifdef TACHO_INSERT_DIAGONALS
-          // insert diagonals for the missing rows between previous and this block
-          for (ordinal_type i = row_id; i < offm; i++) {
-            nnz ++;
-            h_rowptr(1+i) ++;
-          }
-          row_id = offm+s.m;
-          #endif
-          if (s.m > 0) {
-            value_type *aptr = s.u_buf;
-            UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
-            auto h_AT = Kokkos::create_mirror_view_and_copy(host_memory_space(), AT);
-            Kokkos::deep_copy(h_AT, AT);
-            for (ordinal_type i = 0; i < s.m; i++) {
-              for (ordinal_type j = 0; j < s.n; j++) {
-                if (abs(h_AT(i,j)) > 0.0) {
-                  nnz ++;
-                  h_rowptr(1+i+offm) ++;
-                }
-              }
-            }
-          }
-          nnz_with_zeros += s.m*s.n;
-        }
-      }
-      #ifdef TACHO_INSERT_DIAGONALS
-      // insert diagonals for the trailing rows
-      for (ordinal_type i = row_id; i < m; i++) {
-        nnz ++;
-        h_rowptr(1+i) ++;
-      }
-      //printf( "nnz = %d (%d->%d)\n",nnz,row_id,m );
-      #endif
-      //std::cout << " nnz = " << nnz << " / " << nnz_with_zeros << "(" << double(nnz) / double(nnz_with_zeros) << std::endl << std::endl;
+#ifdef TACHO_TIMER_
+timer.reset();
+#endif
+      #define TACHO_INSERT_DIAGONALS
+      // look for offsets
+      typedef TeamFunctor_FactorizeChol<supernode_info_type> functor_type;
 
-      // form csr
+      int rval = 0;
+      functor_type functor_rowptr(_info, _solve_mode, _level_sids, _buf, &rval);
+      functor_rowptr.setGlobalSize(m);
+      functor_rowptr.setRange(pbeg, pend);
+      functor_rowptr.setRowPtr(s0.rowptr);
+      {
+        using team_policy_type = Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Static>, exec_space,
+                                                    typename functor_type::ExtractPtrTag>;
+        team_policy_type policy_rowptr((pend-pbeg)+1, Kokkos::AUTO());
+
+        // >> launch functor to get rowptr 
+        //Kokkos::deep_copy(s0.rowptr, 0);
+        Kokkos::parallel_for("extract rowptr", policy_rowptr, functor_rowptr);
+        exec_space().fence();
+      }
+#ifdef TACHO_TIMER_
+time1 += timer.seconds();
+#endif
+
+      // ========================
+      // copy to cpu, for now
+#ifdef TACHO_TIMER_
+timer.reset();
+#endif
+      auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptr);
+      for (ordinal_type i = 0; i < m; i++) h_rowptr(i+1) += h_rowptr(i);
+      ordinal_type nnz = h_rowptr(m);
+      Kokkos::deep_copy(s0.rowptr, h_rowptr);
+      //printf( "\n lvl=%d (nnz = %d)\n",lvl,nnz); 
+      //for (ordinal_type i = m-5; i <= m; i++) printf(" > rowptr[%d] = %d\n",i,h_rowptr(i)); fflush(stdout);
+
+      // ========================
+      // allocate
       Kokkos::resize(s0.colind, nnz);
       Kokkos::resize(s0.nzvals, nnz);
-      for (ordinal_type i = 0; i < m; i++) h_rowptr(i+1) += h_rowptr(i);
-      auto h_colind = Kokkos::create_mirror_view(host_memory_space(), s0.colind);
-      auto h_nzvals = Kokkos::create_mirror_view(host_memory_space(), s0.nzvals);
+      //auto h_colind = Kokkos::create_mirror_view(host_memory_space(), s0.colind);
+      //auto h_nzvals = Kokkos::create_mirror_view(host_memory_space(), s0.nzvals);
+#ifdef TACHO_TIMER_
+time2 += timer.seconds();
+#endif
 
-      auto h_blk_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.sid_block_colidx);
-      auto h_gid_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.gid_colidx);
+      // ========================
+      // extract nonzero element
+#ifdef TACHO_TIMER_
+timer.reset();
+#endif
+      functor_rowptr.setCrsView(s0.colind, s0.nzvals);
+      {
+        using team_policy_type = Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Static>, exec_space,
+                                                    typename functor_type::ExtractValTag>;
+        team_policy_type policy_nzvals((pend-pbeg)+1, Kokkos::AUTO());
 
-      #ifdef TACHO_INSERT_DIAGONALS
-      row_id = 0;
-      #endif
-      for (ordinal_type p = pbeg; p < pend; ++p) {
-        const ordinal_type sid = _h_level_sids(p);
-        if (_h_solve_mode(sid) == 0) {
-          const auto &s = _h_supernodes(sid);
-          const ordinal_type offm = s.row_begin;
-          const ordinal_type offn = s.gid_col_begin;
-          #ifdef TACHO_INSERT_DIAGONALS
-          // insert diagonals for the missing rows between previous and this block
-          for (ordinal_type i = row_id; i < offm; i++) {
-            nnz = h_rowptr(i);
-            h_colind(nnz) = i;
-            h_nzvals(nnz) = one;
-            h_rowptr(i) ++;
-          }
-          row_id = offm+s.m;
-          #endif
-          if (s.m > 0) {
-            value_type *aptr = s.u_buf;
-            UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
-            auto h_AT = Kokkos::create_mirror_view_and_copy(host_memory_space(), AT);
-            for (ordinal_type i = 0; i < s.m; i++) {
-              // diagonal block
-              ordinal_type j;
-              for (j = i; j < s.m; j++) {
-                if (abs(h_AT(i,j)) > 0.0) {
-                  nnz = h_rowptr(i+offm);
-                  h_colind(nnz) = j+offm;
-                  h_nzvals(nnz) = h_AT(i,j);
-                  #ifndef TACHO_INSERT_DIAGONALS
-                  if (i+offm == h_colind(nnz)) {
-                    h_nzvals(nnz) -= one;
-                  }
-                  #endif
-                  h_rowptr(i+offm) ++;
-                }
-              }
-              // off-diagonal blocksa
-              j = s.m;
-              for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
-                for (ordinal_type k = h_blk_colidx(id).second; k < h_blk_colidx(id + 1).second; k++) {
-                  if (abs(h_AT(i,j)) > 0.0) {
-                    nnz = h_rowptr(i+offm);
-                    h_colind(nnz) = h_gid_colidx(k+offn);
-                    h_nzvals(nnz) = h_AT(i,j);
-                    h_rowptr(i+offm) ++;
-                  }
-                  j++;
-                }
-              }
-              //if (j != s.n) std::cout << " " << j << " vs " << s.n << std::endl << std::endl;
-            }
-          }
-        }
+        // >> launch functor to extract nonzero entries
+        Kokkos::parallel_for("extract nzvals", policy_nzvals, functor_rowptr);
+        exec_space().fence();
       }
-      #ifdef TACHO_INSERT_DIAGONALS
-      // insert diagonals for the trailing rows
-      for (ordinal_type i = row_id; i < m; i++) {
-        nnz = h_rowptr(i);
-        h_colind(nnz) = i;
-        h_nzvals(nnz) = one;
-        h_rowptr(i) ++;
-      }
-      #endif
+#ifdef TACHO_TIMER_
+time3 += timer.seconds();
+#endif
+
+      // ========================
+      // copy to CPU, for now
+#ifdef TACHO_TIMER_
+timer.reset();
+#endif
+      //Kokkos::deep_copy(h_colind, s0.colind);
+      //Kokkos::deep_copy(h_nzvals, s0.nzvals);
+      Kokkos::deep_copy(h_rowptr, s0.rowptr);
       for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
       h_rowptr(0) = 0;
-      Kokkos::deep_copy(s0.colind, h_colind);
-      Kokkos::deep_copy(s0.nzvals, h_nzvals);
       Kokkos::deep_copy(s0.rowptr, h_rowptr);
+#ifdef TACHO_TIMER_
+time4 += timer.seconds();
+#endif
+      /*{
+        printf("L=[\n");
+        for (ordinal_type i = 0; i < m; i++) {
+          for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) printf("%d %d %e\n",1+i,1+h_colind(k),h_nzvals(k));
+        }
+        printf("];\n");
+      }*/
       /*{
         char filename[200];
         sprintf(filename,"L_%d.mtx", lvl);
@@ -1657,34 +1627,50 @@ public:
         fclose(fp);
       }*/
 
+#ifdef TACHO_TIMER_
+timer.reset();
+#endif
+      // ========================
       // transpose
-      nnz = h_rowptr[m];
+      nnz = h_rowptr(m);
       Kokkos::resize(s0.rowptrT, 1+m);
       Kokkos::resize(s0.colindT, nnz);
       Kokkos::resize(s0.nzvalsT, nnz);
       auto h_rowptrT = Kokkos::create_mirror_view(host_memory_space(), s0.rowptrT);
-      auto h_colindT = Kokkos::create_mirror_view(host_memory_space(), s0.colindT);
-      auto h_nzvalsT = Kokkos::create_mirror_view(host_memory_space(), s0.nzvalsT);
-      Kokkos::deep_copy(h_rowptrT, 0);
-      for (ordinal_type i = 0; i < m; i++) {
-        for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) {
-          h_rowptrT(h_colind(k)+1) ++;
-        }
+      //auto h_colindT = Kokkos::create_mirror_view(host_memory_space(), s0.colindT);
+      //auto h_nzvalsT = Kokkos::create_mirror_view(host_memory_space(), s0.nzvalsT);
+
+      Kokkos::deep_copy(s0.rowptrT, 0);
+      functor_rowptr.setRowPtrT(s0.rowptrT);
+      {
+        using team_policy_type = Kokkos::RangePolicy<typename functor_type::TransPtrTag, exec_space>;
+        team_policy_type policy_nzvals(0, m);
+        // >> launch functor to extract nonzero entries
+        Kokkos::parallel_for("transpose pointer", policy_nzvals, functor_rowptr);
       }
+      // copy to CPU for now
+      Kokkos::deep_copy(h_rowptrT, s0.rowptrT);
       for (ordinal_type i = 0; i < m; i++) h_rowptrT(i+1) += h_rowptrT(i);
-      for (ordinal_type i = 0; i < m; i++) {
-        for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) {
-          nnz = h_rowptrT(h_colind(k));
-          h_colindT(nnz) = i;
-          h_nzvalsT(nnz) = h_nzvals(k);
-          h_rowptrT(h_colind(k)) ++;
-        }
+
+      functor_rowptr.setCrsViewT(s0.colindT, s0.nzvalsT);
+      {
+        using team_policy_type = Kokkos::RangePolicy<typename functor_type::TransMatTag, exec_space>;
+        team_policy_type policy_nzvals(0, m);
+        // >> launch functor to extract nonzero entries
+        Kokkos::parallel_for("transpose pointer", policy_nzvals, functor_rowptr);
       }
-      for (ordinal_type i = m; i > 0 ; i--) h_rowptrT(i) = h_rowptrT(i-1);
-      h_rowptrT(0) = 0;
-      Kokkos::deep_copy(s0.colindT, h_colindT);
-      Kokkos::deep_copy(s0.nzvalsT, h_nzvalsT);
-      Kokkos::deep_copy(s0.rowptrT, h_rowptrT);
+      //Kokkos::deep_copy(h_colindT, s0.colindT);
+      //Kokkos::deep_copy(h_nzvalsT, s0.nzvalsT);
+#ifdef TACHO_TIMER_
+time5 += timer.seconds();
+#endif
+      /*{
+        printf("Lt=[\n");
+        for (ordinal_type i = 0; i < m; i++) {
+          for (ordinal_type k = h_rowptrT(i); k < h_rowptrT(i+1); k++) printf("%d %d %e\n",1+i,1+h_colindT(k),h_nzvalsT(k));
+        }
+        printf("];\n");
+      }*/
       /*{
         char filename[200];
         sprintf(filename,"Lt_%d.dat", lvl);
@@ -1693,6 +1679,7 @@ public:
         fclose(fp);
       }*/
 
+      // ========================
       // workspace
       Kokkos::resize(s0.w, m, 1);
 
@@ -1823,6 +1810,10 @@ public:
       } 
 #endif
     }
+#ifdef TACHO_TIMER_
+double ttime = Timer.seconds();
+std::cout << std::endl << " Time : " << time1 << " " << time2 << " " << time3 << " " << time4 << " " << time5 << " -> " << ttime << std::endl << std::endl;
+#endif
   }
 
   ///
