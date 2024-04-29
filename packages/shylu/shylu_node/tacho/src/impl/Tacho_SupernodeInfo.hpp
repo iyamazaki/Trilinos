@@ -106,6 +106,9 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
   using ordinal_pair_type_array = Kokkos::View<ordinal_pair_type *, device_type>;
   using value_type_matrix = Kokkos::View<value_type **, Kokkos::LayoutLeft, device_type>;
 
+  using rowptr_view = Kokkos::View<int *, device_type>;
+  using colind_view = Kokkos::View<int *, device_type>;
+  using nzvals_view = Kokkos::View<value_type *, device_type>;
   using range_type = Kokkos::pair<ordinal_type, ordinal_type>;
 
   struct Supernode {
@@ -126,13 +129,13 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     bool do_not_apply_pivots;
 
     // for using SpMV
-    Kokkos::View<int *, device_type> rowptr;
-    Kokkos::View<int *, device_type> colind;
-    Kokkos::View<value_type *, device_type> nzvals;
+    rowptr_view rowptr;
+    colind_view colind;
+    nzvals_view nzvals;
 
-    Kokkos::View<int *, device_type> rowptrT;
-    Kokkos::View<int *, device_type> colindT;
-    Kokkos::View<value_type *, device_type> nzvalsT;
+    rowptr_view rowptrT;
+    colind_view colindT;
+    nzvals_view nzvalsT;
 
     Kokkos::View<value_type**, device_type> w;
 
