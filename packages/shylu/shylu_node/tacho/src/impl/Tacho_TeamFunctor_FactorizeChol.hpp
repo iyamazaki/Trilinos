@@ -28,6 +28,27 @@ Sandia National Laboratories, Albuquerque, NM, USA
 
 namespace Tacho {
 
+
+template <typename rowptr_view>
+struct rowptr_sum {
+  rowptr_view _rowptr;
+
+  rowptr_sum(rowptr_view rowptr)
+      : _rowptr(rowptr) {}
+
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const ordinal_type i, ordinal_type& update,
+                  const bool is_final) const {
+    const ordinal_type val_i = _rowptr(i);
+    update += val_i;
+    if (is_final) {
+      _rowptr(i) = update;
+    }
+  }
+
+  ordinal_type nnz() { return _rowptr(_rowptr.extent(0)); }
+};
+
 template <typename SupernodeInfoType> struct TeamFunctor_FactorizeChol {
 public:
   typedef Kokkos::pair<ordinal_type, ordinal_type> range_type;
@@ -497,6 +518,15 @@ public:
     }
   }
 
+  template <typename UpdateType>
+  KOKKOS_INLINE_FUNCTION void operator()(const ordinal_type i, UpdateType& update,
+                                         const bool is_final) const {
+    const ordinal_type val_i = _rowptr(i);
+    update += val_i;
+    if (is_final) {
+      _rowptr(i + 1) = update;
+    }
+  }
 
   // ---------------------------------------
   // Functors to transpose
