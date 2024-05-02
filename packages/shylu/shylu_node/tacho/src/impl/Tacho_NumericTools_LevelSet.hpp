@@ -56,6 +56,7 @@ Sandia National Laboratories, Albuquerque, NM, USA
 #include "Tacho_Trsv_OnDevice.hpp"
 
 #include "Tacho_SupernodeInfo.hpp"
+#include "Tacho_TeamFunctor_ExtractCRS.hpp"
 
 #include "Tacho_TeamFunctor_FactorizeChol.hpp"
 #include "Tacho_TeamFunctor_SolveLowerChol.hpp"
@@ -1551,19 +1552,18 @@ timer.reset();
       // ========================
       // count nnz / row
       Kokkos::resize(s0.rowptr, 1+m);
-      typedef TeamFunctor_FactorizeChol<supernode_info_type> functor_type;
+      typedef TeamFunctor_ExtractCrs<supernode_info_type> functor_type;
 
-      int rval = 0;
-      functor_type functor_rowptr(_info, _solve_mode, _level_sids, _buf, &rval);
-      functor_rowptr.setGlobalSize(m);
-      functor_rowptr.setRange(pbeg, pend);
-      functor_rowptr.setRowPtr(s0.rowptr);
+      functor_type extractor_crs(_info, _solve_mode, _level_sids);
+      extractor_crs.setGlobalSize(m);
+      extractor_crs.setRange(pbeg, pend);
+      extractor_crs.setRowPtr(s0.rowptr);
       {
         using team_policy_type = Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Static>, exec_space,
                                                     typename functor_type::ExtractPtrTag>;
         team_policy_type team_policy((pend-pbeg)+1, Kokkos::AUTO());
 
-        Kokkos::parallel_for("extract rowptr", team_policy, functor_rowptr);
+        Kokkos::parallel_for("extract rowptr", team_policy, extractor_crs);
         exec_space().fence();
       }
 #ifdef TACHO_TIMER_
@@ -1600,14 +1600,14 @@ timer.reset();
 
       // ========================
       // extract nonzero element
-      functor_rowptr.setCrsView(s0.colind, s0.nzvals);
+      extractor_crs.setCrsView(s0.colind, s0.nzvals);
       {
         using team_policy_type = Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Static>, exec_space,
                                                     typename functor_type::ExtractValTag>;
         team_policy_type team_policy((pend-pbeg)+1, Kokkos::AUTO());
 
         // >> launch functor to extract nonzero entries
-        Kokkos::parallel_for("extract nzvals", team_policy, functor_rowptr);
+        Kokkos::parallel_for("extract nzvals", team_policy, extractor_crs);
         exec_space().fence();
       }
 #ifdef TACHO_TIMER_
@@ -1644,12 +1644,12 @@ timer.reset();
       Kokkos::resize(s0.nzvalsT, nnz);
 
       Kokkos::deep_copy(s0.rowptrT, 0);
-      functor_rowptr.setRowPtrT(s0.rowptrT);
+      extractor_crs.setRowPtrT(s0.rowptrT);
       {
         // >> count nnz / row (transpose)
         using team_policy_type = Kokkos::RangePolicy<typename functor_type::TransPtrTag, exec_space>;
         team_policy_type team_policy(0, m);
-        Kokkos::parallel_for("transpose pointer", team_policy, functor_rowptr);
+        Kokkos::parallel_for("transpose pointer", team_policy, extractor_crs);
       }
       {
         // >> accumulate to generate rowptr (transpose)
@@ -1657,12 +1657,12 @@ timer.reset();
         Kokkos::parallel_scan("shiftRowptrT", range_policy_type(0, m+1), rowptr_sum(s0.rowptrT));
         exec_space().fence();
       }
-      functor_rowptr.setCrsViewT(s0.colindT, s0.nzvalsT);
+      extractor_crs.setCrsViewT(s0.colindT, s0.nzvalsT);
       {
         // >> copy into transpose-matrix
         using team_policy_type = Kokkos::RangePolicy<typename functor_type::TransMatTag, exec_space>;
         team_policy_type team_policy(0, m);
-        Kokkos::parallel_for("transpose pointer", team_policy, functor_rowptr);
+        Kokkos::parallel_for("transpose pointer", team_policy, extractor_crs);
       }
 #ifdef TACHO_TIMER_
 time5 += timer.seconds();

@@ -28,27 +28,6 @@ Sandia National Laboratories, Albuquerque, NM, USA
 
 namespace Tacho {
 
-
-template <typename rowptr_view>
-struct rowptr_sum {
-  rowptr_view _rowptr;
-
-  rowptr_sum(rowptr_view rowptr)
-      : _rowptr(rowptr) {}
-
-  KOKKOS_INLINE_FUNCTION
-  void operator()(const ordinal_type i, ordinal_type& update,
-                  const bool is_final) const {
-    const ordinal_type val_i = _rowptr(i);
-    update += val_i;
-    if (is_final) {
-      _rowptr(i) = update;
-    }
-  }
-
-  ordinal_type nnz() { return _rowptr(_rowptr.extent(0)); }
-};
-
 template <typename SupernodeInfoType> struct TeamFunctor_FactorizeChol {
 public:
   typedef Kokkos::pair<ordinal_type, ordinal_type> range_type;
@@ -76,15 +55,6 @@ private:
   size_type_array _buf_ptr;
   value_type_array _buf;
 
-  // in CRS format
-  rowptr_view _rowptr;
-  colind_view _colind;
-  nzvals_view _nzvals;
-  // in CRS format, transpose
-  rowptr_view _rowptrT;
-  colind_view _colindT;
-  nzvals_view _nzvalsT;
-
   int *_rval;
 
 public:
@@ -106,16 +76,6 @@ public:
   }
 
   inline void setBufferPtr(const size_type_array &buf_ptr) { _buf_ptr = buf_ptr; }
-  inline void setRowPtr(rowptr_view &rowptr) { _rowptr = rowptr; }
-  inline void setCrsView(colind_view &colind, nzvals_view &nzvals) {
-    _colind = colind;
-    _nzvals = nzvals;
-  }
-  inline void setRowPtrT(rowptr_view &rowptrT) { _rowptrT = rowptrT; }
-  inline void setCrsViewT(colind_view &colindT, nzvals_view &nzvalsT) {
-    _colindT = colindT;
-    _nzvalsT = nzvalsT;
-  }
 
   ///
   /// Main functions
@@ -382,170 +342,11 @@ public:
     return;
   }
 
-  struct ExtractPtrTag {};
-  struct ExtractValTag {};
-  struct TransPtrTag {};
-  struct TransMatTag {};
-
   template <int Var> struct FactorizeTag {
     enum { variant = Var };
   };
   struct UpdateTag {};
   struct DummyTag {};
-
-
-  // ---------------------------------------
-  // Functors to convert to CRS format
-  template <typename MemberType>
-  KOKKOS_INLINE_FUNCTION void operator()(const ExtractPtrTag &, const MemberType &member) const {
-    const ordinal_type id = member.league_rank();
-    const ordinal_type p = _pbeg + id;
-
-    const value_type zero(0);
-    const ordinal_type sid  = (p == _pend ? 0 : _level_sids(p));
-    const ordinal_type mode = (p == _pend ? 0 : _compute_mode(sid));
-    if (mode == 0) {
-      // extract this supernode
-      const auto &s  = _info.supernodes(sid);
-      const ordinal_type offm = (p == _pend ? _m : s.row_begin);
-      #define TACHO_INSERT_DIAGONALS
-      #ifdef TACHO_INSERT_DIAGONALS
-      // last row of previous supernode
-      ordinal_type row_id = 0;
-      if (p > _pbeg) {
-        const ordinal_type prev_sid = _level_sids(p-1);
-        const auto &prev_s = _info.supernodes(prev_sid);
-        row_id = prev_s.row_begin + prev_s.m;
-      }
-      // insert diagonals for the missing rows between previous and this block
-      //for (ordinal_type i = row_id; i < offm; i++) {
-      //  _rowptr(1+i) ++;
-      //}
-      Kokkos::parallel_for(Kokkos::TeamThreadRange(member, offm-row_id),
-                          [&](const int& i) { _rowptr(row_id+i+1) = 1; });
-      #endif
-      if (p < _pend) {
-        // extract this supernode
-        if (s.m > 0) {
-          value_type *aptr = s.u_buf;
-          UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
-          //for (ordinal_type i = 0; i < s.m; i++) { 
-          //  for (ordinal_type j = 0; j < s.n; j++) {
-          //    if (AT(i,j) != zero) {
-          //      _rowptr(1+i+offm) ++;
-          //    }
-          //  }
-          //}
-          Kokkos::parallel_for(Kokkos::TeamThreadRange(member, s.m),
-                               [&](const int& i) { 
-                                 _rowptr(1+i+offm) = 0;
-                                 for (ordinal_type j = 0; j < s.n; j++) {
-                                   if (AT(i,j) != zero) {
-                                     _rowptr(1+i+offm) ++;
-                                   }
-                                 }
-                               });
-        }
-      }
-    }
-  }
-
-
-  template <typename MemberType>
-  KOKKOS_INLINE_FUNCTION void operator()(const ExtractValTag &, const MemberType &member) const {
-    const ordinal_type id = member.league_rank();
-    const ordinal_type p = _pbeg + id;
-
-    const value_type one (1);
-    const value_type zero(0);
-    const ordinal_type sid  = (p == _pend ? 0 : _level_sids(p));
-    const ordinal_type mode = (p == _pend ? 0 : _compute_mode(sid));
-    if (mode == 0) {
-      // extract this supernode
-      const auto &s  = _info.supernodes(sid);
-      const ordinal_type offm = (p == _pend ? _m : s.row_begin);
-      const ordinal_type offn = (p == _pend ?  0 : s.gid_col_begin);
-      #ifdef TACHO_INSERT_DIAGONALS
-      // last row of previous supernode
-      ordinal_type row_id = 0;
-      if (p > _pbeg) {
-        const ordinal_type prev_sid = _level_sids(p-1);
-        const auto &prev_s = _info.supernodes(prev_sid);
-        row_id = prev_s.row_begin + prev_s.m;
-      }
-      // insert diagonals for the missing rows between previous and this block
-      Kokkos::parallel_for(Kokkos::TeamThreadRange(member, offm-row_id),
-                          [&](const int& i) {
-                            int nnz = _rowptr(row_id+i);
-                            _colind(nnz) = row_id+i;
-                            _nzvals(nnz) = one;
-                            _rowptr(row_id+i)++;
-                          });
-      #endif
-      if (p < _pend) {
-        // extract this supernode
-        if (s.m > 0) {
-          value_type *aptr = s.u_buf;
-          UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
-          Kokkos::parallel_for(Kokkos::TeamThreadRange(member, s.m),
-                               [&](const int& i) {
-                                 // diagonal block
-                                 ordinal_type j;
-                                 for (ordinal_type j = i; j < s.m; j++) {
-                                   if (AT(i,j) != zero) {
-                                     int nnz = _rowptr(i+offm);
-                                     _colind(nnz) = j+offm;
-                                     _nzvals(nnz) = AT(i,j);
-                                     _rowptr(i+offm) ++;
-                                   }
-                                 }
-                                 // off-diagonal blocksa
-                                 j = s.m;
-                                 for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
-                                   for (ordinal_type k = _info.sid_block_colidx(id).second; k < _info.sid_block_colidx(id + 1).second; k++) {
-                                     if (AT(i,j) != zero) {
-                                       int nnz = _rowptr(i+offm);
-                                       _colind(nnz) = _info.gid_colidx(k+offn);
-                                       _nzvals(nnz) = AT(i,j);
-                                       _rowptr(i+offm) ++;
-                                     }
-                                     j++;
-                                   }
-                                 }
-                               });
-        }
-      }
-    }
-  }
-
-  template <typename UpdateType>
-  KOKKOS_INLINE_FUNCTION void operator()(const ordinal_type i, UpdateType& update,
-                                         const bool is_final) const {
-    const ordinal_type val_i = _rowptr(i);
-    update += val_i;
-    if (is_final) {
-      _rowptr(i + 1) = update;
-    }
-  }
-
-  // ---------------------------------------
-  // Functors to transpose
-  KOKKOS_INLINE_FUNCTION void operator()(const TransPtrTag &, const int i) const {
-    // count offset rowptrT
-    for (ordinal_type k = _rowptr(i); k < _rowptr(i+1); k++) {
-      Kokkos::atomic_add(&(_rowptrT(_colind(k)+1)), 1);
-    }
-  }
-
-  KOKKOS_INLINE_FUNCTION void operator()(const TransMatTag &, const int i) const {
-    // count offset rowptrT
-    for (ordinal_type k = _rowptr(i); k < _rowptr(i+1); k++) {
-      int nnz = Kokkos::atomic_fetch_add(&(_rowptrT(_colind(k))), 1);
-      _colindT(nnz) = i;
-      _nzvalsT(nnz) = _nzvals(k);
-    }
-  }
-
 
   // ---------------------------------------
   // Functors to factorize
