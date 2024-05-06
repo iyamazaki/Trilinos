@@ -1888,7 +1888,7 @@ time5 += timer.seconds();
       #endif
       if (s0.spmv_explicit_transpose) {
         // create matrix (transpose)
-        nnz = s0.colinL.extent(0);
+        nnz = s0.colindL.extent(0);
         rocsparse_create_csr_descr(&(s0.descrAt), m, m, nnz,
                                    s0.rowptrL.data(), s0.colindL.data(), s0.nzvalsL.data(),
                                    rocsparse_indextype_i32, rocsparse_indextype_i32, rocsparse_index_base_zero, rocsparse_compute_type);
