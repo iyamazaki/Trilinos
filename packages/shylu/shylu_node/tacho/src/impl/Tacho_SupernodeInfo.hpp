@@ -129,17 +129,17 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     bool do_not_apply_pivots;
 
     // for using SpMV
-    rowptr_view rowptr;
-    colind_view colind;
-    nzvals_view nzvals;
+    rowptr_view rowptrU;
+    colind_view colindU;
+    nzvals_view nzvalsU;
 
-    rowptr_view rowptrT;
-    colind_view colindT;
-    nzvals_view nzvalsT;
+    rowptr_view rowptrL;
+    colind_view colindL;
+    nzvals_view nzvalsL;
 
     Kokkos::View<value_type**, device_type> w;
 
-    bool spmv_explcit_transpose;
+    bool spmv_explicit_transpose;
     size_t buffer_size_A;
     Kokkos::View<value_type *, device_type> buffer_A;
     size_t buffer_size_At;
@@ -147,6 +147,7 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
 #if defined(KOKKOS_ENABLE_CUDA)
     cusparseHandle_t cusparseHandle;
     cusparseSpMatDescr_t A_cusparse;
+    cusparseSpMatDescr_t L_cusparse;
 #elif defined(KOKKOS_ENABLE_HIP)
     rocsparse_handle rocsparseHandle;
     rocsparse_spmat_descr descrA;
