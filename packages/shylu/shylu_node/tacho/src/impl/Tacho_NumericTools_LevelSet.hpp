@@ -1776,8 +1776,16 @@ timer.reset();
           team_policy_type team_policy(0, m);
           Kokkos::parallel_for("transpose pointer", team_policy, extractor_crs);
         }
+        {
+          // ========================
+          // copy to CPU, for now
+          auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrL);
+          for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
+          h_rowptr(0) = 0;
+          Kokkos::deep_copy(s0.rowptrL, h_rowptr);
+        }
       }
-      /*{
+      /*if (lu || s0.spmv_explicit_transpose) {
         auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrL);
         auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colindL);
         auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvalsL);
