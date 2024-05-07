@@ -1538,6 +1538,7 @@ double time5 = 0.0;
 Timer.reset();
 #endif
     for (ordinal_type lvl = 0; lvl < _team_serial_level_cut; ++lvl) {
+      //printf( "\n\n == lvl = %d ==\n",lvl );
       const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
 
       // the first supernode in this lvl (where the CRS matrix is stored)
@@ -1648,36 +1649,56 @@ timer.reset();
       if (lu) {
         s0.spmv_explicit_transpose = true;
 
-        // get nnz per row
+        // get nnz per row (L is stored by column)
         Kokkos::resize(s0.rowptrL, 1+m);
         auto h_rowptr = Kokkos::create_mirror_view(host_memory_space(), s0.rowptrL);
         Kokkos::deep_copy(h_rowptr, 0);
 
         ordinal_type nnz = 0;
         ordinal_type row_id = 0;
+        auto h_blk_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.sid_block_colidx);
+        auto h_gid_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.gid_colidx);
         for (ordinal_type p = pbeg; p < pend; ++p) {
           const ordinal_type sid = _h_level_sids(p);
           if (_h_solve_mode(sid) == 0) {
             const auto &s = _h_supernodes(sid);
             const ordinal_type offm = s.row_begin;
-            for (int i = row_id; i < offm; i++) {
+            const ordinal_type offn = s.gid_col_begin;
+
+            // add missing diagonals
+            for (ordinal_type i = row_id; i < offm; i++) {
               h_rowptr(1+i) ++;
               nnz++;
             }
-            row_id = offm;
+            row_id = offm+s.m;
 
+            // count
             UnmanagedViewType<value_type_matrix> AL(s.l_buf, s.n, s.m);
             auto h_AL = Kokkos::create_mirror_view_and_copy(host_memory_space(), AL);
-            for (int i = 0; i < s.n; i++) {
-              for (int j = 0; j < s.m; j++) {
+            for (ordinal_type j = 0; j < s.m; j++) {
+              // diagonals
+              for (ordinal_type i = 0; i < s.m; i++) {
                 if (h_AL(i,j) != zero) {
                   h_rowptr(1+i+offm) ++;
                   nnz++;
                 }
               }
+              // off-diagonals
+              ordinal_type i = s.m;
+              for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
+                for (ordinal_type k = h_blk_colidx(id).second; k < h_blk_colidx(id + 1).second; k++) {
+                  if (h_AL(i, j) != zero) {
+                    ordinal_type gid_i = h_gid_colidx(k+offn);
+                    h_rowptr(1+gid_i) ++;
+                    nnz++;
+                  }
+                  i++;
+                }
+              }
             }
           }
         }
+        // remaining missing diagonals
         for (ordinal_type i = row_id; i < m; i++) {
           h_rowptr(1+i) ++;
           nnz ++;
@@ -1689,6 +1710,7 @@ timer.reset();
         Kokkos::resize(s0.nzvalsL, nnz);
         auto h_colind = Kokkos::create_mirror_view(host_memory_space(), s0.colindL);
         auto h_nzvals = Kokkos::create_mirror_view(host_memory_space(), s0.nzvalsL);
+
         // insert
         row_id = 0;
         for (ordinal_type p = pbeg; p < pend; ++p) {
@@ -1696,39 +1718,60 @@ timer.reset();
           if (_h_solve_mode(sid) == 0) {
             const auto &s = _h_supernodes(sid);
             const ordinal_type offm = s.row_begin;
-            for (int i = row_id; i < offm; i++) {
+            const ordinal_type offn = s.gid_col_begin;
+
+            // missing diagonals
+            for (ordinal_type i = row_id; i < offm; i++) {
               nnz = h_rowptr(i);
               h_colind(nnz) = i;
               h_nzvals(nnz) = one;
               h_rowptr(i) ++;
             }
-            row_id = offm;
+            row_id = offm+s.m;
 
             // permutation
             bool no_perm = s.do_not_apply_pivots;
-            ConstUnmanagedViewType<ordinal_type_array> perm(_piv.data() + 4 * offm + 2 * m, m);
+            ConstUnmanagedViewType<ordinal_type_array> perm(_piv.data() + 4 * offm + 2 * s.m, s.m);
             auto h_perm = Kokkos::create_mirror_view_and_copy(host_memory_space(), perm);
-            /*if (no_perm) printf( "\n ** No permutation **\n\n" );
-            else {
-              printf( "\n Permutation\n" );
+            #if 0
+            if (no_perm) {
+              printf( "\n ** No permutation **\n\n" );
+            } else {
+              printf( "\n Permutation(offm=%d, m=%d)\n",offm,s.m );
               printf("> perm=[\n" );
-              for (int i=0; i < (m < 10 ? m : 10); i++) if (i!=h_perm[i]) printf( "%d %d\n",i,h_perm[i] );
+              for (int i=0; i < s.m; i++) {
+                if (i!=h_perm[i]) printf( "%d : %d %d\n",i,h_perm[i], h_perm[i]+offm );
+              }
               printf("];\n\n");
-            }*/
+            }
+            #endif
             // insert non-zeros
             UnmanagedViewType<value_type_matrix> AL(s.l_buf, s.n, s.m);
             auto h_AL = Kokkos::create_mirror_view_and_copy(host_memory_space(), AL);
-            for (int i = 0; i < s.n; i++) {
-              for (int j = 0; j < s.m; j++) {
+            for (ordinal_type j = 0; j < s.m; j++) {
+              ordinal_type gid_j = (no_perm ? j+offm : h_perm(j)+offm);
+              // diagonals
+              for (ordinal_type i = 0; i < s.m; i++) {
                 if (h_AL(i,j) != zero) {
                   nnz = h_rowptr(i+offm);
-                  if (no_perm) {
-                    h_colind(nnz) = j+offm;
-                  } else {
-                    h_colind(nnz) = h_perm(j)+offm;
-                  }
+                  h_colind(nnz) = gid_j;
                   h_nzvals(nnz) = h_AL(i,j);
                   h_rowptr(i+offm) ++;
+                }
+              }
+              // off-diagonals
+              ordinal_type i = s.m;
+              for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
+                for (ordinal_type k = h_blk_colidx(id).second; k < h_blk_colidx(id + 1).second; k++) {
+                  if (h_AL(i, j) != zero) {
+                    ordinal_type gid_i = h_gid_colidx(k+offn);
+
+                    nnz = h_rowptr(gid_i);
+                    h_colind(nnz) = gid_j;
+                    h_nzvals(nnz) = h_AL(i,j);
+                    h_rowptr(gid_i) ++;
+                  }
+                  i++;
                 }
               }
             }
@@ -1743,6 +1786,7 @@ timer.reset();
         // shift back
         for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
         h_rowptr(0) = 0;
+
         // copy to GPU
         Kokkos::deep_copy(s0.rowptrL, h_rowptr);
         Kokkos::deep_copy(s0.colindL, h_colind);
@@ -1793,6 +1837,7 @@ timer.reset();
         char filename[200];
         sprintf(filename,"L_%d.mtx", lvl);
         FILE *fp = fopen(filename,"w");
+        fprintf(fp,"%d %d %d\n",h_rowptr.extent(0)-1,h_rowptr.extent(0)-1,h_colind.extent(0));
         for (ordinal_type i = 0; i < m; i++) {
           for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) {
             fprintf(fp,"%d %d %e\n",1+i,1+h_colind(k),h_nzvals(k));
@@ -2257,14 +2302,26 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
     #endif
     // SpMV
-    if (CUSPARSE_STATUS_SUCCESS !=
-        cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
-                     &alpha, s0.A_cusparse, 
-                             vecX,
-                     &beta,  vecY,
-                     computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data()))
-    {
-       printf( " Failed cusparseSpMV for SpMV\n" );
+    if (s0.spmv_explicit_transpose) {
+      if (CUSPARSE_STATUS_SUCCESS !=
+          cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                       &alpha, s0.L_cusparse, 
+                               vecX,
+                       &beta,  vecY,
+                       computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_At.data()))
+      {
+        printf( " Failed cusparseSpMV for SpMV\n" );
+      }
+    } else {
+      if (CUSPARSE_STATUS_SUCCESS !=
+          cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
+                       &alpha, s0.A_cusparse, 
+                               vecX,
+                       &beta,  vecY,
+                       computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data()))
+      {
+        printf( " Failed cusparseSpMV for SpMV\n" );
+      }
     }
 #elif defined(KOKKOS_ENABLE_HIP)
     rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
@@ -2349,6 +2406,27 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     Kokkos::deep_copy(t, h_t);
 #endif
     #if defined(TACHO_INSERT_DIAGONALS)
+/*if ((nlvls-1-lvl)%2 == 0) {
+  auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
+  printf("w=[\n");
+  for (int i = 0; i < h_t.extent(0); i++) printf( "%d %e\n",i,h_t(i,0));
+  printf("];\n");
+
+  auto h_w = Kokkos::create_mirror_view_and_copy(host_memory_space(), w);
+  printf("t=[\n");
+  for (int i = 0; i < h_w.extent(0); i++) printf( "%d %e\n",i,h_w(i,0));
+  printf("];\n");
+} else {
+  auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), w);
+  printf("w=[\n");
+  for (int i = 0; i < h_t.extent(0); i++) printf( "%d %e\n",i,h_t(i,0));
+  printf("];\n");
+
+  auto h_w = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
+  printf("t=[\n");
+  for (int i = 0; i < h_w.extent(0); i++) printf( "%d %e\n",i,h_w(i,0));
+  printf("];\n");
+}*/
     if (lvl == 0 && (nlvls-1)%2 == 0) {
       Kokkos::deep_copy(t, w);
     }
@@ -3186,16 +3264,26 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
               UnmanagedViewType<value_type_matrix> bT(bptr, m, nrhs);
               ConstUnmanagedViewType<ordinal_type_array> perm(_piv.data() + 4 * offm + 2 * m, m);
               _status = Copy<Algo::OnDevice>::invoke(exec_instance, bT, tT);
+//if (lvl == 18) 
 /*{
   auto h_perm = Kokkos::create_mirror_view_and_copy(host_memory_space(), perm);
   printf(" * perm=[\n" );
-  for (int i=0; i < (m < 10 ? m : 10); i++) if (i!=h_perm[i]) printf( "%d %d\n",i,h_perm[i] );
+  for (int i=0; i < m; i++) if (i!=h_perm[i]) printf( "%d %d\n",i,h_perm[i] );
   printf("];\n");
 }*/
 
               _status =
                   ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, bT, perm, tT);
             }
+/*if (lvl == 18) {
+  auto h_AL = Kokkos::create_mirror_view_and_copy(host_memory_space(), AL);
+  printf(" *AL(%dx%d)=[\n",n,m );
+  for (int i=0; i < n; i++) {
+    for (int j=0; j < m; j++)  printf( "%e ",h_AL(i,j) );
+    printf("\n");
+  }
+  printf("];\n");
+}*/
             _status = Gemv<Trans::NoTranspose, Algo::OnDevice>::invoke(handle_blas, one, AL, tT, zero, b);
             checkDeviceBlasStatus("gemv");
           }
@@ -3204,7 +3292,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     }
   }
 
-  inline void solveLU_LowerOnDevice(const ordinal_type lvl_thresh, const ordinal_type lvl, const ordinal_type nlvls,
+  inline void solveLU_LowerOnDevice(const ordinal_type lvl, const ordinal_type nlvls,
                                     const ordinal_type pbeg, const ordinal_type pend,
                                     const size_type_array_host &h_buf_solve_ptr, const value_type_matrix &t) {
     if (variant == 0)
@@ -3214,13 +3302,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     else if (variant == 2)
       solveLU_LowerOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 3) {
-      //if (lvl < lvl_thresh) {
-      //  printf( " > SpMV\n" );
-      //  solveCholeskyLowerOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
-      //} else {
-      //  printf( " > Batch\n" );
-        solveLU_LowerOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
-      //}
+      solveCholeskyLowerOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
     } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveLU_LowerOnDevice, algorithm variant is not supported");
@@ -4179,8 +4261,14 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
         {
 //printf(" ***** Lsolve ******\n" );
           for (ordinal_type lvl = (_team_serial_level_cut - 1); lvl >= 0; --lvl) {
-//printf( "\n == lvl = %d ==\n",lvl );
             const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1), pcnt = pend - pbeg;
+/*printf( "\n == lvl = %d (%d:%d) ==\n",lvl,pbeg,pend );
+if (variant != 3) {
+  auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
+  printf( "w=[\n");
+  for (int i=0; i<h_t.extent(0); i++) printf("%d %e\n",i,h_t(i,0));
+  printf("];\n");
+}*/
 
             const range_type range_solve_buf_ptr(_h_buf_level_ptr(lvl), _h_buf_level_ptr(lvl + 1));
 
@@ -4204,10 +4292,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
             const auto policy_solve_with_work_property = policy_solve;
             const auto policy_update_with_work_property = policy_update;
 #endif
-            ordinal_type lvl_thresh = 1;
-            //if (variant != 3) 
-            { //|| lvl >= lvl_thresh) {
-              //printf( " Update\n" );
+            if (variant != 3) {
               if (lvl < _device_level_cut) {
                 // do nothing
                 // Kokkos::parallel_for("solve lower", policy_solve, functor);
@@ -4217,16 +4302,20 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
               }
             }
             const auto h_buf_solve_ptr = Kokkos::subview(_h_buf_solve_nrhs_ptr, range_solve_buf_ptr);
-            solveLU_LowerOnDevice(lvl_thresh, lvl, _team_serial_level_cut, pbeg, pend, h_buf_solve_ptr, t);
-            //if (variant != 3) {// || lvl >= lvl_thresh) 
-            {
-              //printf( " Fence\n" );
+            solveLU_LowerOnDevice(lvl, _team_serial_level_cut, pbeg, pend, h_buf_solve_ptr, t);
+            if (variant != 3) {
               Kokkos::fence();
 
               Kokkos::parallel_for("update lower", policy_update_with_work_property, functor);
               ++stat_level.n_kernel_launching;
               exec_space().fence();
             }
+/*if (variant != 3) {
+  auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
+  printf( "t=[\n");
+  for (int i=0; i<h_t.extent(0); i++) printf("%d %e\n",i,h_t(i,0));
+  printf("];\n");
+}*/
           }
         }
         //double time_l = timer_l.seconds();

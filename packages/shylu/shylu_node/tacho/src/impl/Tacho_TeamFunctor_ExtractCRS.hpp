@@ -145,6 +145,7 @@ public:
       #endif
       if (p < _pend) {
         // extract this supernode
+        //  stored by row, but checking for nonzereo (instead of just taking all s.n nonzereos)
         if (s.m > 0) {
           value_type *aptr = s.u_buf;
           UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
