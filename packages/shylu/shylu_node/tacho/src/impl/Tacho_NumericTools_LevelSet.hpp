@@ -1994,12 +1994,13 @@ time5 += timer.seconds();
       }
       #if ROCM_VERSION >= 50400
       // preprocess
+      buffer_size_U = buffer_U.extent(0);
       rocsparse_spmv_ex
           (s0.rocsparseHandle, rocsparse_operation_none,
            &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            rocsparse_spmv_stage_preprocess,
-           &(buffer_U.extent(0)), (void*)buffer_U.data());
+           &buffer_size_U, (void*)buffer_U.data());
       #endif
       if (s0.spmv_explicit_transpose) {
         // create matrix (transpose)
@@ -2026,12 +2027,13 @@ time5 += timer.seconds();
         }
         #if ROCM_VERSION >= 50400
         // preprocess
+        buffer_size_L = buffer_L.extent(0);
         rocsparse_spmv_ex
           (s0.rocsparseHandle, rocsparse_operation_none,
            &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
-           &(buffer_L.extent(0)), (void*)buffer_L.data());
+           &buffer_size_L, (void*)buffer_L.data());
         #endif
       } else {
         // create matrix, transpose (L_cusparse stores the same ptrs as descrU, but optimized for trans)
@@ -2058,12 +2060,13 @@ time5 += timer.seconds();
         }
         #if ROCM_VERSION >= 50400
         // preprocess
+        buffer_size_L = buffer_L.extent(0);
         rocsparse_spmv_ex
           (s0.rocsparseHandle, rocsparse_operation_transpose,
            &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
-           &(buffer_L.extent(0)), (void*)buffer_L.data());
+           &buffer_size_L, (void*)buffer_L.data());
         #endif
       } 
 #endif
@@ -2447,23 +2450,26 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       auto vecX = ((nlvls-1-lvl)%2 == 0 ? matT : matW);
       auto vecY = ((nlvls-1-lvl)%2 == 0 ? matW : matT);
       if (s0.spmv_explicit_transpose) {
+        size_t buffer_size_L = buffer_L.extent(0);
         status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_none, rocsparse_operation_none,
                                 &alpha, s0.descrL, vecX, &beta, vecY,
                                 rocsparse_compute_type, rocsparse_spmm_alg_default,
                                 rocsparse_spmm_stage_compute,
-                                &(buffer_L.extent(0)), (void*)buffer_L.data());
+                                &buffer_size_L, (void*)buffer_L.data());
       } else {
+        size_t buffer_size_L = buffer_L.extent(0);
         status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_transpose, rocsparse_operation_none,
                                 &alpha, s0.descrL, vecX, &beta, vecY, // dscrL stores the same ptrs as descrU, but optimized for trans
                                 rocsparse_compute_type, rocsparse_spmm_alg_default,
                                 rocsparse_spmm_stage_compute,
-                                &(buffer_L.extent(0)), (void*)buffer_L.data());
+                                &buffer_size_L, (void*)buffer_L.data());
       }
     } else {
       if (lvl == nlvls-1) {
         // start : create DnVec for T
         rocsparse_create_dnvec_descr(&vecT, m, (void*)(t.data()), rocsparse_compute_type);
       }
+      size_t buffer_size_L = buffer_L.extent(0);
       auto vecX = ((nlvls-1-lvl)%2 == 0 ? vecT : vecW);
       auto vecY = ((nlvls-1-lvl)%2 == 0 ? vecW : vecT);
       if (s0.spmv_explicit_transpose) {
@@ -2479,7 +2485,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &(buffer_L.extent(0)), (void*)buffer_L.data());
+           &buffer_size_L, (void*)buffer_L.data());
       } else {
         status =
           #if ROCM_VERSION >= 50400
@@ -2493,7 +2499,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &(buffer_L.extent(0)), (void*)buffer_L.data());
+           &buffer_size_L, (void*)buffer_L.data());
       }
     }
     if (rocsparse_status_success != status) {
@@ -2791,6 +2797,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
     }
+    size_t buffer_size_U = buffer_U.extent(0);
     rocsparse_status status;
     if (nrhs > 1) {
       if (lvl == 0) {
@@ -2803,7 +2810,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                               &alpha, s0.descrU, vecX, &beta, vecY,
                               rocsparse_compute_type, rocsparse_spmm_alg_default,
                               rocsparse_spmm_stage_compute,
-                              &(buffer_U.extent(0)), (void*)buffer_U.data());
+                              &buffer_size_U, (void*)buffer_U.data());
     } else {
       if (lvl == 0) {
         // start : create DnVec for T
@@ -2823,7 +2830,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &(buffer_U.extent(0)), (void*)buffer_U.data());
+           &buffer_size_U, (void*)buffer_U.data());
     }
     if (rocsparse_status_success != status) {
       printf( " Failed rocsparse_spmv for U\n" );
