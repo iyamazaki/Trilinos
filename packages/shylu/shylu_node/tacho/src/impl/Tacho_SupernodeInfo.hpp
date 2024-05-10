@@ -140,18 +140,18 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     Kokkos::View<value_type**, device_type> w;
 
     bool spmv_explicit_transpose;
-    size_t buffer_size_A;
-    Kokkos::View<value_type *, device_type> buffer_A;
-    size_t buffer_size_At;
-    Kokkos::View<value_type *, device_type> buffer_At;
+    size_t buffer_size_U;
+    Kokkos::View<value_type *, device_type> buffer_U;
+    size_t buffer_size_L;
+    Kokkos::View<value_type *, device_type> buffer_L;
 #if defined(KOKKOS_ENABLE_CUDA)
     cusparseHandle_t cusparseHandle;
-    cusparseSpMatDescr_t A_cusparse;
+    cusparseSpMatDescr_t U_cusparse;
     cusparseSpMatDescr_t L_cusparse;
 #elif defined(KOKKOS_ENABLE_HIP)
     rocsparse_handle rocsparseHandle;
-    rocsparse_spmat_descr descrA;
-    rocsparse_spmat_descr descrAt;
+    rocsparse_spmat_descr descrU;
+    rocsparse_spmat_descr descrL;
 #endif
 
     KOKKOS_INLINE_FUNCTION

@@ -1521,6 +1521,7 @@ public:
   }
 
   inline void extractCRS(bool lu) {
+    const ordinal_type nrhs = 1;
     const ordinal_type m = _m;
     const value_type one(1);
     const value_type zero(0);
@@ -1851,10 +1852,10 @@ time5 += timer.seconds();
 
       // ========================
       // workspace
-      Kokkos::resize(s0.w, m, 1);
+      Kokkos::resize(s0.w, m, nrhs);
 
-      s0.buffer_size_At = 0;
-      s0.buffer_size_A = 0;
+      s0.buffer_size_L = 0;
+      s0.buffer_size_U = 0;
       nnz = s0.colindU.extent(0);
       value_type alpha = one;
       #ifdef TACHO_INSERT_DIAGONALS
@@ -1874,15 +1875,26 @@ time5 += timer.seconds();
                                  "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
       }
       // create matrix
-      cusparseCreateCsr(&s0.A_cusparse, m, m, nnz,
+      cusparseCreateCsr(&s0.U_cusparse, m, m, nnz,
                         s0.rowptrU.data(), s0.colindU.data(), s0.nzvalsU.data(),
                         CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                         CUSPARSE_INDEX_BASE_ZERO, computeType);
+//#define USE_SPMM
+#ifdef USE_SPMM
+      cusparseDnMatDescr_t vecX, vecY;
+      const ordinal_type ldx = s0.w.stride(1);
+      cusparseCreateDnMat(&vecX, m, nrhs, ldx, s0.w.data(), computeType, CUSPARSE_ORDER_COL);
+      cusparseCreateDnMat(&vecY, m, nrhs, ldx, s0.w.data(), computeType, CUSPARSE_ORDER_COL);
+      cusparseSpMM_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              &alpha, s0.U_cusparse, vecX, &beta, vecY,
+                              computeType, CUSPARSE_MM_ALG_DEFAULT, &s0.buffer_size_U);
+#else
       cusparseDnVecDescr_t vecX, vecY;
       cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
       cusparseCreateDnVec(&vecY, m, s0.w.data(), computeType);
-      cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, s0.A_cusparse, vecX, &beta, vecY,
-                              computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_A);
+      cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, s0.U_cusparse, vecX, &beta, vecY,
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_U);
+#endif
       if (s0.spmv_explicit_transpose) {
         // create matrix (transpose or L)
         nnz = s0.colindL.extent(0);
@@ -1891,15 +1903,34 @@ time5 += timer.seconds();
                           CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                           CUSPARSE_INDEX_BASE_ZERO, computeType);
         // workspace size
-        cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &alpha, s0.L_cusparse, vecX, &beta, vecY,
-                                computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_At);
+#ifdef USE_SPMM
+        cusparseSpMM_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                &alpha, s0.L_cusparse, vecX, &beta, vecY,
+                                computeType, CUSPARSE_MM_ALG_DEFAULT, &s0.buffer_size_L);
+#else
+        cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, s0.L_cusparse, vecX, &beta, vecY,
+                                computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_L);
+#endif
       } else {
         // workspace size for transpose SpMV
-        cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &alpha, s0.A_cusparse, vecX, &beta, vecY,
-                                computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_At);
+#ifdef USE_SPMM
+        cusparseSpMM_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                &alpha, s0.U_cusparse, vecX, &beta, vecY,
+                                computeType, CUSPARSE_MM_ALG_DEFAULT, &s0.buffer_size_L);
+#else
+        cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &alpha, s0.U_cusparse, vecX, &beta, vecY,
+                                computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_L);
+#endif
       }
-      Kokkos::resize(s0.buffer_A,  s0.buffer_size_A);
-      Kokkos::resize(s0.buffer_At, s0.buffer_size_At);
+#ifdef USE_SPMM
+      cusparseDestroyDnMat(vecX);
+      cusparseDestroyDnMat(vecY);
+#else
+      cusparseDestroyDnVec(vecX);
+      cusparseDestroyDnVec(vecY);
+#endif
+      Kokkos::resize(s0.buffer_U, s0.buffer_size_U);
+      Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
 #elif defined(KOKKOS_ENABLE_HIP)
       rocsparse_create_handle(&s0.rocsparseHandle);
       rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
@@ -1908,7 +1939,7 @@ time5 += timer.seconds();
       }
 
       // create matrix
-      rocsparse_create_csr_descr(&(s0.descrA), m, m, nnz,
+      rocsparse_create_csr_descr(&(s0.descrU), m, m, nnz,
                                  s0.rowptrU.data(), s0.colindU.data(), s0.nzvalsU.data(),
                                  rocsparse_indextype_i32, rocsparse_indextype_i32, rocsparse_index_base_zero, rocsparse_compute_type);
       rocsparse_dnvec_descr vecX, vecY;
@@ -1921,28 +1952,28 @@ time5 += timer.seconds();
       rocsparse_spmv
       #endif
           (s0.rocsparseHandle, rocsparse_operation_none,
-           &alpha, s0.descrA, vecX, &beta, vecY,
+           &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
-           &s0.buffer_size_A, nullptr);
-      if (s0.buffer_size_A > 0) {
-        Kokkos::resize(s0.buffer_A, s0.buffer_size_A);
+           &s0.buffer_size_U, nullptr);
+      if (s0.buffer_size_U > 0) {
+        Kokkos::resize(s0.buffer_U, s0.buffer_size_U);
       }
       #if ROCM_VERSION >= 50400
       // preprocess
       rocsparse_spmv_ex
           (s0.rocsparseHandle, rocsparse_operation_none,
-           &alpha, s0.descrA, vecX, &beta, vecY,
+           &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_A, (void*)s0.buffer_A.data());
+           &s0.buffer_size_U, (void*)s0.buffer_U.data());
       #endif
       if (s0.spmv_explicit_transpose) {
         // create matrix (transpose)
         nnz = s0.colindL.extent(0);
-        rocsparse_create_csr_descr(&(s0.descrAt), m, m, nnz,
+        rocsparse_create_csr_descr(&(s0.descrL), m, m, nnz,
                                    s0.rowptrL.data(), s0.colindL.data(), s0.nzvalsL.data(),
                                    rocsparse_indextype_i32, rocsparse_indextype_i32, rocsparse_index_base_zero, rocsparse_compute_type);
         // workspace
@@ -1952,23 +1983,23 @@ time5 += timer.seconds();
         rocsparse_spmv
         #endif
           (s0.rocsparseHandle, rocsparse_operation_none,
-           &alpha, s0.descrAt, vecX, &beta, vecY,
+           &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
-           &s0.buffer_size_At, nullptr);
-        if (s0.buffer_size_At > 0) {
-          Kokkos::resize(s0.buffer_At, s0.buffer_size_At);
+           &s0.buffer_size_L, nullptr);
+        if (s0.buffer_size_L > 0) {
+          Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
         }
         #if ROCM_VERSION >= 50400
         // preprocess
         rocsparse_spmv_ex
           (s0.rocsparseHandle, rocsparse_operation_none,
-           &alpha, s0.descrAt, vecX, &beta, vecY,
+           &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_At, (void*)s0.buffer_At.data());
+           &s0.buffer_size_L, (void*)s0.buffer_L.data());
         #endif
       } else {
         // workspace (transpose)
@@ -1978,23 +2009,23 @@ time5 += timer.seconds();
         rocsparse_spmv
         #endif
           (s0.rocsparseHandle, rocsparse_operation_transpose,
-           &alpha, s0.descrA, vecX, &beta, vecY,
+           &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
-           &s0.buffer_size_At, nullptr);
-        if (s0.buffer_size_At > 0) {
-          Kokkos::resize(s0.buffer_At, s0.buffer_size_At);
+           &s0.buffer_size_L, nullptr);
+        if (s0.buffer_size_L > 0) {
+          Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
         }
         #if ROCM_VERSION >= 50400
         // preprocess
         rocsparse_spmv_ex
           (s0.rocsparseHandle, rocsparse_operation_transpose,
-           &alpha, s0.descrA, vecX, &beta, vecY,
+           &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_At, (void*)s0.buffer_At.data());
+           &s0.buffer_size_L, (void*)s0.buffer_L.data());
         #endif
       } 
 #endif
@@ -2258,10 +2289,11 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     }
   }
 
-  inline void solveCholeskyLowerOnDeviceVar2_SpMV(const ordinal_type lvl, const ordinal_type nlvls,
-                                                  const ordinal_type pbeg, const ordinal_type pend,
-                                                  const value_type_matrix &t) {
+  inline void solveGenericLowerOnDeviceVar2_SpMV(const ordinal_type lvl, const ordinal_type nlvls,
+                                                 const ordinal_type pbeg, const ordinal_type pend,
+                                                 const value_type_matrix &t) {
     const ordinal_type m = t.extent(0);
+    const ordinal_type nrhs = t.extent(1);
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
@@ -2269,17 +2301,12 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     // compute t = L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (0);
+    if (_h_supernodes(_h_level_sids(0)).w.extent(1) < nrhs) {
+      Kokkos::resize(_h_supernodes(_h_level_sids(0)).w, m, nrhs);
+    }
     auto w = _h_supernodes(_h_level_sids(0)).w;
-    #if 0
-    // copy t to w
-    Kokkos::deep_copy(s0.w, t);
-    #endif
     #else
-    // copy t to w
-    Kokkos::deep_copy(s0.w, t);
-    // compute t = t + L^{-1}*w
-    const value_type alpha (1);
-    const value_type beta  (1);
+    exit(0);
     #endif
 #if defined(KOKKOS_ENABLE_CUDA)
     cudaDataType computeType;
@@ -2292,36 +2319,61 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                                "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
     }
 
-    // create vectors
-    cusparseDnVecDescr_t vecX, vecY;
-    #if defined(TACHO_INSERT_DIAGONALS)
-    cusparseCreateDnVec(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), computeType);
-    cusparseCreateDnVec(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), computeType);
-    #else
-    cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
-    cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
-    #endif
-    // SpMV
-    if (s0.spmv_explicit_transpose) {
-      if (CUSPARSE_STATUS_SUCCESS !=
-          cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                       &alpha, s0.L_cusparse, 
-                               vecX,
-                       &beta,  vecY,
-                       computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_At.data()))
-      {
-        printf( " Failed cusparseSpMV for SpMV\n" );
+    cusparseStatus_t status;
+    if (nrhs > 1) {
+      const ordinal_type ldt = t.stride(1);
+      const ordinal_type ldw = w.stride(1);
+      // create vectors
+      cusparseDnMatDescr_t vecX, vecY;
+      if ((nlvls-1-lvl)%2 == 0) {
+        cusparseCreateDnMat(&vecX, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+        cusparseCreateDnMat(&vecY, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
+      } else {
+        cusparseCreateDnMat(&vecX, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
+        cusparseCreateDnMat(&vecY, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
       }
+      // SpMM
+      if (s0.spmv_explicit_transpose) {
+        status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              &alpha, s0.L_cusparse, 
+                                      vecX,
+                              &beta,  vecY,
+                              computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_L.data());
+      } else {
+        status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              &alpha, s0.U_cusparse, 
+                                      vecX,
+                              &beta,  vecY,
+                              computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_L.data());
+      }
+      // destroy vectors
+      cusparseDestroyDnMat(vecX);
+      cusparseDestroyDnMat(vecY);
     } else {
-      if (CUSPARSE_STATUS_SUCCESS !=
-          cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
-                       &alpha, s0.A_cusparse, 
-                               vecX,
-                       &beta,  vecY,
-                       computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data()))
-      {
-        printf( " Failed cusparseSpMV for SpMV\n" );
+      // create vectors
+      cusparseDnVecDescr_t vecX, vecY;
+      cusparseCreateDnVec(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), computeType);
+      cusparseCreateDnVec(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), computeType);
+      // SpMV
+      if (s0.spmv_explicit_transpose) {
+        status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              &alpha, s0.L_cusparse, 
+                                      vecX,
+                              &beta,  vecY,
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_L.data());
+      } else {
+        status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
+                              &alpha, s0.U_cusparse, 
+                                      vecX,
+                              &beta,  vecY,
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_L.data());
       }
+      // destroy vectors
+      cusparseDestroyDnVec(vecX);
+      cusparseDestroyDnVec(vecY);
+    }
+    if (CUSPARSE_STATUS_SUCCESS != status) {
+      printf( " Failed cusparseSpMV for SpMV\n" );
     }
 #elif defined(KOKKOS_ENABLE_HIP)
     rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
@@ -2345,12 +2397,12 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
         rocsparse_spmv
         #endif
           (s0.rocsparseHandle, rocsparse_operation_none,
-           &alpha, s0.descrAt, vecX, &beta, vecY,
+           &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_At, (void*)s0.buffer_At.data()))
+           &s0.buffer_size_L, (void*)s0.buffer_L.data()))
       {
         printf( " Failed rocsparse_spmv\n" );
       }
@@ -2362,12 +2414,12 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
         rocsparse_spmv
         #endif
           (s0.rocsparseHandle, rocsparse_operation_transpose,
-           &alpha, s0.descrA, vecX, &beta, vecY,
+           &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_At, (void*)s0.buffer_At.data()))
+           &s0.buffer_size_L, (void*)s0.buffer_L.data()))
       {
         printf( " Failed rocsparse_spmv\n" );
       }
@@ -2405,7 +2457,6 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     }
     Kokkos::deep_copy(t, h_t);
 #endif
-    #if defined(TACHO_INSERT_DIAGONALS)
 /*if ((nlvls-1-lvl)%2 == 0) {
   auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
   printf("w=[\n");
@@ -2430,7 +2481,6 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     if (lvl == 0 && (nlvls-1)%2 == 0) {
       Kokkos::deep_copy(t, w);
     }
-    #endif
   }
 
   inline void solveCholeskyLowerOnDeviceVar2(const ordinal_type pbeg, const ordinal_type pend,
@@ -2483,7 +2533,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     else if (variant == 2)
       solveCholeskyLowerOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 3) {
-      solveCholeskyLowerOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
+      solveGenericLowerOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
     } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyLowerOnDevice, algorithm variant is not supported");
@@ -2589,10 +2639,11 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     }
   }
 
-  inline void solveCholeskyUpperOnDeviceVar2_SpMV(const ordinal_type lvl, const ordinal_type nlvls,
-                                                  const ordinal_type pbeg, const ordinal_type pend,
-                                                  const value_type_matrix &t) {
+  inline void solveGenericUpperOnDeviceVar2_SpMV(const ordinal_type lvl, const ordinal_type nlvls,
+                                                 const ordinal_type pbeg, const ordinal_type pend,
+                                                 const value_type_matrix &t) {
     const ordinal_type m = t.extent(0);
+    const ordinal_type nrhs = t.extent(1);
 
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
@@ -2601,13 +2652,12 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     // compute t = L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (0);
+    if (_h_supernodes(_h_level_sids(0)).w.extent(1) < nrhs) {
+      Kokkos::resize(_h_supernodes(_h_level_sids(0)).w, m, nrhs);
+    }
     auto w = _h_supernodes(_h_level_sids(0)).w; // always use first workspace
     #else
-    // copy t to w
-    Kokkos::deep_copy(s0.w, t);
-    // compute t = t + L^{-1}*w
-    const value_type alpha (1);
-    const value_type beta  (1);
+    exit(0);
     #endif
 #if defined(KOKKOS_ENABLE_CUDA)
     cudaDataType computeType;
@@ -2620,22 +2670,43 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                                "LevelSetTools::solveCholeskyUpperOnDevice: ComputeSPMV only supported double or float");
     }
 
-    // create vectors
-    cusparseDnVecDescr_t vecX, vecY;
-    #if defined(TACHO_INSERT_DIAGONALS)
-    cusparseCreateDnVec(&vecX, m, (void*)(lvl%2 == 0 ? t.data() : w.data()), computeType);
-    cusparseCreateDnVec(&vecY, m, (void*)(lvl%2 == 0 ? w.data() : t.data()), computeType);
-    #else
-    cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
-    cusparseCreateDnVec(&vecY, m,    t.data(), computeType);
-    #endif
-    // SpMV
     cusparseStatus_t status;
-    status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                          &alpha, s0.A_cusparse, 
-                                  vecX,
-                          &beta,  vecY,
-                          computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_A.data());
+    if (nrhs > 1) {
+      // create vectors
+      const ordinal_type ldt = t.stride(1);
+      const ordinal_type ldw = w.stride(1);
+      cusparseDnMatDescr_t vecX, vecY;
+      if (lvl%2 == 0) {
+        cusparseCreateDnMat(&vecX, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+        cusparseCreateDnMat(&vecY, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
+      } else {
+        cusparseCreateDnMat(&vecX, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
+        cusparseCreateDnMat(&vecY, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+      }
+      // SpMM
+      status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                            &alpha, s0.U_cusparse, 
+                                    vecX,
+                            &beta,  vecY,
+                            computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_U.data());
+      // destroy vectors  
+      cusparseDestroyDnMat(vecX);
+      cusparseDestroyDnMat(vecY);
+    } else {
+      // create vectors
+      cusparseDnVecDescr_t vecX, vecY;
+      cusparseCreateDnVec(&vecX, m, (void*)(lvl%2 == 0 ? t.data() : w.data()), computeType);
+      cusparseCreateDnVec(&vecY, m, (void*)(lvl%2 == 0 ? w.data() : t.data()), computeType);
+      // SpMV
+      status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                            &alpha, s0.U_cusparse, 
+                                    vecX,
+                            &beta,  vecY,
+                            computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_U.data());
+      // destroy vectors  
+      cusparseDestroyDnVec(vecX);
+      cusparseDestroyDnVec(vecY);
+    }
     if (CUSPARSE_STATUS_SUCCESS != status) {
        printf( " Failed cusparseSpMV for SpMV\n" );
     }
@@ -2660,12 +2731,12 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       rocsparse_spmv
       #endif
           (s0.rocsparseHandle, rocsparse_operation_none,
-           &alpha, s0.descrA, vecX, &beta, vecY,
+           &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_A, (void*)s0.buffer_A.data()))
+           &s0.buffer_size_U, (void*)s0.buffer_U.data()))
     {
       printf( " Failed rocsparse_spmv\n" );
     }
@@ -2688,11 +2759,9 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     }
     Kokkos::deep_copy(t, h_t);
 #endif
-    #if defined(TACHO_INSERT_DIAGONALS)
     if (lvl == nlvls-1 && lvl%2 == 0) {
       Kokkos::deep_copy(t, w);
     }
-    #endif
   }
 
   inline void solveCholeskyUpperOnDeviceVar2(const ordinal_type pbeg, const ordinal_type pend,
@@ -2744,7 +2813,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     else if (variant == 2)
       solveCholeskyUpperOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 3) {
-      solveCholeskyUpperOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
+      solveGenericUpperOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
     } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveCholeskyUpperOnDevice, algorithm variant is not supported");
@@ -3302,7 +3371,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     else if (variant == 2)
       solveLU_LowerOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 3) {
-      solveCholeskyLowerOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
+      solveGenericLowerOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
     } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveLU_LowerOnDevice, algorithm variant is not supported");
@@ -3455,8 +3524,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     else if (variant == 2)
       solveLU_UpperOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
     else if (variant == 3) {
-      solveCholeskyUpperOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
-      //solveLU_UpperOnDeviceVar2(pbeg, pend, h_buf_solve_ptr, t);
+      solveGenericUpperOnDeviceVar2_SpMV(lvl, nlvls, pbeg, pend, t);
     } else {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
                                "LevelSetTools::solveLU_UpperOnDevice, algorithm variant is not supported");
