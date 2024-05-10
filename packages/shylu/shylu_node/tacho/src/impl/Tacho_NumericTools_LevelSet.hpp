@@ -1637,7 +1637,7 @@ timer.reset();
         char filename[200];
         sprintf(filename,"U_%d.mtx", lvl);
         FILE *fp = fopen(filename,"w");
-	fprintf(fp,"%d %d %d\n",(int)m,(int)m,(int)h_rowptr(m));
+        fprintf(fp,"%d %d %d\n",(int)m,(int)m,(int)h_rowptr(m));
         for (ordinal_type i = 0; i < m; i++) for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) fprintf(fp,"%d %d %e\n",1+i,1+h_colind(k),h_nzvals(k));
         fclose(fp);
       }*/
@@ -2294,7 +2294,6 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                                                  const value_type_matrix &t) {
     const ordinal_type m = t.extent(0);
     const ordinal_type nrhs = t.extent(1);
-
     auto &s0 = _h_supernodes(_h_level_sids(pbeg));
 
     #ifdef TACHO_INSERT_DIAGONALS
@@ -2305,6 +2304,9 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       Kokkos::resize(_h_supernodes(_h_level_sids(0)).w, m, nrhs);
     }
     auto w = _h_supernodes(_h_level_sids(0)).w;
+
+    const ordinal_type ldt = t.stride(1);
+    const ordinal_type ldw = w.stride(1);
     #else
     exit(0);
     #endif
@@ -2321,8 +2323,6 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
 
     cusparseStatus_t status;
     if (nrhs > 1) {
-      const ordinal_type ldt = t.stride(1);
-      const ordinal_type ldw = w.stride(1);
       // create vectors
       cusparseDnMatDescr_t vecX, vecY;
       if ((nlvls-1-lvl)%2 == 0) {
@@ -2380,49 +2380,66 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     if (std::is_same<value_type, float>::value) {
       rocsparse_compute_type = rocsparse_datatype_f32_r;
     }
-    rocsparse_dnvec_descr vecX, vecY;
-    #if defined(TACHO_INSERT_DIAGONALS)
-    rocsparse_create_dnvec_descr(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), rocsparse_compute_type);
-    rocsparse_create_dnvec_descr(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), rocsparse_compute_type);
-    #else
-    rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
-    rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
-    #endif
 
-    if (s0.spmv_explicit_transpose) {
-      if (rocsparse_status_success !=
-        #if ROCM_VERSION >= 50400
-        rocsparse_spmv_ex
-        #else
-        rocsparse_spmv
-        #endif
+    rocsparse_status status;
+    if (nrhs > 1) {
+      rocsparse_dnmat_descr vecX, vecY;
+      if ((nlvls-1-lvl)%2 == 0) {
+        rocsparse_create_dnmat_descr(&vecX, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
+        rocsparse_create_dnmat_descr(&vecY, m, nrhs, ldw, (void*)(w.data()), rocsparse_compute_type, rocsparse_order_column);
+      } else {
+        rocsparse_create_dnmat_descr(&vecX, m, nrhs, ldw, (void*)(w.data()), rocsparse_compute_type, rocsparse_order_column);
+        rocsparse_create_dnmat_descr(&vecY, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
+      }
+      if (s0.spmv_explicit_transpose) {
+        status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_none, rocsparse_operation_none,
+                                &alpha, s0.descrL, vecX, &beta, vecY,
+                                rocsparse_compute_type, rocsparse_spmm_alg_default,
+                                rocsparse_spmm_stage_compute,
+                                &s0.buffer_size_L, (void*)s0.buffer_L.data());
+      } else {
+        status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_transpose, rocsparse_operation_none,
+                                &alpha, s0.descrU, vecX, &beta, vecY,
+                                rocsparse_compute_type, rocsparse_spmm_alg_default,
+                                rocsparse_spmm_stage_compute,
+                                &s0.buffer_size_L, (void*)s0.buffer_L.data());
+      }
+    } else {
+      rocsparse_dnvec_descr vecX, vecY;
+      rocsparse_create_dnvec_descr(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), rocsparse_compute_type);
+      rocsparse_create_dnvec_descr(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), rocsparse_compute_type);
+      if (s0.spmv_explicit_transpose) {
+        status =
+          #if ROCM_VERSION >= 50400
+          rocsparse_spmv_ex
+          #else
+          rocsparse_spmv
+          #endif
           (s0.rocsparseHandle, rocsparse_operation_none,
            &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_L, (void*)s0.buffer_L.data()))
-      {
-        printf( " Failed rocsparse_spmv\n" );
-      }
-    } else {
-      if (rocsparse_status_success !=
-        #if ROCM_VERSION >= 50400
-        rocsparse_spmv_ex
-        #else
-        rocsparse_spmv
-        #endif
+           &s0.buffer_size_L, (void*)s0.buffer_L.data());
+      } else {
+        status =
+          #if ROCM_VERSION >= 50400
+          rocsparse_spmv_ex
+          #else
+          rocsparse_spmv
+          #endif
           (s0.rocsparseHandle, rocsparse_operation_transpose,
            &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_L, (void*)s0.buffer_L.data()))
-      {
-        printf( " Failed rocsparse_spmv\n" );
+           &s0.buffer_size_L, (void*)s0.buffer_L.data());
       }
+    }
+    if (rocsparse_status_success != status) {
+      printf( " Failed rocsparse_spmv\n" );
     }
 #else
     const ordinal_type nrhs = t.extent(1);
@@ -2656,6 +2673,9 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       Kokkos::resize(_h_supernodes(_h_level_sids(0)).w, m, nrhs);
     }
     auto w = _h_supernodes(_h_level_sids(0)).w; // always use first workspace
+						//
+    const ordinal_type ldt = t.stride(1);
+    const ordinal_type ldw = w.stride(1);
     #else
     exit(0);
     #endif
@@ -2673,8 +2693,6 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     cusparseStatus_t status;
     if (nrhs > 1) {
       // create vectors
-      const ordinal_type ldt = t.stride(1);
-      const ordinal_type ldw = w.stride(1);
       cusparseDnMatDescr_t vecX, vecY;
       if (lvl%2 == 0) {
         cusparseCreateDnMat(&vecX, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
@@ -2715,29 +2733,41 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     if (std::is_same<value_type, float>::value) {
       rocsparse_compute_type = rocsparse_datatype_f32_r;
     }
-    rocsparse_dnvec_descr vecX, vecY;
-    #if defined(TACHO_INSERT_DIAGONALS)
-    rocsparse_create_dnvec_descr(&vecX, m, (void*)(lvl%2 == 0 ? t.data() : w.data()), rocsparse_compute_type);
-    rocsparse_create_dnvec_descr(&vecY, m, (void*)(lvl%2 == 0 ? w.data() : t.data()), rocsparse_compute_type);
-    #else
-    rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
-    rocsparse_create_dnvec_descr(&vecY, m, (void*)   t.data(), rocsparse_compute_type);
-    #endif
+    rocsparse_status status;
+    if (nrhs > 1) {
+      rocsparse_dnmat_descr vecX, vecY;
+      if (lvl%2 == 0) {
+        rocsparse_create_dnmat_descr(&vecX, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
+        rocsparse_create_dnmat_descr(&vecY, m, nrhs, ldw, (void*)(w.data()), rocsparse_compute_type, rocsparse_order_column);
+      } else {
+        rocsparse_create_dnmat_descr(&vecX, m, nrhs, ldw, (void*)(w.data()), rocsparse_compute_type, rocsparse_order_column);
+        rocsparse_create_dnmat_descr(&vecY, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
+      }
+      status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_none, rocsparse_operation_none,
+                              &alpha, s0.descrU, vecX, &beta, vecY,
+                              rocsparse_compute_type, rocsparse_spmm_alg_default,
+                              rocsparse_spmm_stage_compute,
+                              &s0.buffer_size_U, (void*)s0.buffer_U.data());
+    } else {
+      rocsparse_dnvec_descr vecX, vecY;
+      rocsparse_create_dnvec_descr(&vecX, m, (void*)(lvl%2 == 0 ? t.data() : w.data()), rocsparse_compute_type);
+      rocsparse_create_dnvec_descr(&vecY, m, (void*)(lvl%2 == 0 ? w.data() : t.data()), rocsparse_compute_type);
 
-    if (rocsparse_status_success !=
-      #if ROCM_VERSION >= 50400
-      rocsparse_spmv_ex
-      #else
-      rocsparse_spmv
-      #endif
+      status =
+        #if ROCM_VERSION >= 50400
+        rocsparse_spmv_ex
+        #else
+        rocsparse_spmv
+        #endif
           (s0.rocsparseHandle, rocsparse_operation_none,
            &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_U, (void*)s0.buffer_U.data()))
-    {
+           &s0.buffer_size_U, (void*)s0.buffer_U.data());
+    }
+    if (rocsparse_status_success != status) {
       printf( " Failed rocsparse_spmv\n" );
     }
 #else

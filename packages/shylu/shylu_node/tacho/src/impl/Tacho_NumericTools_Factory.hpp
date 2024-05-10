@@ -292,7 +292,11 @@ public:
       break;
     }
     case 3: {
-      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var3_type);
+      if (_method == 1 || _method == 3) {
+        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var3_type);
+      } else {
+        TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "Invalid variant input");
+      }
       break;
     }
     default: {
@@ -357,7 +361,7 @@ public:
       break;
     }
     case 3: {
-      if (_method == 1 || _method == 2) {
+      if (_method == 1 || _method == 3) {
         TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var3_type);
       } else {
         TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "Invalid variant input");
@@ -424,14 +428,6 @@ public:
     }
     case 2: {
       TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var2_type);
-      break;
-    }
-    case 3: {
-      if (_method == 1) {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var3_type);
-      } else {
-        TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "Invalid variant input");
-      }
       break;
     }
     default: {
