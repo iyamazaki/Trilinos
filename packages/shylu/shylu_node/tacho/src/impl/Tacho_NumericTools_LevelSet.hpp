@@ -1562,8 +1562,8 @@ public:
     cusparseDnMatDescr_t vecX, vecY;
     const ordinal_type ldx = _w_vec.stride(1);
     cusparseCreateDnMat(&vecX, m, nrhs, ldx, _w_vec.data(), computeType, CUSPARSE_ORDER_COL);
-#else
     cusparseCreateDnMat(&vecY, m, nrhs, ldx, _w_vec.data(), computeType, CUSPARSE_ORDER_COL);
+#else
     cusparseDnVecDescr_t vecX, vecY;
     cusparseCreateDnVec(&vecX, m, _w_vec.data(), computeType);
     cusparseCreateDnVec(&vecY, m, _w_vec.data(), computeType);
@@ -1701,7 +1701,8 @@ timer.reset();
 #if defined(KOKKOS_ENABLE_HIP)
       s0.spmv_explicit_transpose = true;
 #else
-      s0.spmv_explicit_transpose = false;
+      s0.spmv_explicit_transpose = false; // okay for SpMV,
+      s0.spmv_explicit_transpose = true;  // but for SpMM?
 #endif
       if (lu) {
         s0.spmv_explicit_transpose = true;
@@ -1947,23 +1948,21 @@ time5 += timer.seconds();
                                 computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_L);
 #endif
       } else {
+        // create matrix (L_cusparse stores the same ptrs as descrU, but optimized for trans)
+        cusparseCreateCsr(&s0.L_cusparse, m, m, nnz,
+                          s0.rowptrU.data(), s0.colindU.data(), s0.nzvalsU.data(),
+                          CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                          CUSPARSE_INDEX_BASE_ZERO, computeType);
         // workspace size for transpose SpMV
 #ifdef USE_SPMM
         cusparseSpMM_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                &alpha, s0.U_cusparse, vecX, &beta, vecY,
+                                &alpha, s0.L_cusparse, vecX, &beta, vecY,
                                 computeType, CUSPARSE_MM_ALG_DEFAULT, &s0.buffer_size_L);
 #else
-        cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &alpha, s0.U_cusparse, vecX, &beta, vecY,
+        cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &alpha, s0.L_cusparse, vecX, &beta, vecY,
                                 computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_L);
 #endif
       }
-#ifdef USE_SPMM
-      cusparseDestroyDnMat(vecX);
-      cusparseDestroyDnMat(vecY);
-#else
-      cusparseDestroyDnVec(vecX);
-      cusparseDestroyDnVec(vecY);
-#endif
       Kokkos::resize(s0.buffer_U, s0.buffer_size_U);
       Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
 #elif defined(KOKKOS_ENABLE_HIP)
@@ -2029,6 +2028,11 @@ time5 += timer.seconds();
            &s0.buffer_size_L, (void*)s0.buffer_L.data());
         #endif
       } else {
+        // create matrix, transpose (L_cusparse stores the same ptrs as descrU, but optimized for trans)
+        nnz = s0.colindL.extent(0);
+        rocsparse_create_csr_descr(&(s0.descrL), m, m, nnz,
+                                   s0.rowptrU.data(), s0.colindU.data(), s0.nzvalsU.data(),
+                                   rocsparse_indextype_i32, rocsparse_indextype_i32, rocsparse_index_base_zero, rocsparse_compute_type);
         // workspace (transpose)
         #if ROCM_VERSION >= 50400
         rocsparse_spmv_ex
@@ -2036,7 +2040,7 @@ time5 += timer.seconds();
         rocsparse_spmv
         #endif
           (s0.rocsparseHandle, rocsparse_operation_transpose,
-           &alpha, s0.descrU, vecX, &beta, vecY,
+           &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
@@ -2049,7 +2053,7 @@ time5 += timer.seconds();
         // preprocess
         rocsparse_spmv_ex
           (s0.rocsparseHandle, rocsparse_operation_transpose,
-           &alpha, s0.descrU, vecX, &beta, vecY,
+           &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
            &s0.buffer_size_L, (void*)s0.buffer_L.data());
@@ -2057,6 +2061,19 @@ time5 += timer.seconds();
       } 
 #endif
     }
+#if defined(KOKKOS_ENABLE_CUDA)
+#ifdef USE_SPMM
+    cusparseDestroyDnMat(vecX);
+    cusparseDestroyDnMat(vecY);
+#else
+    cusparseDestroyDnVec(vecX);
+    cusparseDestroyDnVec(vecY);
+#endif
+#elif defined(KOKKOS_ENABLE_HIP)
+    rocsparse_destroy_dnvec_descr(vecX);
+    rocsparse_destroy_dnvec_descr(vecY);
+#endif
+
 #ifdef TACHO_TIMER_
 double ttime = Timer.seconds();
 std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 << " " << time3 << " " << time4 << " " << time5 << " -> " << ttime << std::endl << std::endl;
@@ -2369,19 +2386,9 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
         // start : create DnMat for T
         cusparseCreateDnMat(&matT, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
       }
-#if 1
       // create vectors
       auto matX = ((nlvls-1-lvl)%2 == 0 ? matT : matW);
       auto matY = ((nlvls-1-lvl)%2 == 0 ? matW : matT);
-#else
-      if ((nlvls-1-lvl)%2 == 0) {
-        cusparseCreateDnMat(&matX, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
-        cusparseCreateDnMat(&matY, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
-      } else {
-        cusparseCreateDnMat(&matX, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
-        cusparseCreateDnMat(&matY, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
-      }
-#endif
       // SpMM
       if (s0.spmv_explicit_transpose) {
         status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -2391,22 +2398,19 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                               computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_L.data());
       } else {
         status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                              &alpha, s0.U_cusparse, 
+                              &alpha, s0.L_cusparse,  // L_cusparse stores the same ptrs as descrU, but optimized for trans
                                       matX,
                               &beta,  matY,
                               computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_L.data());
       }
-      // destroy vectors
-      cusparseDestroyDnMat(matX);
-      cusparseDestroyDnMat(matY);
     } else {
       if (lvl == nlvls-1) {
         // start : create DnMat for T
-        cusparseCreateDnMat(&vectT, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+        cusparseCreateDnVec(&vecT, m, (void*)(t.data()), computeType);
       }
       // create vectors
-      //cusparseCreateDnVec(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), computeType);
-      //cusparseCreateDnVec(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), computeType);
+      auto vecX = ((nlvls-1-lvl)%2 == 0 ? vecT : vecW);
+      auto vecY = ((nlvls-1-lvl)%2 == 0 ? vecW : vecT);
       // SpMV
       if (s0.spmv_explicit_transpose) {
         status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -2416,14 +2420,11 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                               computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_L.data());
       } else {
         status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
-                              &alpha, s0.U_cusparse, 
+                              &alpha, s0.L_cusparse, // L_cusparse stores the same ptrs as descrU, but optimized for trans
                                       vecX,
                               &beta,  vecY,
                               computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_L.data());
       }
-      // destroy vectors
-      cusparseDestroyDnVec(vecX);
-      cusparseDestroyDnVec(vecY);
     }
     if (CUSPARSE_STATUS_SUCCESS != status) {
       printf( " Failed cusparseSpMV for SpMV\n" );
@@ -2446,7 +2447,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                                 &s0.buffer_size_L, (void*)s0.buffer_L.data());
       } else {
         status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_transpose, rocsparse_operation_none,
-                                &alpha, s0.descrU, vecX, &beta, vecY,
+                                &alpha, s0.descrL, vecX, &beta, vecY, // dscrL stores the same ptrs as descrU, but optimized for trans
                                 rocsparse_compute_type, rocsparse_spmm_alg_default,
                                 rocsparse_spmm_stage_compute,
                                 &s0.buffer_size_L, (void*)s0.buffer_L.data());
@@ -2480,7 +2481,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
           rocsparse_spmv
           #endif
           (s0.rocsparseHandle, rocsparse_operation_transpose,
-           &alpha, s0.descrU, vecX, &beta, vecY,
+           &alpha, s0.descrL, vecX, &beta, vecY, // dscrL stores the same ptrs as descrU, but optimized for trans
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
@@ -2749,38 +2750,31 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
 
     cusparseStatus_t status;
     if (nrhs > 1) {
-      // create vectors
-      cusparseDnMatDescr_t vecX, vecY;
-      if (lvl%2 == 0) {
-        cusparseCreateDnMat(&vecX, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
-        cusparseCreateDnMat(&vecY, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
-      } else {
-        cusparseCreateDnMat(&vecX, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
-        cusparseCreateDnMat(&vecY, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+      if (lvl == 0) {
+        // start : create DnMat for T
+        cusparseCreateDnMat(&matT, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
       }
+      auto vecX = (lvl%2 == 0 ? matT : matW);
+      auto vecY = (lvl%2 == 0 ? matW : matT);
       // SpMM
       status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                             &alpha, s0.U_cusparse, 
                                     vecX,
                             &beta,  vecY,
                             computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_U.data());
-      // destroy vectors  
-      cusparseDestroyDnMat(vecX);
-      cusparseDestroyDnMat(vecY);
     } else {
-      // create vectors
-      cusparseDnVecDescr_t vecX, vecY;
-      cusparseCreateDnVec(&vecX, m, (void*)(lvl%2 == 0 ? t.data() : w.data()), computeType);
-      cusparseCreateDnVec(&vecY, m, (void*)(lvl%2 == 0 ? w.data() : t.data()), computeType);
+      if (lvl == 0) {
+        // start : create DnMat for T
+        cusparseCreateDnVec(&vecT, m, (void*)(t.data()), computeType);
+      }
+      auto vecX = (lvl%2 == 0 ? vecT : vecW);
+      auto vecY = (lvl%2 == 0 ? vecW : vecT);
       // SpMV
       status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                             &alpha, s0.U_cusparse, 
                                     vecX,
                             &beta,  vecY,
                             computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_U.data());
-      // destroy vectors  
-      cusparseDestroyDnVec(vecX);
-      cusparseDestroyDnVec(vecY);
     }
     if (CUSPARSE_STATUS_SUCCESS != status) {
        printf( " Failed cusparseSpMV for SpMV\n" );
