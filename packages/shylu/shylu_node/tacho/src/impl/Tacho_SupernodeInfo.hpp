@@ -138,10 +138,6 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     nzvals_view nzvalsL;
 
     bool spmv_explicit_transpose;
-    size_t buffer_size_U;
-    Kokkos::View<value_type *, device_type> buffer_U;
-    size_t buffer_size_L;
-    Kokkos::View<value_type *, device_type> buffer_L;
 #if defined(KOKKOS_ENABLE_CUDA)
     cusparseHandle_t cusparseHandle;
     cusparseSpMatDescr_t U_cusparse;

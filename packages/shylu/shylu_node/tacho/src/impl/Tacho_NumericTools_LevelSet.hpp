@@ -166,12 +166,15 @@ private:
   // cuda stream
   int _nstreams;
 
+  // workspace for SpMV
+  value_type_matrix _w_vec;
+  value_type_array  buffer_U;
+  value_type_array  buffer_L;
 #if defined(KOKKOS_ENABLE_CUDA)
   bool _is_cublas_created, _is_cusolver_dn_created;
   cublasHandle_t _handle_blas;
   cusolverDnHandle_t _handle_lapack;
   // workspace for SpMV
-  value_type_matrix _w_vec;
   cusparseDnMatDescr_t matT, matW;
   cusparseDnVecDescr_t vecT, vecW;
 
@@ -186,7 +189,6 @@ private:
   rocblas_handle _handle_lapack;
   std::vector<rocblas_handle> _handles;
   // workspace for SpMV
-  value_type_matrix _w_vec;
   rocsparse_dnmat_descr matT, matW;
   rocsparse_dnvec_descr vecT, vecW;
 
@@ -197,9 +199,6 @@ private:
   #define getLapackHandle(id) _handles[id]
 #else
   int _handle_blas, _handle_lapack; // dummy handle for convenience
-  // workspace for SpMV
-  value_type_matrix _w_vec;
-
   using blas_handle_type = int;
   using lapack_handle_type = int;
   #define getBlasHandle()   _handle_blas
@@ -1907,8 +1906,8 @@ timer.reset();
 time5 += timer.seconds();
 #endif
 
-      s0.buffer_size_L = 0;
-      s0.buffer_size_U = 0;
+      size_t buffer_size_L = 0;
+      size_t buffer_size_U = 0;
       nnz = s0.colindU.extent(0);
       value_type alpha = one;
       #ifdef TACHO_INSERT_DIAGONALS
@@ -1926,10 +1925,10 @@ time5 += timer.seconds();
 #ifdef USE_SPMM
       cusparseSpMM_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                               &alpha, s0.U_cusparse, vecX, &beta, vecY,
-                              computeType, CUSPARSE_MM_ALG_DEFAULT, &s0.buffer_size_U);
+                              computeType, CUSPARSE_MM_ALG_DEFAULT, &buffer_size_U);
 #else
       cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, s0.U_cusparse, vecX, &beta, vecY,
-                              computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_U);
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, &buffer_size_U);
 #endif
       if (s0.spmv_explicit_transpose) {
         // create matrix (transpose or L)
@@ -1942,10 +1941,10 @@ time5 += timer.seconds();
 #ifdef USE_SPMM
         cusparseSpMM_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                 &alpha, s0.L_cusparse, vecX, &beta, vecY,
-                                computeType, CUSPARSE_MM_ALG_DEFAULT, &s0.buffer_size_L);
+                                computeType, CUSPARSE_MM_ALG_DEFAULT, &buffer_size_L);
 #else
         cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, s0.L_cusparse, vecX, &beta, vecY,
-                                computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_L);
+                                computeType, CUSPARSE_MV_ALG_DEFAULT, &buffer_size_L);
 #endif
       } else {
         // create matrix (L_cusparse stores the same ptrs as descrU, but optimized for trans)
@@ -1957,15 +1956,19 @@ time5 += timer.seconds();
 #ifdef USE_SPMM
         cusparseSpMM_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                 &alpha, s0.L_cusparse, vecX, &beta, vecY,
-                                computeType, CUSPARSE_MM_ALG_DEFAULT, &s0.buffer_size_L);
+                                computeType, CUSPARSE_MM_ALG_DEFAULT, &buffer_size_L);
 #else
         cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, &alpha, s0.L_cusparse, vecX, &beta, vecY,
-                                computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_L);
+                                computeType, CUSPARSE_MV_ALG_DEFAULT, &buffer_size_L);
 #endif
       }
-      // TODO : move this workspace out to NumericTools_LevelSet
-      Kokkos::resize(s0.buffer_U, s0.buffer_size_U);
-      Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
+      // allocate workspace
+      if (buffer_size_U > buffer_U.extent(0)) {
+        Kokkos::resize(buffer_U, buffer_size_U);
+      }
+      if (buffer_size_L > buffer_L.extent(0)) {
+        Kokkos::resize(buffer_L, buffer_size_L);
+      }
 #elif defined(KOKKOS_ENABLE_HIP)
       rocsparse_create_handle(&s0.rocsparseHandle);
       // create matrix
@@ -1984,10 +1987,10 @@ time5 += timer.seconds();
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
-           &s0.buffer_size_U, nullptr);
-      // TODO : move this workspace out to NumericTools_LevelSet
-      if (s0.buffer_size_U > 0) {
-        Kokkos::resize(s0.buffer_U, s0.buffer_size_U);
+           &buffer_size_U, nullptr);
+      // allocate workspace
+      if (buffer_size_U > buffer_U.extent(0)) {
+        Kokkos::resize(buffer_U, buffer_size_U);
       }
       #if ROCM_VERSION >= 50400
       // preprocess
@@ -1996,7 +1999,7 @@ time5 += timer.seconds();
            &alpha, s0.descrU, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
            rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_U, (void*)s0.buffer_U.data());
+           &(buffer_U.extent(0)), (void*)buffer_U.data());
       #endif
       if (s0.spmv_explicit_transpose) {
         // create matrix (transpose)
@@ -2016,10 +2019,10 @@ time5 += timer.seconds();
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
-           &s0.buffer_size_L, nullptr);
-        // TODO : move this workspace out to NumericTools_LevelSet
-        if (s0.buffer_size_L > 0) {
-          Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
+           &buffer_size_L, nullptr);
+        // allocate workspace
+        if (buffer_size_L > buffer_L.extent(0)) {
+          Kokkos::resize(buffer_L, buffer_size_L);
         }
         #if ROCM_VERSION >= 50400
         // preprocess
@@ -2028,7 +2031,7 @@ time5 += timer.seconds();
            &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_L, (void*)s0.buffer_L.data());
+           &(buffer_L.extent(0)), (void*)buffer_L.data());
         #endif
       } else {
         // create matrix, transpose (L_cusparse stores the same ptrs as descrU, but optimized for trans)
@@ -2048,10 +2051,10 @@ time5 += timer.seconds();
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_buffer_size,
            #endif
-           &s0.buffer_size_L, nullptr);
-        // TODO : move this workspace out to NumericTools_LevelSet
-        if (s0.buffer_size_L > 0) {
-          Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
+           &buffer_size_L, nullptr);
+        // allcate workspace
+        if (buffer_size_L > buffer_L.extent(0)) {
+          Kokkos::resize(buffer_L, buffer_size_L);
         }
         #if ROCM_VERSION >= 50400
         // preprocess
@@ -2060,7 +2063,7 @@ time5 += timer.seconds();
            &alpha, s0.descrL, vecX, &beta, vecY,
            rocsparse_compute_type, rocsparse_spmv_alg_default,
             rocsparse_spmv_stage_preprocess,
-           &s0.buffer_size_L, (void*)s0.buffer_L.data());
+           &(buffer_L.extent(0)), (void*)buffer_L.data());
         #endif
       } 
 #endif
@@ -2399,13 +2402,13 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                               &alpha, s0.L_cusparse, 
                                       matX,
                               &beta,  matY,
-                              computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_L.data());
+                              computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)buffer_L.data());
       } else {
         status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                               &alpha, s0.L_cusparse,  // L_cusparse stores the same ptrs as descrU, but optimized for trans
                                       matX,
                               &beta,  matY,
-                              computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_L.data());
+                              computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)buffer_L.data());
       }
     } else {
       if (lvl == nlvls-1) {
@@ -2421,13 +2424,13 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                               &alpha, s0.L_cusparse, 
                                       vecX,
                               &beta,  vecY,
-                              computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_L.data());
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)buffer_L.data());
       } else {
         status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE,
                               &alpha, s0.L_cusparse, // L_cusparse stores the same ptrs as descrU, but optimized for trans
                                       vecX,
                               &beta,  vecY,
-                              computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_L.data());
+                              computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)buffer_L.data());
       }
     }
     if (CUSPARSE_STATUS_SUCCESS != status) {
@@ -2448,13 +2451,13 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                                 &alpha, s0.descrL, vecX, &beta, vecY,
                                 rocsparse_compute_type, rocsparse_spmm_alg_default,
                                 rocsparse_spmm_stage_compute,
-                                &s0.buffer_size_L, (void*)s0.buffer_L.data());
+                                &(buffer_L.extent(0)), (void*)buffer_L.data());
       } else {
         status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_transpose, rocsparse_operation_none,
                                 &alpha, s0.descrL, vecX, &beta, vecY, // dscrL stores the same ptrs as descrU, but optimized for trans
                                 rocsparse_compute_type, rocsparse_spmm_alg_default,
                                 rocsparse_spmm_stage_compute,
-                                &s0.buffer_size_L, (void*)s0.buffer_L.data());
+                                &(buffer_L.extent(0)), (void*)buffer_L.data());
       }
     } else {
       if (lvl == nlvls-1) {
@@ -2476,7 +2479,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_L, (void*)s0.buffer_L.data());
+           &(buffer_L.extent(0)), (void*)buffer_L.data());
       } else {
         status =
           #if ROCM_VERSION >= 50400
@@ -2490,7 +2493,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_L, (void*)s0.buffer_L.data());
+           &(buffer_L.extent(0)), (void*)buffer_L.data());
       }
     }
     if (rocsparse_status_success != status) {
@@ -2762,7 +2765,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                             &alpha, s0.U_cusparse, 
                                     vecX,
                             &beta,  vecY,
-                            computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_U.data());
+                            computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)buffer_U.data());
     } else {
       if (lvl == 0) {
         // start : create DnMat for T
@@ -2775,7 +2778,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                             &alpha, s0.U_cusparse, 
                                     vecX,
                             &beta,  vecY,
-                            computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)s0.buffer_U.data());
+                            computeType, CUSPARSE_MV_ALG_DEFAULT, (void*)buffer_U.data());
     }
     if (CUSPARSE_STATUS_SUCCESS != status) {
        printf( " Failed cusparseSpMV for SpMV\n" );
@@ -2800,7 +2803,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                               &alpha, s0.descrU, vecX, &beta, vecY,
                               rocsparse_compute_type, rocsparse_spmm_alg_default,
                               rocsparse_spmm_stage_compute,
-                              &s0.buffer_size_U, (void*)s0.buffer_U.data());
+                              &(buffer_U.extent(0)), (void*)buffer_U.data());
     } else {
       if (lvl == 0) {
         // start : create DnVec for T
@@ -2820,7 +2823,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
            #if ROCM_VERSION >= 50400
            rocsparse_spmv_stage_compute,
            #endif
-           &s0.buffer_size_U, (void*)s0.buffer_U.data());
+           &(buffer_U.extent(0)), (void*)buffer_U.data());
     }
     if (rocsparse_status_success != status) {
       printf( " Failed rocsparse_spmv for U\n" );
