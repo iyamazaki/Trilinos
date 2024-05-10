@@ -137,8 +137,6 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
     colind_view colindL;
     nzvals_view nzvalsL;
 
-    Kokkos::View<value_type**, device_type> w;
-
     bool spmv_explicit_transpose;
     size_t buffer_size_U;
     Kokkos::View<value_type *, device_type> buffer_U;

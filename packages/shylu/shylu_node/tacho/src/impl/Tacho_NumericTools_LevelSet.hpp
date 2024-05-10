@@ -165,10 +165,16 @@ private:
 
   // cuda stream
   int _nstreams;
+
 #if defined(KOKKOS_ENABLE_CUDA)
   bool _is_cublas_created, _is_cusolver_dn_created;
   cublasHandle_t _handle_blas;
   cusolverDnHandle_t _handle_lapack;
+  // workspace for SpMV
+  value_type_matrix _w_vec;
+  cusparseDnMatDescr_t matT, matW;
+  cusparseDnVecDescr_t vecT, vecW;
+
   using blas_handle_type = cublasHandle_t;
   using lapack_handle_type = cusolverDnHandle_t;
   using stream_array_host = std::vector<cudaStream_t>;
@@ -179,6 +185,11 @@ private:
   rocblas_handle _handle_blas;
   rocblas_handle _handle_lapack;
   std::vector<rocblas_handle> _handles;
+  // workspace for SpMV
+  value_type_matrix _w_vec;
+  rocsparse_dnmat_descr matT, matW;
+  rocsparse_dnvec_descr vecT, vecW;
+
   using blas_handle_type = rocblas_handle;
   using lapack_handle_type = rocblas_handle;
   using stream_array_host = std::vector<hipStream_t>;
@@ -186,6 +197,9 @@ private:
   #define getLapackHandle(id) _handles[id]
 #else
   int _handle_blas, _handle_lapack; // dummy handle for convenience
+  // workspace for SpMV
+  value_type_matrix _w_vec;
+
   using blas_handle_type = int;
   using lapack_handle_type = int;
   #define getBlasHandle()   _handle_blas
@@ -1526,6 +1540,48 @@ public:
     const value_type one(1);
     const value_type zero(0);
 
+    // ========================
+    // workspace
+    Kokkos::resize(_w_vec, m, nrhs);
+    int ldw = _w_vec.stride(1);
+#if defined(KOKKOS_ENABLE_CUDA)
+    cudaDataType computeType;
+    if (std::is_same<value_type, double>::value) {
+      computeType = CUDA_R_64F;
+    } else if (std::is_same<value_type, float>::value) {
+      computeType = CUDA_R_32F;
+    } else {
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
+                               "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
+    }
+    // attach to Cusparse/Rocsparse data struct
+    cusparseCreateDnMat(&matW, m, nrhs, ldw, (void*)(_w_vec.data()), computeType, CUSPARSE_ORDER_COL);
+    cusparseCreateDnVec(&vecW, m, (void*)(_w_vec.data()), computeType);
+    // vectors used for preprocessing
+#ifdef USE_SPMM
+    cusparseDnMatDescr_t vecX, vecY;
+    const ordinal_type ldx = _w_vec.stride(1);
+    cusparseCreateDnMat(&vecX, m, nrhs, ldx, _w_vec.data(), computeType, CUSPARSE_ORDER_COL);
+#else
+    cusparseCreateDnMat(&vecY, m, nrhs, ldx, _w_vec.data(), computeType, CUSPARSE_ORDER_COL);
+    cusparseDnVecDescr_t vecX, vecY;
+    cusparseCreateDnVec(&vecX, m, _w_vec.data(), computeType);
+    cusparseCreateDnVec(&vecY, m, _w_vec.data(), computeType);
+#endif
+#elif defined(KOKKOS_ENABLE_HIP)
+    rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
+    if (std::is_same<value_type, float>::value) {
+      rocsparse_compute_type = rocsparse_datatype_f32_r;
+    }
+    // attach to Cusparse/Rocsparse data struct
+    rocsparse_create_dnmat_descr(&matW, m, nrhs, ldw, (void*)(_w_vec.data()), rocsparse_compute_type, rocsparse_order_column);
+    rocsparse_create_dnvec_descr(&vecW, m, (void*)(_w_vec.data()), rocsparse_compute_type);
+    // vectors used for preprocessing
+    rocsparse_dnvec_descr vecX, vecY;
+    rocsparse_create_dnvec_descr(&vecX, m, (void*)_w_vec.data(), rocsparse_compute_type);
+    rocsparse_create_dnvec_descr(&vecY, m, (void*)_w_vec.data(), rocsparse_compute_type);
+#endif
+
 //#define TACHO_TIMER_
 #ifdef TACHO_TIMER_
 Kokkos::Timer Timer;
@@ -1850,10 +1906,6 @@ timer.reset();
 time5 += timer.seconds();
 #endif
 
-      // ========================
-      // workspace
-      Kokkos::resize(s0.w, m, nrhs);
-
       s0.buffer_size_L = 0;
       s0.buffer_size_U = 0;
       nnz = s0.colindU.extent(0);
@@ -1865,33 +1917,16 @@ time5 += timer.seconds();
       #endif
 #if defined(KOKKOS_ENABLE_CUDA)
       cusparseCreate(&s0.cusparseHandle);
-      cudaDataType computeType;
-      if (std::is_same<value_type, double>::value) {
-        computeType = CUDA_R_64F;
-      } else if (std::is_same<value_type, float>::value) {
-        computeType = CUDA_R_32F;
-      } else {
-        TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
-                                 "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
-      }
       // create matrix
       cusparseCreateCsr(&s0.U_cusparse, m, m, nnz,
                         s0.rowptrU.data(), s0.colindU.data(), s0.nzvalsU.data(),
                         CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                         CUSPARSE_INDEX_BASE_ZERO, computeType);
-//#define USE_SPMM
 #ifdef USE_SPMM
-      cusparseDnMatDescr_t vecX, vecY;
-      const ordinal_type ldx = s0.w.stride(1);
-      cusparseCreateDnMat(&vecX, m, nrhs, ldx, s0.w.data(), computeType, CUSPARSE_ORDER_COL);
-      cusparseCreateDnMat(&vecY, m, nrhs, ldx, s0.w.data(), computeType, CUSPARSE_ORDER_COL);
       cusparseSpMM_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                               &alpha, s0.U_cusparse, vecX, &beta, vecY,
                               computeType, CUSPARSE_MM_ALG_DEFAULT, &s0.buffer_size_U);
 #else
-      cusparseDnVecDescr_t vecX, vecY;
-      cusparseCreateDnVec(&vecX, m, s0.w.data(), computeType);
-      cusparseCreateDnVec(&vecY, m, s0.w.data(), computeType);
       cusparseSpMV_bufferSize(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, s0.U_cusparse, vecX, &beta, vecY,
                               computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_U);
 #endif
@@ -1933,18 +1968,10 @@ time5 += timer.seconds();
       Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
 #elif defined(KOKKOS_ENABLE_HIP)
       rocsparse_create_handle(&s0.rocsparseHandle);
-      rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
-      if (std::is_same<value_type, float>::value) {
-        rocsparse_compute_type = rocsparse_datatype_f32_r;
-      }
-
       // create matrix
       rocsparse_create_csr_descr(&(s0.descrU), m, m, nnz,
                                  s0.rowptrU.data(), s0.colindU.data(), s0.nzvalsU.data(),
                                  rocsparse_indextype_i32, rocsparse_indextype_i32, rocsparse_index_base_zero, rocsparse_compute_type);
-      rocsparse_dnvec_descr vecX, vecY;
-      rocsparse_create_dnvec_descr(&vecX, m, (void*)s0.w.data(), rocsparse_compute_type);
-      rocsparse_create_dnvec_descr(&vecY, m, (void*)s0.w.data(), rocsparse_compute_type);
       // workspace
       #if ROCM_VERSION >= 50400
       rocsparse_spmv_ex
@@ -2294,66 +2321,92 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                                                  const value_type_matrix &t) {
     const ordinal_type m = t.extent(0);
     const ordinal_type nrhs = t.extent(1);
-    auto &s0 = _h_supernodes(_h_level_sids(pbeg));
-
+#if defined(KOKKOS_ENABLE_CUDA)
+    cudaDataType computeType = CUDA_R_64F;
+    if (std::is_same<value_type, float>::value) {
+      computeType = CUDA_R_32F;
+    } else if (!std::is_same<value_type, double>::value) {
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
+                               "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
+    }
+#elif defined(KOKKOS_ENABLE_HIP)
+    rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
+    if (std::is_same<value_type, float>::value) {
+      rocsparse_compute_type = rocsparse_datatype_f32_r;
+    } else if (!std::is_same<value_type, double>::value) {
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
+                               "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
+    }
+#endif
     #ifdef TACHO_INSERT_DIAGONALS
     // compute t = L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (0);
-    if (_h_supernodes(_h_level_sids(0)).w.extent(1) < nrhs) {
-      Kokkos::resize(_h_supernodes(_h_level_sids(0)).w, m, nrhs);
+    if (_w_vec.extent(0) < m || _w_vec.extent(1) < nrhs) {
+      // expand workspace
+      printf( " W.resize(%d, %d) -> (%dx%d)\n",int(_w_vec.extent(0)),int(_w_vec.extent(1)),int(m),int(nrhs) );
+      Kokkos::resize(_w_vec, m, nrhs);
+      // attach to Cusparse/Rocsparse data struct
+      int ldw = _w_vec.stride(1);
+#if defined(KOKKOS_ENABLE_CUDA)
+      cusparseCreateDnMat(&matW, m, nrhs, ldw, (void*)(_w_vec.data()), computeType, CUSPARSE_ORDER_COL);
+      cusparseCreateDnVec(&vecW, m, (void*)(_w_vec.data()), computeType);
+#elif defined(KOKKOS_ENABLE_HIP)
+      rocsparse_create_dnmat_descr(&matW, m, nrhs, ldw, (void*)(_w_vec.data()), rocsparse_compute_type, rocsparse_order_column);
+      rocsparse_create_dnvec_descr(&vecW, m, (void*)(_w_vec.data()), rocsparse_compute_type);
+#endif
     }
-    auto w = _h_supernodes(_h_level_sids(0)).w;
-
     const ordinal_type ldt = t.stride(1);
-    const ordinal_type ldw = w.stride(1);
+    const ordinal_type ldw = _w_vec.stride(1);
+    auto &s0 = _h_supernodes(_h_level_sids(pbeg));
     #else
     exit(0);
     #endif
 #if defined(KOKKOS_ENABLE_CUDA)
-    cudaDataType computeType;
-    if (std::is_same<value_type, double>::value) {
-      computeType = CUDA_R_64F;
-    } else if (std::is_same<value_type, float>::value) {
-      computeType = CUDA_R_32F;
-    } else {
-      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
-                               "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
-    }
-
     cusparseStatus_t status;
     if (nrhs > 1) {
-      // create vectors
-      cusparseDnMatDescr_t vecX, vecY;
-      if ((nlvls-1-lvl)%2 == 0) {
-        cusparseCreateDnMat(&vecX, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
-        cusparseCreateDnMat(&vecY, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
-      } else {
-        cusparseCreateDnMat(&vecX, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
-        cusparseCreateDnMat(&vecY, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+      if (lvl == nlvls-1) {
+        // start : create DnMat for T
+        cusparseCreateDnMat(&matT, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
       }
+#if 1
+      // create vectors
+      auto matX = ((nlvls-1-lvl)%2 == 0 ? matT : matW);
+      auto matY = ((nlvls-1-lvl)%2 == 0 ? matW : matT);
+#else
+      if ((nlvls-1-lvl)%2 == 0) {
+        cusparseCreateDnMat(&matX, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+        cusparseCreateDnMat(&matY, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
+      } else {
+        cusparseCreateDnMat(&matX, m, nrhs, ldw, (void*)(w.data()), computeType, CUSPARSE_ORDER_COL);
+        cusparseCreateDnMat(&matY, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+      }
+#endif
       // SpMM
       if (s0.spmv_explicit_transpose) {
         status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                               &alpha, s0.L_cusparse, 
-                                      vecX,
-                              &beta,  vecY,
+                                      matX,
+                              &beta,  matY,
                               computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_L.data());
       } else {
         status = cusparseSpMM(s0.cusparseHandle, CUSPARSE_OPERATION_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
                               &alpha, s0.U_cusparse, 
-                                      vecX,
-                              &beta,  vecY,
+                                      matX,
+                              &beta,  matY,
                               computeType, CUSPARSE_MM_ALG_DEFAULT, (void*)s0.buffer_L.data());
       }
       // destroy vectors
-      cusparseDestroyDnMat(vecX);
-      cusparseDestroyDnMat(vecY);
+      cusparseDestroyDnMat(matX);
+      cusparseDestroyDnMat(matY);
     } else {
+      if (lvl == nlvls-1) {
+        // start : create DnMat for T
+        cusparseCreateDnMat(&vectT, m, nrhs, ldt, (void*)(t.data()), computeType, CUSPARSE_ORDER_COL);
+      }
       // create vectors
-      cusparseDnVecDescr_t vecX, vecY;
-      cusparseCreateDnVec(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), computeType);
-      cusparseCreateDnVec(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), computeType);
+      //cusparseCreateDnVec(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), computeType);
+      //cusparseCreateDnVec(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), computeType);
       // SpMV
       if (s0.spmv_explicit_transpose) {
         status = cusparseSpMV(s0.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -2376,21 +2429,15 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       printf( " Failed cusparseSpMV for SpMV\n" );
     }
 #elif defined(KOKKOS_ENABLE_HIP)
-    rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
-    if (std::is_same<value_type, float>::value) {
-      rocsparse_compute_type = rocsparse_datatype_f32_r;
-    }
-
     rocsparse_status status;
     if (nrhs > 1) {
-      rocsparse_dnmat_descr vecX, vecY;
-      if ((nlvls-1-lvl)%2 == 0) {
-        rocsparse_create_dnmat_descr(&vecX, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
-        rocsparse_create_dnmat_descr(&vecY, m, nrhs, ldw, (void*)(w.data()), rocsparse_compute_type, rocsparse_order_column);
-      } else {
-        rocsparse_create_dnmat_descr(&vecX, m, nrhs, ldw, (void*)(w.data()), rocsparse_compute_type, rocsparse_order_column);
-        rocsparse_create_dnmat_descr(&vecY, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
+      if (lvl == nlvls-1) {
+        // start : create DnMat for T
+        rocsparse_create_dnmat_descr(&matT, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
       }
+      // create vectors
+      auto vecX = ((nlvls-1-lvl)%2 == 0 ? matT : matW);
+      auto vecY = ((nlvls-1-lvl)%2 == 0 ? matW : matT);
       if (s0.spmv_explicit_transpose) {
         status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_none, rocsparse_operation_none,
                                 &alpha, s0.descrL, vecX, &beta, vecY,
@@ -2405,9 +2452,12 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
                                 &s0.buffer_size_L, (void*)s0.buffer_L.data());
       }
     } else {
-      rocsparse_dnvec_descr vecX, vecY;
-      rocsparse_create_dnvec_descr(&vecX, m, (void*)((nlvls-1-lvl)%2 == 0 ? t.data() : w.data()), rocsparse_compute_type);
-      rocsparse_create_dnvec_descr(&vecY, m, (void*)((nlvls-1-lvl)%2 == 0 ? w.data() : t.data()), rocsparse_compute_type);
+      if (lvl == nlvls-1) {
+        // start : create DnVec for T
+        rocsparse_create_dnvec_descr(&vecT, m, (void*)(t.data()), rocsparse_compute_type);
+      }
+      auto vecX = ((nlvls-1-lvl)%2 == 0 ? vecT : vecW);
+      auto vecY = ((nlvls-1-lvl)%2 == 0 ? vecW : vecT);
       if (s0.spmv_explicit_transpose) {
         status =
           #if ROCM_VERSION >= 50400
@@ -2439,14 +2489,14 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       }
     }
     if (rocsparse_status_success != status) {
-      printf( " Failed rocsparse_spmv\n" );
+      printf( " Failed rocsparse_spmv for L\n" );
     }
 #else
     const ordinal_type nrhs = t.extent(1);
 
-    auto h_w = Kokkos::create_mirror_view(host_memory_space(), s0.w);
-    auto h_t = Kokkos::create_mirror_view(host_memory_space(),    t);
-    Kokkos::deep_copy(h_w, s0.w);
+    auto h_w = Kokkos::create_mirror_view(host_memory_space(), _w_vec);
+    auto h_t = Kokkos::create_mirror_view(host_memory_space(), t);
+    Kokkos::deep_copy(h_w, _w_vec);
     Kokkos::deep_copy(h_t, t);
 
     if (s0.spmv_explicit_transpose) {
@@ -2495,8 +2545,22 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
   for (int i = 0; i < h_w.extent(0); i++) printf( "%d %e\n",i,h_w(i,0));
   printf("];\n");
 }*/
-    if (lvl == 0 && (nlvls-1)%2 == 0) {
-      Kokkos::deep_copy(t, w);
+    if (lvl == 0) {
+      // end : destroy vectors
+#if defined(KOKKOS_ENABLE_CUDA)
+      if (nrhs > 1)
+        cusparseDestroyDnMat(matT);
+      else
+        cusparseDestroyDnVec(vecT);
+#elif defined(KOKKOS_ENABLE_HIP)
+      if (nrhs > 1)
+        rocsparse_destroy_dnmat_descr(matT);
+      else
+        rocsparse_destroy_dnvec_descr(vecT);
+#endif
+      if ((nlvls-1)%2 == 0) {
+        Kokkos::deep_copy(t, _w_vec);
+      }
     }
   }
 
@@ -2669,25 +2733,18 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     // compute t = L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (0);
-    if (_h_supernodes(_h_level_sids(0)).w.extent(1) < nrhs) {
-      Kokkos::resize(_h_supernodes(_h_level_sids(0)).w, m, nrhs);
-    }
-    auto w = _h_supernodes(_h_level_sids(0)).w; // always use first workspace
-						//
     const ordinal_type ldt = t.stride(1);
-    const ordinal_type ldw = w.stride(1);
+    const ordinal_type ldw = _w_vec.stride(1);
     #else
     exit(0);
     #endif
 #if defined(KOKKOS_ENABLE_CUDA)
-    cudaDataType computeType;
-    if (std::is_same<value_type, double>::value) {
-      computeType = CUDA_R_64F;
-    } else if (std::is_same<value_type, float>::value) {
+    cudaDataType computeType = CUDA_R_64F;
+    if (std::is_same<value_type, float>::value) {
       computeType = CUDA_R_32F;
-    } else {
+    } else if (!std::is_same<value_type, double>::value) {
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
-                               "LevelSetTools::solveCholeskyUpperOnDevice: ComputeSPMV only supported double or float");
+                               "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
     }
 
     cusparseStatus_t status;
@@ -2732,27 +2789,30 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     rocsparse_datatype rocsparse_compute_type = rocsparse_datatype_f64_r;
     if (std::is_same<value_type, float>::value) {
       rocsparse_compute_type = rocsparse_datatype_f32_r;
+    } else if (!std::is_same<value_type, double>::value) {
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error,
+                               "LevelSetTools::solveCholeskyLowerOnDevice: ComputeSPMV only supported double or float");
     }
     rocsparse_status status;
     if (nrhs > 1) {
-      rocsparse_dnmat_descr vecX, vecY;
-      if (lvl%2 == 0) {
-        rocsparse_create_dnmat_descr(&vecX, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
-        rocsparse_create_dnmat_descr(&vecY, m, nrhs, ldw, (void*)(w.data()), rocsparse_compute_type, rocsparse_order_column);
-      } else {
-        rocsparse_create_dnmat_descr(&vecX, m, nrhs, ldw, (void*)(w.data()), rocsparse_compute_type, rocsparse_order_column);
-        rocsparse_create_dnmat_descr(&vecY, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
+      if (lvl == 0) {
+        // start : create DnMat for T
+        rocsparse_create_dnmat_descr(&matT, m, nrhs, ldt, (void*)(t.data()), rocsparse_compute_type, rocsparse_order_column);
       }
+      auto vecX = (lvl%2 == 0 ? matT : matW);
+      auto vecY = (lvl%2 == 0 ? matW : matT);
       status = rocsparse_spmm(s0.rocsparseHandle, rocsparse_operation_none, rocsparse_operation_none,
                               &alpha, s0.descrU, vecX, &beta, vecY,
                               rocsparse_compute_type, rocsparse_spmm_alg_default,
                               rocsparse_spmm_stage_compute,
                               &s0.buffer_size_U, (void*)s0.buffer_U.data());
     } else {
-      rocsparse_dnvec_descr vecX, vecY;
-      rocsparse_create_dnvec_descr(&vecX, m, (void*)(lvl%2 == 0 ? t.data() : w.data()), rocsparse_compute_type);
-      rocsparse_create_dnvec_descr(&vecY, m, (void*)(lvl%2 == 0 ? w.data() : t.data()), rocsparse_compute_type);
-
+      if (lvl == 0) {
+        // start : create DnVec for T
+        rocsparse_create_dnvec_descr(&vecT, m, (void*)(t.data()), rocsparse_compute_type);
+      }
+      auto vecX = (lvl%2 == 0 ? vecT : vecW);
+      auto vecY = (lvl%2 == 0 ? vecW : vecT);
       status =
         #if ROCM_VERSION >= 50400
         rocsparse_spmv_ex
@@ -2768,7 +2828,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
            &s0.buffer_size_U, (void*)s0.buffer_U.data());
     }
     if (rocsparse_status_success != status) {
-      printf( " Failed rocsparse_spmv\n" );
+      printf( " Failed rocsparse_spmv for U\n" );
     }
 #else
     const ordinal_type nrhs = t.extent(1);
@@ -2776,9 +2836,9 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colindU);
     auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvalsU);
 
-    auto h_w = Kokkos::create_mirror_view(host_memory_space(), s0.w);
-    auto h_t = Kokkos::create_mirror_view(host_memory_space(),    t);
-    Kokkos::deep_copy(h_w, s0.w);
+    auto h_w = Kokkos::create_mirror_view(host_memory_space(), _w_vec);
+    auto h_t = Kokkos::create_mirror_view(host_memory_space(), t);
+    Kokkos::deep_copy(h_w, _w_vec);
     Kokkos::deep_copy(h_t, t);
     for (ordinal_type i = 0; i < m ; i++) {
       for (int k = h_rowptr(i); k < h_rowptr(i+1); k++) {
@@ -2789,8 +2849,22 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     }
     Kokkos::deep_copy(t, h_t);
 #endif
-    if (lvl == nlvls-1 && lvl%2 == 0) {
-      Kokkos::deep_copy(t, w);
+    if (lvl == nlvls-1) {
+      // end : destroy vectors
+#if defined(KOKKOS_ENABLE_CUDA)
+      if (nrhs > 1)
+        cusparseDestroyDnMat(matT);
+      else
+        cusparseDestroyDnVec(vecT);
+#elif defined(KOKKOS_ENABLE_HIP)
+      if (nrhs > 1)
+        rocsparse_destroy_dnmat_descr(matT);
+      else
+        rocsparse_destroy_dnvec_descr(vecT);
+#endif
+      if (lvl%2 == 0) {
+        Kokkos::deep_copy(t, _w_vec);
+      }
     }
   }
 
@@ -3562,21 +3636,24 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
   }
 
   inline void allocateWorkspaceSolve(const ordinal_type nrhs) {
-    const size_type buf_extent = _bufsize_solve * nrhs;
-    const size_type buf_span = _buf.span();
+    if (variant == 3) {
+    } else {
+      const size_type buf_extent = _bufsize_solve * nrhs;
+      const size_type buf_span = _buf.span();
 
-    if (buf_extent != buf_span) {
-      _buf = value_type_array(do_not_initialize_tag("buf"), buf_extent);
-      track_free(buf_span * sizeof(value_type));
-      track_alloc(_buf.span() * sizeof(value_type));
-      {
-        const Kokkos::RangePolicy<exec_space> policy(0, _buf_solve_ptr.extent(0));
-        const auto buf_solve_nrhs_ptr = _buf_solve_nrhs_ptr;
-        const auto buf_solve_ptr = _buf_solve_ptr;
-        Kokkos::parallel_for(
-            policy, KOKKOS_LAMBDA(const ordinal_type &i) { buf_solve_nrhs_ptr(i) = nrhs * buf_solve_ptr(i); });
+      if (buf_extent != buf_span) {
+        _buf = value_type_array(do_not_initialize_tag("buf"), buf_extent);
+        track_free(buf_span * sizeof(value_type));
+        track_alloc(_buf.span() * sizeof(value_type));
+        {
+          const Kokkos::RangePolicy<exec_space> policy(0, _buf_solve_ptr.extent(0));
+          const auto buf_solve_nrhs_ptr = _buf_solve_nrhs_ptr;
+          const auto buf_solve_ptr = _buf_solve_ptr;
+          Kokkos::parallel_for(
+              policy, KOKKOS_LAMBDA(const ordinal_type &i) { buf_solve_nrhs_ptr(i) = nrhs * buf_solve_ptr(i); });
+        }
+        Kokkos::deep_copy(_h_buf_solve_nrhs_ptr, _buf_solve_nrhs_ptr);
       }
-      Kokkos::deep_copy(_h_buf_solve_nrhs_ptr, _buf_solve_nrhs_ptr);
     }
   }
 
