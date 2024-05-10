@@ -92,7 +92,8 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   Tacho::printExecSpaceConfiguration<typename host_device_type::execution_space>("HostSpace", detail);
   std::cout << "     Method Name:: " << method_name << std::endl;
   std::cout << "     Solver Type:: " << variant << std::endl;
-  std::cout << "       # Streams:: " << nstreams;
+  std::cout << "       # Streams:: " << nstreams << std::endl;
+  std::cout << "          # RHSs:: " << nrhs;
   std::cout << std::endl << "    --------------------- " << std::endl << std::endl;
 
   int r_val = 0;

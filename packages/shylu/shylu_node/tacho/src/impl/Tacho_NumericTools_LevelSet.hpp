@@ -1963,6 +1963,7 @@ time5 += timer.seconds();
                                 computeType, CUSPARSE_MV_ALG_DEFAULT, &s0.buffer_size_L);
 #endif
       }
+      // TODO : move this workspace out to NumericTools_LevelSet
       Kokkos::resize(s0.buffer_U, s0.buffer_size_U);
       Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
 #elif defined(KOKKOS_ENABLE_HIP)
@@ -1984,6 +1985,7 @@ time5 += timer.seconds();
            rocsparse_spmv_stage_buffer_size,
            #endif
            &s0.buffer_size_U, nullptr);
+      // TODO : move this workspace out to NumericTools_LevelSet
       if (s0.buffer_size_U > 0) {
         Kokkos::resize(s0.buffer_U, s0.buffer_size_U);
       }
@@ -2015,6 +2017,7 @@ time5 += timer.seconds();
            rocsparse_spmv_stage_buffer_size,
            #endif
            &s0.buffer_size_L, nullptr);
+        // TODO : move this workspace out to NumericTools_LevelSet
         if (s0.buffer_size_L > 0) {
           Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
         }
@@ -2046,6 +2049,7 @@ time5 += timer.seconds();
            rocsparse_spmv_stage_buffer_size,
            #endif
            &s0.buffer_size_L, nullptr);
+        // TODO : move this workspace out to NumericTools_LevelSet
         if (s0.buffer_size_L > 0) {
           Kokkos::resize(s0.buffer_L, s0.buffer_size_L);
         }
@@ -2361,7 +2365,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     const value_type beta  (0);
     if (_w_vec.extent(0) < m || _w_vec.extent(1) < nrhs) {
       // expand workspace
-      printf( " W.resize(%d, %d) -> (%dx%d)\n",int(_w_vec.extent(0)),int(_w_vec.extent(1)),int(m),int(nrhs) );
+      printf( " > W.resize(%d, %d) -> (%dx%d)\n",int(_w_vec.extent(0)),int(_w_vec.extent(1)),int(m),int(nrhs) );
       Kokkos::resize(_w_vec, m, nrhs);
       // attach to Cusparse/Rocsparse data struct
       int ldw = _w_vec.stride(1);
@@ -2493,12 +2497,10 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       printf( " Failed rocsparse_spmv for L\n" );
     }
 #else
-    const ordinal_type nrhs = t.extent(1);
-
-    auto h_w = Kokkos::create_mirror_view(host_memory_space(), _w_vec);
-    auto h_t = Kokkos::create_mirror_view(host_memory_space(), t);
-    Kokkos::deep_copy(h_w, _w_vec);
-    Kokkos::deep_copy(h_t, t);
+    const value_type zero(0);
+    auto h_w = Kokkos::create_mirror_view_and_copy(host_memory_space(), ((nlvls-1-lvl)%2 == 0 ? t : _w_vec));
+    auto h_t = Kokkos::create_mirror_view(host_memory_space(), ((nlvls-1-lvl)%2 == 0 ? _w_vec : t));
+    Kokkos::deep_copy(h_t, zero);
 
     if (s0.spmv_explicit_transpose) {
       auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrL);
@@ -2523,7 +2525,6 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
         }
       }
     }
-    Kokkos::deep_copy(t, h_t);
 #endif
 /*if ((nlvls-1-lvl)%2 == 0) {
   auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
@@ -2825,15 +2826,15 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       printf( " Failed rocsparse_spmv for U\n" );
     }
 #else
-    const ordinal_type nrhs = t.extent(1);
+    const value_type zero(0);
+    auto h_w = Kokkos::create_mirror_view_and_copy(host_memory_space(), (lvl%2 == 0 ? t : _w_vec));
+    auto h_t = Kokkos::create_mirror_view(host_memory_space(), (lvl%2 == 0 ? _w_vec : t));
+    Kokkos::deep_copy(h_t, zero);
+
     auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrU);
     auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colindU);
     auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvalsU);
 
-    auto h_w = Kokkos::create_mirror_view(host_memory_space(), _w_vec);
-    auto h_t = Kokkos::create_mirror_view(host_memory_space(), t);
-    Kokkos::deep_copy(h_w, _w_vec);
-    Kokkos::deep_copy(h_t, t);
     for (ordinal_type i = 0; i < m ; i++) {
       for (int k = h_rowptr(i); k < h_rowptr(i+1); k++) {
         for (int j = 0; j < nrhs; j++) {
