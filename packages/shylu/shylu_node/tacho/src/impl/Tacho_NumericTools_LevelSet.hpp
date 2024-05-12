@@ -1631,13 +1631,13 @@ timer.reset();
 
       // ========================
       // shift to generate rowptr
+      using range_type = Kokkos::pair<int, int>;
       ordinal_type nnz = 0;
       {
         using range_policy_type = Kokkos::RangePolicy<exec_space>;
         Kokkos::parallel_scan("shiftRowptr", range_policy_type(0, m+1), rowptr_sum(s0.rowptrU));
         exec_space().fence();
         // get nnz
-        using range_type    = Kokkos::pair<int, int>;
         auto d_nnz = Kokkos::subview(s0.rowptrU, range_type(m, m+1));
         auto h_nnz = Kokkos::create_mirror_view_and_copy(host_memory_space(), d_nnz);
         nnz = h_nnz(0);
@@ -1648,7 +1648,7 @@ timer.reset();
 #endif
 
       // ========================
-      // allocate
+      // allocate (TODO: move to symbolic)
       Kokkos::resize(s0.colindU, nnz);
       Kokkos::resize(s0.nzvalsU, nnz);
 #ifdef TACHO_TIMER_
@@ -1675,7 +1675,8 @@ timer.reset();
 
       {
         // ========================
-        // copy to CPU, for now
+        // shift back (TODO: shift first to avoid this)
+        //  copy to CPU, for now
         auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrU);
         for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
         h_rowptr(0) = 0;
@@ -1701,153 +1702,60 @@ timer.reset();
       s0.spmv_explicit_transpose = true;
 #else
       s0.spmv_explicit_transpose = false; // okay for SpMV,
-      s0.spmv_explicit_transpose = true;  // but for SpMM?
+      //s0.spmv_explicit_transpose = true;  // but for SpMM?
 #endif
       if (lu) {
         s0.spmv_explicit_transpose = true;
 
         // get nnz per row (L is stored by column)
         Kokkos::resize(s0.rowptrL, 1+m);
-        auto h_rowptr = Kokkos::create_mirror_view(host_memory_space(), s0.rowptrL);
-        Kokkos::deep_copy(h_rowptr, 0);
-
+        Kokkos::deep_copy(s0.rowptrL, 0);
         ordinal_type nnz = 0;
-        ordinal_type row_id = 0;
-        auto h_blk_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.sid_block_colidx);
-        auto h_gid_colidx = Kokkos::create_mirror_view_and_copy(host_memory_space(), _info.gid_colidx);
-        for (ordinal_type p = pbeg; p < pend; ++p) {
-          const ordinal_type sid = _h_level_sids(p);
-          if (_h_solve_mode(sid) == 0) {
-            const auto &s = _h_supernodes(sid);
-            const ordinal_type offm = s.row_begin;
-            const ordinal_type offn = s.gid_col_begin;
+        {
+          using team_policy_type = Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Static>, exec_space,
+                                                      typename functor_type::ExtractPtrColTag>;
+          team_policy_type team_policy((pend-pbeg)+1, Kokkos::AUTO());
 
-            // add missing diagonals
-            for (ordinal_type i = row_id; i < offm; i++) {
-              h_rowptr(1+i) ++;
-              nnz++;
-            }
-            row_id = offm+s.m;
+          extractor_crs.setRowPtr(s0.rowptrL);
+          Kokkos::parallel_for("extract rowptr L", team_policy, extractor_crs);
+          exec_space().fence();
+        }
+        {
+          // convert to offset (on CPU for now)
+          using range_policy_type = Kokkos::RangePolicy<exec_space>;
+          Kokkos::parallel_scan("shiftRowptr L", range_policy_type(0, m+1), rowptr_sum(s0.rowptrL));
+          exec_space().fence();
+          // get nnz
+          auto d_nnz = Kokkos::subview(s0.rowptrL, range_type(m, m+1));
+          auto h_nnz = Kokkos::create_mirror_view_and_copy(host_memory_space(), d_nnz);
+          nnz = h_nnz(0);
+        }
 
-            // count
-            UnmanagedViewType<value_type_matrix> AL(s.l_buf, s.n, s.m);
-            auto h_AL = Kokkos::create_mirror_view_and_copy(host_memory_space(), AL);
-            for (ordinal_type j = 0; j < s.m; j++) {
-              // diagonals
-              for (ordinal_type i = 0; i < s.m; i++) {
-                if (h_AL(i,j) != zero) {
-                  h_rowptr(1+i+offm) ++;
-                  nnz++;
-                }
-              }
-              // off-diagonals
-              ordinal_type i = s.m;
-              for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
-                for (ordinal_type k = h_blk_colidx(id).second; k < h_blk_colidx(id + 1).second; k++) {
-                  if (h_AL(i, j) != zero) {
-                    ordinal_type gid_i = h_gid_colidx(k+offn);
-                    h_rowptr(1+gid_i) ++;
-                    nnz++;
-                  }
-                  i++;
-                }
-              }
-            }
-          }
-        }
-        // remaining missing diagonals
-        for (ordinal_type i = row_id; i < m; i++) {
-          h_rowptr(1+i) ++;
-          nnz ++;
-        }
-        // convert to offset
-        for (ordinal_type i = 0; i < m; i++) h_rowptr(i+1) += h_rowptr(i);
-        // allocate
+        // allocate (TODO: move to symbolic)
         Kokkos::resize(s0.colindL, nnz);
         Kokkos::resize(s0.nzvalsL, nnz);
-        auto h_colind = Kokkos::create_mirror_view(host_memory_space(), s0.colindL);
-        auto h_nzvals = Kokkos::create_mirror_view(host_memory_space(), s0.nzvalsL);
 
-        // insert
-        row_id = 0;
-        for (ordinal_type p = pbeg; p < pend; ++p) {
-          const ordinal_type sid = _h_level_sids(p);
-          if (_h_solve_mode(sid) == 0) {
-            const auto &s = _h_supernodes(sid);
-            const ordinal_type offm = s.row_begin;
-            const ordinal_type offn = s.gid_col_begin;
+        // insert nonzeros
+        extractor_crs.setCrsView(s0.colindL, s0.nzvalsL);
+        extractor_crs.setPivPtr(_piv);
+        {
+          using team_policy_type = Kokkos::TeamPolicy<Kokkos::Schedule<Kokkos::Static>, exec_space,
+                                                      typename functor_type::ExtractValColTag>;
+          team_policy_type team_policy((pend-pbeg)+1, Kokkos::AUTO());
 
-            // missing diagonals
-            for (ordinal_type i = row_id; i < offm; i++) {
-              nnz = h_rowptr(i);
-              h_colind(nnz) = i;
-              h_nzvals(nnz) = one;
-              h_rowptr(i) ++;
-            }
-            row_id = offm+s.m;
-
-            // permutation
-            bool no_perm = s.do_not_apply_pivots;
-            ConstUnmanagedViewType<ordinal_type_array> perm(_piv.data() + 4 * offm + 2 * s.m, s.m);
-            auto h_perm = Kokkos::create_mirror_view_and_copy(host_memory_space(), perm);
-            #if 0
-            if (no_perm) {
-              printf( "\n ** No permutation **\n\n" );
-            } else {
-              printf( "\n Permutation(offm=%d, m=%d)\n",offm,s.m );
-              printf("> perm=[\n" );
-              for (int i=0; i < s.m; i++) {
-                if (i!=h_perm[i]) printf( "%d : %d %d\n",i,h_perm[i], h_perm[i]+offm );
-              }
-              printf("];\n\n");
-            }
-            #endif
-            // insert non-zeros
-            UnmanagedViewType<value_type_matrix> AL(s.l_buf, s.n, s.m);
-            auto h_AL = Kokkos::create_mirror_view_and_copy(host_memory_space(), AL);
-            for (ordinal_type j = 0; j < s.m; j++) {
-              ordinal_type gid_j = (no_perm ? j+offm : h_perm(j)+offm);
-              // diagonals
-              for (ordinal_type i = 0; i < s.m; i++) {
-                if (h_AL(i,j) != zero) {
-                  nnz = h_rowptr(i+offm);
-                  h_colind(nnz) = gid_j;
-                  h_nzvals(nnz) = h_AL(i,j);
-                  h_rowptr(i+offm) ++;
-                }
-              }
-              // off-diagonals
-              ordinal_type i = s.m;
-              for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
-                for (ordinal_type k = h_blk_colidx(id).second; k < h_blk_colidx(id + 1).second; k++) {
-                  if (h_AL(i, j) != zero) {
-                    ordinal_type gid_i = h_gid_colidx(k+offn);
-
-                    nnz = h_rowptr(gid_i);
-                    h_colind(nnz) = gid_j;
-                    h_nzvals(nnz) = h_AL(i,j);
-                    h_rowptr(gid_i) ++;
-                  }
-                  i++;
-                }
-              }
-            }
-          }
+          // >> launch functor to extract nonzero entries
+          Kokkos::parallel_for("extract nzvals L", team_policy, extractor_crs);
+          exec_space().fence();
         }
-        for (ordinal_type i = row_id; i < m; i++) {
-          nnz = h_rowptr(i);
-          h_colind(nnz) = i;
-          h_nzvals(nnz) = one;
-          h_rowptr(i) ++;
+        {
+          // ========================
+          // shift back (TODO: shift first to avoid this)
+          //  copy to CPU, for now
+          auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrL);
+          for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
+          h_rowptr(0) = 0;
+          Kokkos::deep_copy(s0.rowptrL, h_rowptr);
         }
-        // shift back
-        for (ordinal_type i = m; i > 0 ; i--) h_rowptr(i) = h_rowptr(i-1);
-        h_rowptr(0) = 0;
-
-        // copy to GPU
-        Kokkos::deep_copy(s0.rowptrL, h_rowptr);
-        Kokkos::deep_copy(s0.colindL, h_colind);
-        Kokkos::deep_copy(s0.nzvalsL, h_nzvals);
       } else if (s0.spmv_explicit_transpose) {
         // ========================
         // transpose
@@ -3442,26 +3350,10 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
               UnmanagedViewType<value_type_matrix> bT(bptr, m, nrhs);
               ConstUnmanagedViewType<ordinal_type_array> perm(_piv.data() + 4 * offm + 2 * m, m);
               _status = Copy<Algo::OnDevice>::invoke(exec_instance, bT, tT);
-//if (lvl == 18) 
-/*{
-  auto h_perm = Kokkos::create_mirror_view_and_copy(host_memory_space(), perm);
-  printf(" * perm=[\n" );
-  for (int i=0; i < m; i++) if (i!=h_perm[i]) printf( "%d %d\n",i,h_perm[i] );
-  printf("];\n");
-}*/
 
               _status =
                   ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, bT, perm, tT);
             }
-/*if (lvl == 18) {
-  auto h_AL = Kokkos::create_mirror_view_and_copy(host_memory_space(), AL);
-  printf(" *AL(%dx%d)=[\n",n,m );
-  for (int i=0; i < n; i++) {
-    for (int j=0; j < m; j++)  printf( "%e ",h_AL(i,j) );
-    printf("\n");
-  }
-  printf("];\n");
-}*/
             _status = Gemv<Trans::NoTranspose, Algo::OnDevice>::invoke(handle_blas, one, AL, tT, zero, b);
             checkDeviceBlasStatus("gemv");
           }
@@ -4436,20 +4328,9 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
         team_policy_update policy_update(1, 1, 1);
 
         //  1. L w = t
-        Kokkos::Timer timer_l;
-        timer_l.reset();
         {
-//printf(" ***** Lsolve ******\n" );
           for (ordinal_type lvl = (_team_serial_level_cut - 1); lvl >= 0; --lvl) {
             const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1), pcnt = pend - pbeg;
-/*printf( "\n == lvl = %d (%d:%d) ==\n",lvl,pbeg,pend );
-if (variant != 3) {
-  auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
-  printf( "w=[\n");
-  for (int i=0; i<h_t.extent(0); i++) printf("%d %e\n",i,h_t(i,0));
-  printf("];\n");
-}*/
-
             const range_type range_solve_buf_ptr(_h_buf_level_ptr(lvl), _h_buf_level_ptr(lvl + 1));
 
             const auto solve_buf_ptr = Kokkos::subview(_buf_solve_nrhs_ptr, range_solve_buf_ptr);
@@ -4490,16 +4371,8 @@ if (variant != 3) {
               ++stat_level.n_kernel_launching;
               exec_space().fence();
             }
-/*if (variant != 3) {
-  auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
-  printf( "t=[\n");
-  for (int i=0; i<h_t.extent(0); i++) printf("%d %e\n",i,h_t(i,0));
-  printf("];\n");
-}*/
           }
         }
-        //double time_l = timer_l.seconds();
-        //printf( " L => %e\n",time_l);
       } // end of lower tri solve
 
       {
@@ -4523,12 +4396,8 @@ if (variant != 3) {
         team_policy_update policy_update(1, 1, 1);
 
         //  2. U t = w;
-        Kokkos::Timer timer_u;
-        timer_u.reset();
         {
-          Kokkos::Timer timer_j;
           for (ordinal_type lvl = 0; lvl < _team_serial_level_cut; ++lvl) {
-            timer_j.reset();
             const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1), pcnt = pend - pbeg;
 
             const range_type range_solve_buf_ptr(_h_buf_level_ptr(lvl), _h_buf_level_ptr(lvl + 1));
@@ -4570,17 +4439,12 @@ if (variant != 3) {
             if (variant != 3) {
               Kokkos::fence();
             }
-            //double time_j = timer_j.seconds();
-            //printf( " %d %e\n",lvl,time_j);
           }
         }
-        //double time_u = timer_u.seconds();
-        //printf( " U => %e\n",time_u);
       } /// end of upper tri solve
 
     } // end of solve
-    //stat.t_solve = timer.seconds();
-    //printf( " solve : %e\n",stat.t_solve );
+    stat.t_solve = timer.seconds();
 
     // permute and copy t -> x
     timer.reset();

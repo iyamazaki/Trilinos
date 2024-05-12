@@ -81,6 +81,8 @@ private:
   rowptr_view _rowptrT;
   colind_view _colindT;
   nzvals_view _nzvalsT;
+  // pivot
+  ordinal_type_array _piv;
 
 public:
   KOKKOS_INLINE_FUNCTION
@@ -110,15 +112,19 @@ public:
     _colindT = colindT;
     _nzvalsT = nzvalsT;
   }
+  inline void setPivPtr(ordinal_type_array &piv) { _piv = piv; }
 
   struct ExtractPtrTag {};
   struct ExtractValTag {};
+  struct ExtractPtrColTag {};
+  struct ExtractValColTag {};
   struct TransPtrTag {};
   struct TransMatTag {};
 
 
   // ---------------------------------------
   // Functors to convert to CRS format
+  //  from row-major
   template <typename MemberType>
   KOKKOS_INLINE_FUNCTION void operator()(const ExtractPtrTag &, const MemberType &member) const {
     const ordinal_type id = member.league_rank();
@@ -140,13 +146,14 @@ public:
         const auto &prev_s = _info.supernodes(prev_sid);
         row_id = prev_s.row_begin + prev_s.m;
       }
+      // add diagonal entry
       Kokkos::parallel_for(Kokkos::TeamThreadRange(member, offm-row_id),
                           [&](const int& i) { _rowptr(row_id+i+1) = 1; });
       #endif
       if (p < _pend) {
-        // extract this supernode
-        //  stored by row, but checking for nonzereo (instead of just taking all s.n nonzereos)
         if (s.m > 0) {
+          // extract this supernode
+          //  stored by row, but checking for nonzereo (instead of just taking all s.n nonzereos)
           value_type *aptr = s.u_buf;
           UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
           Kokkos::parallel_for(Kokkos::TeamThreadRange(member, s.m),
@@ -162,7 +169,6 @@ public:
       }
     }
   }
-
 
   template <typename MemberType>
   KOKKOS_INLINE_FUNCTION void operator()(const ExtractValTag &, const MemberType &member) const {
@@ -196,8 +202,8 @@ public:
                           });
       #endif
       if (p < _pend) {
-        // extract this supernode
         if (s.m > 0) {
+          // extract this supernode
           value_type *aptr = s.u_buf;
           UnmanagedViewType<value_type_matrix> AT(aptr, s.m, s.n);
           Kokkos::parallel_for(Kokkos::TeamThreadRange(member, s.m),
@@ -231,15 +237,133 @@ public:
     }
   }
 
-  template <typename UpdateType>
-  KOKKOS_INLINE_FUNCTION void operator()(const ordinal_type i, UpdateType& update,
-                                         const bool is_final) const {
-    const ordinal_type val_i = _rowptr(i);
-    update += val_i;
-    if (is_final) {
-      _rowptr(i + 1) = update;
+  // ---------------------------------------
+  // Functors to convert to CRS format
+  //  from col-major
+  template <typename MemberType>
+  KOKKOS_INLINE_FUNCTION void operator()(const ExtractPtrColTag &, const MemberType &member) const {
+    const ordinal_type id = member.league_rank();
+    const ordinal_type p = _pbeg + id;
+
+    const value_type zero(0);
+    const ordinal_type sid  = (p == _pend ? 0 : _level_sids(p));
+    const ordinal_type mode = (p == _pend ? 0 : _compute_mode(sid));
+    if (mode == 0) {
+      // extract this supernode
+      const auto &s  = _info.supernodes(sid);
+      const ordinal_type offm = (p == _pend ? _m : s.row_begin);
+      const ordinal_type offn = (p == _pend ?  0 : s.gid_col_begin);
+      #ifdef TACHO_INSERT_DIAGONALS
+      // last row of previous supernode
+      ordinal_type row_id = 0;
+      if (p > _pbeg) {
+        const ordinal_type prev_sid = _level_sids(p-1);
+        const auto &prev_s = _info.supernodes(prev_sid);
+        row_id = prev_s.row_begin + prev_s.m;
+      }
+      // add diagonal entry
+      Kokkos::parallel_for(Kokkos::TeamThreadRange(member, offm-row_id),
+                          [&](const int& i) { Kokkos::atomic_add(&(_rowptr(row_id+i+1)), 1); });
+      #endif
+      if (p < _pend) {
+        // extract this supernode (AL is stored by col)
+        if (s.m > 0) {
+          value_type *aptr = s.l_buf;
+          UnmanagedViewType<value_type_matrix> AL(aptr, s.n, s.m);
+          Kokkos::parallel_for(Kokkos::TeamThreadRange(member, s.m),
+                               [&](const int& j) {
+                                 // first extract diagnal block (each thread extract row in parallel)
+                                 for (ordinal_type i = 0; i < s.m; i++) {
+                                   if (AL(i,j) != zero) {
+                                     Kokkos::atomic_add(&(_rowptr(1+i+offm)), 1);
+                                   }
+                                 }
+                                 // off-diagonals (each thread extract col, needing atomic-add)
+                                 ordinal_type i = s.m;
+                                 for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
+                                   for (ordinal_type k = _info.sid_block_colidx(id).second; k < _info.sid_block_colidx(id + 1).second; k++) {
+                                     if (AL(i, j) != zero) {
+                                       ordinal_type gid_i = _info.gid_colidx(k+offn);
+                                       Kokkos::atomic_add(&(_rowptr(1+gid_i)), 1);
+                                     }
+                                     i++;
+                                   }
+                                 }
+                               });
+        }
+      }
     }
   }
+
+  template <typename MemberType>
+  KOKKOS_INLINE_FUNCTION void operator()(const ExtractValColTag &, const MemberType &member) const {
+    const ordinal_type id = member.league_rank();
+    const ordinal_type p = _pbeg + id;
+
+    const value_type zero(0);
+    const value_type one (1);
+    const ordinal_type sid  = (p == _pend ? 0 : _level_sids(p));
+    const ordinal_type mode = (p == _pend ? 0 : _compute_mode(sid));
+    if (mode == 0) {
+      // extract this supernode
+      const auto &s  = _info.supernodes(sid);
+      const ordinal_type offm = (p == _pend ? _m : s.row_begin);
+      const ordinal_type offn = (p == _pend ?  0 : s.gid_col_begin);
+      #ifdef TACHO_INSERT_DIAGONALS
+      // last row of previous supernode
+      ordinal_type row_id = 0;
+      if (p > _pbeg) {
+        const ordinal_type prev_sid = _level_sids(p-1);
+        const auto &prev_s = _info.supernodes(prev_sid);
+        row_id = prev_s.row_begin + prev_s.m;
+      }
+      // add diagonal entry
+      Kokkos::parallel_for(Kokkos::TeamThreadRange(member, offm-row_id),
+                          [&](const int& i) {
+                            ordinal_type nnz = Kokkos::atomic_fetch_add(&(_rowptr(row_id+i)), 1);
+                            _colind(nnz) = row_id+i;
+                            _nzvals(nnz) = one;
+                          });
+      #endif
+      if (p < _pend) {
+        // extract this supernode
+        //  stored by col
+        if (s.m > 0) {
+          bool no_perm = s.do_not_apply_pivots;
+          ConstUnmanagedViewType<ordinal_type_array> perm(_piv.data() + 4 * offm + 2 * s.m, s.m);
+
+          value_type *aptr = s.l_buf;
+          UnmanagedViewType<value_type_matrix> AL(aptr, s.n, s.m);
+          Kokkos::parallel_for(Kokkos::TeamThreadRange(member, s.m),
+                               [&](const int& j) {
+                                 ordinal_type gid_j = (no_perm ? j+offm : perm(j)+offm);
+                                 // diagnal block 
+                                 for (ordinal_type i = 0; i < s.m; i++) {
+                                   if (AL(i,j) != zero) {
+                                     ordinal_type nnz = Kokkos::atomic_fetch_add(&(_rowptr(offm+i)), 1);
+                                     _colind(nnz) = gid_j;
+                                     _nzvals(nnz) = AL(i,j);
+                                   }
+                                 }
+                                 // off-diagonals (each thread extract col, needing atomic-add)
+                                 ordinal_type i = s.m;
+                                 for (ordinal_type id = s.sid_col_begin + 1; id < s.sid_col_end - 1; id++) {
+                                   for (ordinal_type k = _info.sid_block_colidx(id).second; k < _info.sid_block_colidx(id + 1).second; k++) {
+                                     if (AL(i, j) != zero) {
+                                       ordinal_type gid_i = _info.gid_colidx(k+offn);
+                                       ordinal_type nnz = Kokkos::atomic_fetch_add(&(_rowptr(gid_i)), 1);
+                                       _colind(nnz) = gid_j;
+                                       _nzvals(nnz) = AL(i,j);
+                                     }
+                                     i++;
+                                   }
+                                 }
+                               });
+        }
+      }
+    }
+  }
+
 
   // ---------------------------------------
   // Functors to transpose

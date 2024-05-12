@@ -42,6 +42,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   int device_solve_thres = 128;
   int variant = 0;
   int nstreams = 8;
+  bool no_warmup = false;
   int nfacts = 2;
   int nsolves = 10;
 
@@ -62,6 +63,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   opts.set_option<int>("device-solve-thres", "Device function is used above this subproblem size", &device_solve_thres);
   opts.set_option<int>("variant", "algorithm variant in levelset scheduling; 0, 1 and 2", &variant);
   opts.set_option<int>("nstreams", "# of streams used in CUDA; on host, it is ignored", &nstreams);
+  opts.set_option<bool>("no-warmup", "Flag to turn off warmup", &no_warmup);
   opts.set_option<int>("nfacts", "# of factorizations to perform", &nfacts);
   opts.set_option<int>("nsolves", "# of solves to perform", &nsolves);
 
@@ -193,7 +195,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
     double initi_time = timer.seconds();
 
     /// symbolic structure can be reused
-    {
+    if (!no_warmup) {
       // warm-up
       solver.factorize(values_on_device);
     }
@@ -219,7 +221,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
     }
 
     double solve_time = 0.0;
-    {
+    if (!no_warmup) {
       // warm-up
       timer.reset();
       solver.solve(x, b, t);
