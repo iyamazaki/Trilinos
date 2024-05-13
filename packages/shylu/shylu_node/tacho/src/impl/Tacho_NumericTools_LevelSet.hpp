@@ -2277,7 +2277,7 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     // compute t = L^{-1}*w
     const value_type alpha (1);
     const value_type beta  (0);
-    if (_w_vec.extent(0) < m || _w_vec.extent(1) < nrhs) {
+    if (_w_vec.extent(1) != nrhs) {
       // expand workspace
       printf( " > W.resize(%d, %d) -> (%dx%d)\n",int(_w_vec.extent(0)),int(_w_vec.extent(1)),int(m),int(nrhs) );
       Kokkos::resize(_w_vec, m, nrhs);
