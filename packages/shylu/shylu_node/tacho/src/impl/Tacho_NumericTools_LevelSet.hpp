@@ -1581,18 +1581,6 @@ public:
     rocsparse_create_dnvec_descr(&vecY, m, (void*)_w_vec.data(), rocsparse_compute_type);
 #endif
 
-//#define TACHO_TIMER_
-#ifdef TACHO_TIMER_
-Kokkos::Timer Timer;
-Kokkos::Timer timer;
-double time0 = 0.0;
-double time1 = 0.0;
-double time2 = 0.0;
-double time3 = 0.0;
-double time4 = 0.0;
-double time5 = 0.0;
-Timer.reset();
-#endif
     for (ordinal_type lvl = 0; lvl < _team_serial_level_cut; ++lvl) {
       //printf( "\n\n == lvl = %d ==\n",lvl );
       const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
@@ -1603,9 +1591,6 @@ Timer.reset();
       #define TACHO_INSERT_DIAGONALS
       // NOTE: this needs extra vector-entry copy for the non-active rows at each level for solve (copy t to w, and w back to t)
       //       but it seems faster on AMD 250X GPU, and not much performance impact on V100
-#ifdef TACHO_TIMER_
-timer.reset();
-#endif
       #define TACHO_INSERT_DIAGONALS
       // ========================
       // count nnz / row
@@ -1624,10 +1609,6 @@ timer.reset();
         Kokkos::parallel_for("extract rowptr", team_policy, extractor_crs);
         exec_space().fence();
       }
-#ifdef TACHO_TIMER_
-time0 += timer.seconds();
-timer.reset();
-#endif
 
       // ========================
       // shift to generate rowptr
@@ -1642,19 +1623,11 @@ timer.reset();
         auto h_nnz = Kokkos::create_mirror_view_and_copy(host_memory_space(), d_nnz);
         nnz = h_nnz(0);
       }
-#ifdef TACHO_TIMER_
-time1 += timer.seconds();
-timer.reset();
-#endif
 
       // ========================
       // allocate (TODO: move to symbolic)
       Kokkos::resize(s0.colindU, nnz);
       Kokkos::resize(s0.nzvalsU, nnz);
-#ifdef TACHO_TIMER_
-time2 += timer.seconds();
-timer.reset();
-#endif
 
       // ========================
       // extract nonzero element
@@ -1668,10 +1641,6 @@ timer.reset();
         Kokkos::parallel_for("extract nzvals", team_policy, extractor_crs);
         exec_space().fence();
       }
-#ifdef TACHO_TIMER_
-time3 += timer.seconds();
-timer.reset();
-#endif
 
       {
         // ========================
@@ -1682,27 +1651,11 @@ timer.reset();
         h_rowptr(0) = 0;
         Kokkos::deep_copy(s0.rowptrU, h_rowptr);
       }
-#ifdef TACHO_TIMER_
-time4 += timer.seconds();
-timer.reset();
-#endif
-      /*{
-        auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrU);
-        auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colindU);
-        auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvalsU);
-        char filename[200];
-        sprintf(filename,"U_%d.mtx", lvl);
-        FILE *fp = fopen(filename,"w");
-        fprintf(fp,"%d %d %d\n",(int)m,(int)m,(int)h_rowptr(m));
-        for (ordinal_type i = 0; i < m; i++) for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) fprintf(fp,"%d %d %e\n",1+i,1+h_colind(k),h_nzvals(k));
-        fclose(fp);
-      }*/
 
 #if defined(KOKKOS_ENABLE_HIP)
       s0.spmv_explicit_transpose = true;
 #else
-      s0.spmv_explicit_transpose = false; // okay for SpMV,
-      //s0.spmv_explicit_transpose = true;  // but for SpMM?
+      s0.spmv_explicit_transpose = false; // okay for SpMV, though may not for SpMM
 #endif
       if (lu) {
         s0.spmv_explicit_transpose = true;
@@ -1794,25 +1747,6 @@ timer.reset();
           Kokkos::deep_copy(s0.rowptrL, h_rowptr);
         }
       }
-      /*if (lu || s0.spmv_explicit_transpose) {
-        auto h_rowptr = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.rowptrL);
-        auto h_colind = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.colindL);
-        auto h_nzvals = Kokkos::create_mirror_view_and_copy(host_memory_space(), s0.nzvalsL);
-
-        char filename[200];
-        sprintf(filename,"L_%d.mtx", lvl);
-        FILE *fp = fopen(filename,"w");
-        fprintf(fp,"%d %d %d\n",h_rowptr.extent(0)-1,h_rowptr.extent(0)-1,h_colind.extent(0));
-        for (ordinal_type i = 0; i < m; i++) {
-          for (ordinal_type k = h_rowptr(i); k < h_rowptr(i+1); k++) {
-            fprintf(fp,"%d %d %e\n",1+i,1+h_colind(k),h_nzvals(k));
-          }
-        }
-        fclose(fp);
-      }*/
-#ifdef TACHO_TIMER_
-time5 += timer.seconds();
-#endif
 
       size_t buffer_size_L = 0;
       size_t buffer_size_U = 0;
@@ -1990,11 +1924,6 @@ time5 += timer.seconds();
 #elif defined(KOKKOS_ENABLE_HIP)
     rocsparse_destroy_dnvec_descr(vecX);
     rocsparse_destroy_dnvec_descr(vecY);
-#endif
-
-#ifdef TACHO_TIMER_
-double ttime = Timer.seconds();
-std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 << " " << time3 << " " << time4 << " " << time5 << " -> " << ttime << std::endl << std::endl;
 #endif
   }
 
@@ -2279,7 +2208,6 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
     const value_type beta  (0);
     if (_w_vec.extent(1) != nrhs) {
       // expand workspace
-      printf( " > W.resize(%d, %d) -> (%dx%d)\n",int(_w_vec.extent(0)),int(_w_vec.extent(1)),int(m),int(nrhs) );
       Kokkos::resize(_w_vec, m, nrhs);
       // attach to Cusparse/Rocsparse data struct
       int ldw = _w_vec.stride(1);
@@ -2443,27 +2371,6 @@ std::cout << std::endl << " Time : " << time0 << " " << time1 << " " << time2 <<
       }
     }
 #endif
-/*if ((nlvls-1-lvl)%2 == 0) {
-  auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
-  printf("w=[\n");
-  for (int i = 0; i < h_t.extent(0); i++) printf( "%d %e\n",i,h_t(i,0));
-  printf("];\n");
-
-  auto h_w = Kokkos::create_mirror_view_and_copy(host_memory_space(), w);
-  printf("t=[\n");
-  for (int i = 0; i < h_w.extent(0); i++) printf( "%d %e\n",i,h_w(i,0));
-  printf("];\n");
-} else {
-  auto h_t = Kokkos::create_mirror_view_and_copy(host_memory_space(), w);
-  printf("w=[\n");
-  for (int i = 0; i < h_t.extent(0); i++) printf( "%d %e\n",i,h_t(i,0));
-  printf("];\n");
-
-  auto h_w = Kokkos::create_mirror_view_and_copy(host_memory_space(), t);
-  printf("t=[\n");
-  for (int i = 0; i < h_w.extent(0); i++) printf( "%d %e\n",i,h_w(i,0));
-  printf("];\n");
-}*/
     if (lvl == 0) {
       // end : destroy vectors
 #if defined(KOKKOS_ENABLE_CUDA)
