@@ -89,12 +89,14 @@ namespace FROSch {
                                                         ConstXMapPtrVecPtr dofsMaps,
                                                         GOVecPtr dirichletBoundaryDofs)
     {
+      int ret = 0;
+      MPI_Barrier(MPI_COMM_WORLD);
+      {
         FROSCH_TIMER_START_LEVELID(initializeTime,"TwoLevelPreconditioner::initialize");
         ////////////
         // Checks //
         ////////////
         FROSCH_ASSERT(dofOrdering == NodeWise || dofOrdering == DimensionWise || dofOrdering == Custom,"ERROR: Specify a valid DofOrdering.");
-        int ret = 0;
 
         //////////
         // Maps //
@@ -187,17 +189,21 @@ namespace FROSch {
         } else {
             FROSCH_ASSERT(false,"CoarseOperator Type unkown.");
         }
-        return ret;
+      }
+      return ret;
     }
 
     template <class SC,class LO,class GO,class NO>
     int TwoLevelPreconditioner<SC,LO,GO,NO>::compute()
     {
+      MPI_Barrier(MPI_COMM_WORLD);
+      {
         FROSCH_TIMER_START_LEVELID(computeTime,"TwoLevelPreconditioner::compute");
         int ret = 0;
         if (0>this->OverlappingOperator_->compute()) ret -= 1;
         if (0>CoarseOperator_->compute()) ret -= 10;
         return ret;
+      }
     }
 
     template <class SC,class LO,class GO,class NO>

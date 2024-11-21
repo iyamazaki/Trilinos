@@ -173,6 +173,24 @@ namespace FROSch {
         XMatrixPtr coarseSubdomainMatrix_;
         XMatrixPtr coarseLocalSubdomainMatrix_;
         XImportPtr coarseScatter_;
+        // ------------------------------------------- //
+        // for custom doImport
+          size_t numTerms, locCount;
+          std::vector<size_t> sourceSize;
+          std::vector<size_t> targetSize;
+          Teuchos::ArrayRCP<size_t> rowCount;
+          //
+          RCP<Tpetra::Distributor> distributor;
+          //
+          std::vector<GO> targetMapGIDs;
+          std::vector<LO> targetMapGIDsBegin;
+          std::vector<GO> ownedRowGIDs;
+          std::vector<LO> localRowsSend;
+          std::vector<LO> localRowsSendBegin;
+          std::vector<LO> localRowsRecv;
+          std::vector<LO> localRowsRecvBegin;
+	  std::vector<LO> columnsRecv;
+        // ------------------------------------------- //
 
         // Temp Vectors for apply()
         mutable XMultiVectorPtr XTmp_;

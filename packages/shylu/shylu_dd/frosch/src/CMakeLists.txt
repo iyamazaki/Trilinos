@@ -147,6 +147,9 @@ APPEND_SET(HEADERS
   SolverInterfaces/FROSch_ThyraSolver_def.hpp
   Tools/FROSch_ExtractSubmatrices_decl.hpp
   Tools/FROSch_ExtractSubmatrices_def.hpp
+  Tools/GDSW_Proxy_decl.hpp
+  Tools/GDSW_Proxy_def.hpp
+  Tools/GDSW_Proxy.hpp
   Tools/FROSch_Output.h
   Tools/FROSch_SubdomainSolver_decl.hpp
   Tools/FROSch_SubdomainSolver_def.hpp

@@ -205,6 +205,24 @@ namespace FROSch {
         XMatrixPtr subdomainMatrix_;
         XMatrixPtr localSubdomainMatrix_;
         XImportPtr subdomainScatter_;
+        // ------------------------------------------- //
+        // for custom doImport
+          size_t numTerms, locCount;
+          std::vector<size_t> sourceSize;
+          std::vector<size_t> targetSize;
+	  Teuchos::ArrayRCP<size_t> rowCount;
+          //
+          RCP<Tpetra::Distributor> distributor;
+          //
+          std::vector<GO> targetMapGIDs;
+          std::vector<LO> targetMapGIDsBegin;
+          std::vector<GO> ownedRowGIDs;
+          std::vector<LO> localRowsSend;
+          std::vector<LO> localRowsSendBegin;
+          std::vector<LO> localRowsRecv;
+          std::vector<LO> localRowsRecvBegin;
+	  std::vector<LO> columnsRecv;
+        // ------------------------------------------- //
 
         bool Verbose_ = false;
 

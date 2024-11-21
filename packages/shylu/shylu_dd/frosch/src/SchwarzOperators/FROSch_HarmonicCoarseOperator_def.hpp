@@ -37,10 +37,31 @@ namespace FROSch {
         ConstXMapPtr repeatedMap;
         ConstXMatrixPtr repeatedMatrix;
         if (this->coarseExtractLocalSubdomainMatrix_Symbolic_Done_) {
-            ExtractLocalSubdomainMatrix_Compute(this->coarseScatter_,
-                                                this->K_.getConst(),
-                                                this->coarseSubdomainMatrix_,
-                                                this->coarseLocalSubdomainMatrix_);
+#define USE_CUSTOM_IMPORT
+#ifdef  USE_CUSTOM_IMPORT
+            {
+                ExtractLocalSubdomainMatrix_Compute(this->numTerms, this->locCount,
+                                                    this->sourceSize,this->targetSize,
+						    this->rowCount,
+                                                    //  
+                                                    this->distributor,
+                                                    //  
+                                                    this->targetMapGIDs,this->targetMapGIDsBegin,this->ownedRowGIDs,
+                                                    this->localRowsSend,this->localRowsSendBegin,this->localRowsRecv,this->localRowsRecvBegin,
+						    this->columnsRecv,
+                                                    //  
+                                                    this->K_.getConst(),
+                                                    this->coarseSubdomainMatrix_,
+                                                    this->coarseLocalSubdomainMatrix_);
+            }
+#else
+            {
+                ExtractLocalSubdomainMatrix_Compute(this->coarseScatter_,
+                                                    this->K_.getConst(),
+                                                    this->coarseSubdomainMatrix_,
+                                                    this->coarseLocalSubdomainMatrix_);
+            }
+#endif
             repeatedMap = this->coarseSubdomainMatrix_->getRowMap();
             repeatedMatrix = this->coarseLocalSubdomainMatrix_;
         } else {
@@ -470,6 +491,8 @@ namespace FROSch {
                                                                                                                          SC tresholdDropping,
                                                                                                                          SC tresholdOrthogonalization)
     {
+      MPI_Barrier(MPI_COMM_WORLD);
+      {
         FROSCH_DETAILTIMER_START_LEVELID(detectLinearDependenciesTime,"HarmonicCoarseOperator::detectLinearDependencies");
         LOVecPtr linearDependentVectors(AssembledInterfaceCoarseSpace_->getBasisMap()->getLocalNumElements()); //if (this->Verbose_) cout << AssembledInterfaceCoarseSpace_->getAssembledBasis()->getNumVectors() << " " << AssembledInterfaceCoarseSpace_->getAssembledBasis()->getLocalLength() << " " << indicesGammaDofsAll.size() << endl;
 
@@ -484,6 +507,9 @@ namespace FROSch {
 #if defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
             if (rowMap->lib() == UseTpetra)
             {
+                Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Tpetra");
+                Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+
                 using crsmat_type  = typename Matrix<SC,LO,GO,NO>::local_matrix_type;
                 using graph_type   = typename crsmat_type::StaticCrsGraphType;
                 using rowptr_type  = typename graph_type::row_map_type::non_const_type;
@@ -553,8 +579,13 @@ namespace FROSch {
                 graph_type crsgraph (Indices, Rowptr);
                 crsmat_type crsmat = crsmat_type ("CrsMatrix", numRows, Values, crsgraph);
 
-                phiGamma = MatrixFactory<SC,LO,GO,NO>::Build(crsmat, rowMap, basisMap, basisMapUnique, rangeMap,
-                                                             params);
+		{
+                  Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Build");
+                  Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+
+                  phiGamma = MatrixFactory<SC,LO,GO,NO>::Build(crsmat, rowMap, basisMap, basisMapUnique, rangeMap,
+                                                               params);
+		}
             } else
 #endif
             {
@@ -593,11 +624,23 @@ namespace FROSch {
             }
 
             //Compute Phi^T * Phi
-            RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout));
-            XMatrixPtr phiTPhi = MatrixMatrix<SC,LO,GO,NO>::Multiply(*phiGamma,true,*phiGamma,false,*fancy); //phiGamma->describe(*fancy,VERB_EXTREME); phiTPhi->describe(*fancy,VERB_EXTREME); //AssembledInterfaceCoarseSpace_->getBasisMap()->describe(*fancy,VERB_EXTREME);
+            XMatrixPtr phiTPhi;
+	    {
+              Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::SpGEMM");
+              Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+
+              RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout));
+              phiTPhi = MatrixMatrix<SC,LO,GO,NO>::Multiply(*phiGamma,true,*phiGamma,false,*fancy); //phiGamma->describe(*fancy,VERB_EXTREME); phiTPhi->describe(*fancy,VERB_EXTREME); //AssembledInterfaceCoarseSpace_->getBasisMap()->describe(*fancy,VERB_EXTREME);
+            }
 
             // Extract local part of the matrix
-            ConstXMatrixPtr repeatedPhiTPhi = ExtractLocalSubdomainMatrix(phiTPhi.getConst(),AssembledInterfaceCoarseSpace_->getBasisMap());
+            ConstXMatrixPtr repeatedPhiTPhi;
+	    {
+              Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Extract");
+              Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+
+              repeatedPhiTPhi = ExtractLocalSubdomainMatrix(phiTPhi.getConst(),AssembledInterfaceCoarseSpace_->getBasisMap());
+	    }
             //Communicate matrix to the repeated map
             // repeatedPhiTPhi = MatrixFactory<SC,LO,GO,NO>::Build(AssembledInterfaceCoarseSpace_->getBasisMap());
             // XExportPtr exporter = ExportFactory<LO,GO,NO>::Build(rowMap,repeatedMap);
@@ -605,13 +648,17 @@ namespace FROSch {
 
             UN numRows = repeatedPhiTPhi->getRowMap()->getLocalNumElements();
             TSerialDenseMatrixPtr denseRepeatedPhiTPhi(new SerialDenseMatrix<LO,SC>(numRows,repeatedPhiTPhi->getColMap()->getLocalNumElements()));
-            for (UN i=0; i<numRows; i++) {
+	    {
+              Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Dense");
+              Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+              for (UN i=0; i<numRows; i++) {
                 ConstLOVecView indices;
                 ConstSCVecView values;
                 repeatedPhiTPhi->getLocalRowView(i,indices,values);
                 for (UN j=0; j<indices.size(); j++) {
                     (*denseRepeatedPhiTPhi)(i,indices[j]) = values[j];
                 }
+              }
             }
             // if (this->MpiComm_->getRank()==3) {
             //     for (LO i=0; i<denseRepeatedPhiTPhi->numRows(); i++) {
@@ -733,6 +780,7 @@ namespace FROSch {
         FROSCH_DETAILTIMER_STOP(printStatisticsTime);
 
         return linearDependentVectors;
+      }
     }
 
     template <class SC,class LO,class GO,class NO>
@@ -1139,8 +1187,56 @@ namespace FROSch {
 
             // buid sudomain matrix
             this->coarseSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(repeatedMap, repeatedMap, this->K_->getGlobalMaxNumRowEntries());
-            this->coarseScatter_ = ImportFactory<LO,GO,NO>::Build(this->K_->getRowMap(), repeatedMap);
-            this->coarseSubdomainMatrix_->doImport(*(this->K_.getConst()), *(this->coarseScatter_),ADD);
+            {
+               // import (row/col indices)
+               this->coarseScatter_ = ImportFactory<LO,GO,NO>::Build(this->K_->getRowMap(), repeatedMap);
+               this->coarseSubdomainMatrix_->doImport(*(this->K_.getConst()), *(this->coarseScatter_),ADD);
+             }
+             {
+#ifdef  USE_CUSTOM_IMPORT
+               TpetraFunctions<SC,LO,GO,NO> tFunctions;
+               //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); this->coarseSubdomainMatrix_->fillComplete(); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === Before === \n\n"; this->coarseSubdomainMatrix_->describe(*fancy,VERB_EXTREME); }
+
+               const CrsMatrixWrap<SC,LO,GO,NO>& crsGlbOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(this->K_.getConst()));
+               const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraGlbMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsGlbOp.getCrsMatrix());
+               auto tpetraGlbMat = xTpetraGlbMat.getTpetra_CrsMatrixNonConst();
+
+               const CrsMatrixWrap<SC,LO,GO,NO>& crsSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(this->coarseSubdomainMatrix_));
+               const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsSubOp.getCrsMatrix());
+               auto tpetraSubMat = xTpetraSubMat.getTpetra_CrsMatrixNonConst();
+
+               // extract comm patterns, and allocate space to store nonzereos
+               this->coarseSubdomainMatrix_ = tFunctions.importSquareMatrix_build(tpetraGlbMat, this->coarseSubdomainMatrix_->getRowMap(), tpetraSubMat->getRowMap(),
+                                                                                  this->distributor, this->numTerms,this->locCount,
+                                                                                  this->sourceSize,this->targetSize,this->rowCount,
+                                                                                  this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
+                                                                                  this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
+										  this->columnsRecv);
+              //if (this->coarseSubdomainMatrix_->isLocallyIndexed ()) printf( " isLocal(1)\n" );
+              //else printf( " not isLocal(1)\n" ); fflush(stdout);
+              // insert column indices (and also numerical values) 
+              if (true) {
+                  // regain Tpetra matrix
+                  const CrsMatrixWrap<SC,LO,GO,NO>& crsNewOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(this->coarseSubdomainMatrix_));
+                  const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraNewMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsNewOp.getCrsMatrix());
+                  auto tpetraNewMat = xTpetraNewMat.getTpetra_CrsMatrixNonConst();
+                  bool replaceVals = false;
+                  tFunctions.importSquareMatrix_import(tpetraGlbMat, tpetraNewMat->getRowMap(),
+                                                       this->distributor, this->numTerms,this->locCount, this->sourceSize,this->targetSize,this->rowCount,
+                                                       this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
+                                                       this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
+                                                       this->columnsRecv, tpetraNewMat, replaceVals);
+                  //MPI_Barrier(MPI_COMM_WORLD); printf( " HarmonicCoarseOperator::extractLocalSubdomainMatrix_Symbolic::doImport done\n" );
+                  //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix === \n\n"; tpetraNewMat->describe(*fancy,VERB_EXTREME); }
+              } else
+              {
+                 // importSquareMatrix_impor calls fillComplete (not anymore, keep it nonLocal to replace in importSquareMatrix_import for Compute)
+                 this->coarseSubdomainMatrix_->fillComplete();
+              }
+              //if (this->coarseSubdomainMatrix_->isLocallyIndexed ()) printf( " isLocal(2)\n" );
+              //else printf( " not isLocal(2)\n" ); fflush(stdout);
+#endif
+            }
 
             // build local subdomain matrix
             RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
@@ -1150,6 +1246,7 @@ namespace FROSch {
             // fill in column indexes
             ExtractLocalSubdomainMatrix_Symbolic(this->coarseSubdomainMatrix_, // input
                                                  this->coarseLocalSubdomainMatrix_); // output
+            MPI_Barrier(MPI_COMM_WORLD); if(repeatedMap->getComm()->getRank()==0) printf( " FROSch_HarmonicCoarseOperator::ExtractLocalSubdomainMatrix_Symbolic (done)\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 
             // turn flag on
             this->coarseExtractLocalSubdomainMatrix_Symbolic_Done_ = true;
@@ -1178,6 +1275,15 @@ namespace FROSch {
             XMatrixPtr kGammaGamma;
             auto repeatedMatrix = this->coarseLocalSubdomainMatrix_;
             BuildSubmatrices(repeatedMatrix.getConst(),indicesIDofsAll(),kII,kIGamma,kGammaI,kGammaGamma);
+
+	    // warmup SpMVa
+            #if 1
+	    (void)KokkosKernels::Impl::CusparseSingleton::singleton();
+            #else
+            XMultiVectorPtr mVtmp = MultiVectorFactory<SC,LO,GO,NO>::Build(kII->getRowMap(),1/*AssembledInterfaceCoarseSpace_->getBasisMap()->getLocalNumElements()*/);
+            XMultiVectorPtr mVPhiGamma = MultiVectorFactory<SC,LO,GO,NO>::Build(kIGamma->getDomainMap(),1/*AssembledInterfaceCoarseSpace_->getBasisMap()->getLocalNumElements()*/);
+            kIGamma->apply(*mVPhiGamma,*mVtmp);
+            #endif
 
             // perform symbolic on kII
             ExtensionSolver_ = SolverFactory<SC,LO,GO,NO>::Build(kII,

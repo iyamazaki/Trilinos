@@ -262,11 +262,32 @@ namespace FROSch {
         FROSCH_DETAILTIMER_START_LEVELID(updateLocalOverlappingMatricesTime,"AlgebraicOverlappingOperator::updateLocalOverlappingMatrices");
         if (this->ExtractLocalSubdomainMatrix_Symbolic_Done_) {
             // using original K_ as input
-            ExtractLocalSubdomainMatrix_Compute(this->subdomainScatter_, this->K_, this->subdomainMatrix_, this->localSubdomainMatrix_);
+#define USE_CUSTOM_IMPORT
+#ifdef  USE_CUSTOM_IMPORT
+            {
+                ExtractLocalSubdomainMatrix_Compute(this->numTerms, this->locCount,
+                                                    this->sourceSize,this->targetSize,
+                                                    this->rowCount,
+                                                    //  
+                                                    this->distributor,
+                                                    //  
+                                                    this->targetMapGIDs,this->targetMapGIDsBegin,this->ownedRowGIDs,
+                                                    this->localRowsSend,this->localRowsSendBegin,this->localRowsRecv,this->localRowsRecvBegin,
+                                                    this->columnsRecv,
+                                                    //  
+                                                    this->K_,
+                                                    this->subdomainMatrix_,
+                                                    this->localSubdomainMatrix_);
+            }
+#else
+            {
+                ExtractLocalSubdomainMatrix_Compute(this->subdomainScatter_, this->K_, this->subdomainMatrix_, this->localSubdomainMatrix_);
+            }
+#endif
             this->OverlappingMatrix_ = this->localSubdomainMatrix_.getConst();
         } else {
             if (this->IsComputed_) {
-                // already computed once and we want to recycle the information. That is why we reset OverlappingMatrix_ to K_, because K_ has been reset at this point
+                // already computed once and we want to recycle the information. That is why we reset extractLocalSubdomainMatrix_SymbolicOverlappingMatrix_ to K_, because K_ has been reset at this point
                 this->OverlappingMatrix_ = this->K_;
             }
             this->OverlappingMatrix_ = ExtractLocalSubdomainMatrix(this->OverlappingMatrix_, this->OverlappingMap_);
@@ -296,15 +317,54 @@ namespace FROSch {
             // Used to Map original K_ to overlapping suubdomainMatrix
             this->subdomainScatter_ = ImportFactory<LO,GO,NO>::Build(this->K_->getRowMap(), this->OverlappingMap_);
 
+            // import GlobalMatrix K into subdomainMatrix
+            {
+#ifdef  USE_CUSTOM_IMPORT
+               TpetraFunctions<SC,LO,GO,NO> tFunctions;
+               //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); this->coarseSubdomainMatrix_->fillComplete(); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === Before === \n\n"; this->coarseSubdomainMatrix_->describe(*fancy,VERB_EXTREME); }
+
+               const CrsMatrixWrap<SC,LO,GO,NO>& crsGlbOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(this->K_.getConst()));
+               const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraGlbMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsGlbOp.getCrsMatrix());
+               auto tpetraGlbMat = xTpetraGlbMat.getTpetra_CrsMatrixNonConst();
+
+               const CrsMatrixWrap<SC,LO,GO,NO>& crsSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(this->subdomainMatrix_));
+               const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsSubOp.getCrsMatrix());
+               auto tpetraSubMat = xTpetraSubMat.getTpetra_CrsMatrixNonConst();
+
+               // extract comm patterns, and allocate space to store nonzereos
+               this->subdomainMatrix_ = tFunctions.importSquareMatrix_build(tpetraGlbMat, this->subdomainMatrix_->getRowMap(), tpetraSubMat->getRowMap(),
+                                                                            this->distributor, this->numTerms,this->locCount,
+                                                                            this->sourceSize,this->targetSize, this->rowCount,
+                                                                            this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
+                                                                            this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
+                                                                            this->columnsRecv);
+              // insert column indices (and also numerical values) 
+              {
+                  // regain Tpetra matrix
+                  const CrsMatrixWrap<SC,LO,GO,NO>& crsNewOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(this->subdomainMatrix_));
+                  const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraNewMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsNewOp.getCrsMatrix());
+                  auto tpetraNewMat = xTpetraNewMat.getTpetra_CrsMatrixNonConst();
+                  bool replaceVals = false;
+                  tFunctions.importSquareMatrix_import(tpetraGlbMat, tpetraNewMat->getRowMap(),
+                                                       this->distributor, this->numTerms,this->locCount, this->sourceSize,this->targetSize,this->rowCount,
+                                                       this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
+                                                       this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
+                                                       this->columnsRecv, tpetraNewMat, replaceVals);
+                  //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix === \n\n"; tpetraNewMat->describe(*fancy,VERB_EXTREME); }
+              }
+	      MPI_Barrier(MPI_COMM_WORLD); if (this->subdomainMatrix_->getRowMap()->getComm()->getRank() == 0) printf( " importSquareMatrix_import (done)\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+#endif
+            }
+
+            // extract subdomainMatrix into localSubdomainMatrix
             // build local subdomain matrix
             RCP<const Comm<LO> > SerialComm = rcp(new MpiComm<LO>(MPI_COMM_SELF));
             RCP<Map<LO,GO,NO> > localSubdomainMap = MapFactory<LO,GO,NO>::Build(this->OverlappingMap_->lib(), this->OverlappingMap_->getLocalNumElements(), 0, SerialComm);
             this->localSubdomainMatrix_ = MatrixFactory<SC,LO,GO,NO>::Build(localSubdomainMap, localSubdomainMap, this->OverlappingMatrix_->getGlobalMaxNumRowEntries());
-
             // fill in column indexes
             ExtractLocalSubdomainMatrix_Symbolic(this->subdomainMatrix_, // input
                                                  this->localSubdomainMatrix_);   // output
-
+	    MPI_Barrier(MPI_COMM_WORLD); if (this->subdomainMatrix_->getRowMap()->getComm()->getRank() == 0) printf( " FROSch_AlgebraicOverlappingOperator::ExtractLocalSubdomainMatrix_Symbolic (done)\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
             // turn flag on
             this->ExtractLocalSubdomainMatrix_Symbolic_Done_ = true;
         }

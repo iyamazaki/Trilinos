@@ -11,6 +11,7 @@
 #define _FROSCH_EXTRACTSUBMATRICES_DEF_HPP
 
 #include <FROSch_ExtractSubmatrices_decl.hpp>
+#include "GDSW_Proxy.hpp"
 
 namespace FROSch {
 
@@ -63,26 +64,64 @@ namespace FROSch {
         auto subdomainMap = subdomainMatrix->getRowMap();
 
         const SC zero = ScalarTraits<SC>::zero();
-        for (unsigned i=0; i<subdomainMap->getLocalNumElements(); i++) {
-            ArrayView<const GO> indices;
-            ArrayView<const SC> values;
-            subdomainMatrix->getGlobalRowView(subdomainMap->getGlobalElement(i),indices,values);
+	if (subdomainMap->getComm()->getRank() == 0) {
+          printf( " * localSubdomainMatrix(%s)\n",(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global") );
+	}
+        if ( subdomainMatrix->isLocallyIndexed ()
+             //&& !subdomainMatrix->isGloballyIndexed()
+           ) {
+	    if (subdomainMap->getComm()->getRank() == 0) {
+              printf( " Extract-locally(%d with %d)\n",subdomainMap->getComm()->getRank(),subdomainMap->getLocalNumElements() );
+	    }
+            for (unsigned i=0; i<subdomainMap->getLocalNumElements(); i++) {
+                ArrayView<const LO> indices;
+                ArrayView<const SC> values;
+                subdomainMatrix->getLocalRowView(i,indices,values);
 
-            LO size = indices.size();
-            if (size>0) {
-                Array<GO> indicesLocal;
-                Array<SC> valuesLocal;
-                for (LO j=0; j<size; j++) {
-                    LO localIndex = subdomainMap->getLocalElement(indices[j]);
-                    if (localIndex>=0) {
-                        indicesLocal.push_back(localIndex);
-                        valuesLocal.push_back(zero);
+                LO size = indices.size();
+                if (size>0) {
+                    LO new_nnz = 0;
+                    Array<LO> indicesLocal;
+                    Array<SC> valuesLocal;
+                    for (LO j=0; j<size; j++) {
+                        LO localIndex = subdomainMap->getLocalElement(indices[j]);
+                        LO globalIndex = subdomainMap->getGlobalElement(localIndex);
+                        if (localIndex>=0) {
+                            indicesLocal.push_back(localIndex);
+                            valuesLocal.push_back(zero);
+                            new_nnz++;
+                        }
                     }
+                    localSubdomainMatrix->insertLocalValues(i,indicesLocal(),valuesLocal());
                 }
-                localSubdomainMatrix->insertGlobalValues(i,indicesLocal(),valuesLocal());
+            }
+        } else {
+	    if (subdomainMap->getComm()->getRank() == 0) {
+              printf( " Extract-Globally(%d with %d)\n",subdomainMap->getComm()->getRank(),subdomainMap->getLocalNumElements() );
+	    }
+            for (unsigned i=0; i<subdomainMap->getLocalNumElements(); i++) {
+                ArrayView<const GO> indices;
+                ArrayView<const SC> values;
+                subdomainMatrix->getGlobalRowView(subdomainMap->getGlobalElement(i),indices,values);
+
+                LO size = indices.size();
+                if (size>0) {
+                    Array<LO> indicesLocal;
+                    Array<SC> valuesLocal;
+                    for (LO j=0; j<size; j++) {
+                        LO localIndex = subdomainMap->getLocalElement(indices[j]);
+                        if (localIndex>=0) {
+                            indicesLocal.push_back(localIndex);
+                            valuesLocal.push_back(zero);
+                        }
+                    }
+                    localSubdomainMatrix->insertLocalValues(i,indicesLocal(),valuesLocal());
+                }
             }
         }
+        //printf( " > localSubdomainMatrix(%s)\n",(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global") );
         localSubdomainMatrix->fillComplete();
+        //printf( " < localSubdomainMatrix(%s)\n",(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global") );
         return;
     }
 
@@ -96,25 +135,230 @@ namespace FROSch {
     }
 
     template <class SC,class LO,class GO,class NO>
+    void ExtractLocalSubdomainMatrix_Compute(const size_t numTerms,
+                                             const size_t locCount,
+                                             std::vector<size_t> sourceSize,
+                                             std::vector<size_t> targetSize,
+                                             Teuchos::ArrayRCP<size_t> rowCount,
+                                             //
+                                             RCP<Tpetra::Distributor> distributor,
+                                             //
+                                             std::vector<GO> targetMapGIDs,
+                                             std::vector<LO> targetMapGIDsBegin,
+                                             std::vector<GO> ownedRowGIDs,
+                                             std::vector<LO> localRowsSend,
+                                             std::vector<LO> localRowsSendBegin,
+                                             std::vector<LO> localRowsRecv,
+                                             std::vector<LO> localRowsRecvBegin,
+                                             std::vector<LO> columnsRecv,
+                                             //
+                                             RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
+                                             RCP<      Matrix<SC,LO,GO,NO> > subdomainMatrix,
+                                             RCP<      Matrix<SC,LO,GO,NO> > localSubdomainMatrix)
+    {
+        FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_compute, "ExtractLocalSubdomainMatrix_Compute(Custom)");
+        const SC zero = ScalarTraits<SC>::zero();
+        auto subdomainRowMap = subdomainMatrix->getRowMap();
+
+	if (subdomainRowMap->getComm()->getRank() == 0) {
+          printf( " %d: ExtractLocalSubdomainMatrix_Compute(Custom, %s, %d,%d)\n",subdomainRowMap->getComm()->getRank(),(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global"),subdomainMatrix->getLocalNumRows(),localSubdomainMatrix->getLocalNumRows() );
+	}
+        //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); subdomainMatrix->fillComplete(); if(subdomainRowMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix (Before) === \n\n"; subdomainMatrix->describe(*fancy,VERB_EXTREME); }
+        //subdomainMatrix->setAllToScalar(zero);
+        {
+            //MPI_Barrier(MPI_COMM_WORLD); printf( " Start Import\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            #if 1
+            bool extract_local = false;
+            const CrsMatrixWrap<SC,LO,GO,NO>& crsSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*localSubdomainMatrix);
+            const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsSubOp.getCrsMatrix());
+            auto tpetraSubMat = xTpetraSubMat.getTpetra_CrsMatrixNonConst();
+
+            const CrsMatrixWrap<SC,LO,GO,NO>& crsDistSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*subdomainMatrix);
+            const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraDistSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsDistSubOp.getCrsMatrix());
+            auto tpetraDistSubMat = xTpetraDistSubMat.getTpetra_CrsMatrixNonConst();
+	    auto outputRowMap = tpetraDistSubMat->getRowMap();
+            #else
+            bool extract_local = true;
+            const CrsMatrixWrap<SC,LO,GO,NO>& crsSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*subdomainMatrix);
+            const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsSubOp.getCrsMatrix());
+            auto tpetraSubMat = xTpetraSubMat.getTpetra_CrsMatrixNonConst();
+	    auto outputRowMap = tpetraSubMat->getRowMap();
+            #endif
+            localSubdomainMatrix->resumeFill();
+            {
+              TpetraFunctions<SC,LO,GO,NO> tFunctions;
+              const CrsMatrixWrap<SC,LO,GO,NO>& crsGlbOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*globalMatrix);
+              const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraGlbMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsGlbOp.getCrsMatrix());
+              auto tpetraGlbMat = xTpetraGlbMat.getTpetra_CrsMatrixNonConst();
+              {
+                bool replaceVals = true;
+                tFunctions.importSquareMatrix_import(tpetraGlbMat, outputRowMap /*tpetraSubMat->getRowMap()*/,
+                                                     distributor, numTerms,locCount, sourceSize,targetSize,rowCount,
+                                                     targetMapGIDs,targetMapGIDsBegin, ownedRowGIDs,
+                                                     localRowsSend, localRowsSendBegin, localRowsRecv, localRowsRecvBegin,
+                                                     columnsRecv, tpetraSubMat, replaceVals);
+
+              }
+            }
+            if (extract_local) {
+                //MPI_Barrier(MPI_COMM_WORLD); printf( " Done Import\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+                //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); subdomainMatrix->fillComplete(); if(subdomainRowMap->getComm()->getRank()==2) std::cout << "\n === SubMatrix === \n\n"; subdomainMatrix->describe(*fancy,VERB_EXTREME); }
+                //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); if(subdomainRowMap->getComm()->getRank()==2){std::cout << "\n === LocMatrix === \n\n"; localSubdomainMatrix->describe(*fancy,VERB_EXTREME);} }
+                //MPI_Barrier(MPI_COMM_WORLD);
+
+                size_t max_nnz = localSubdomainMatrix->getLocalMaxNumRowEntries();
+                std::vector<LO> local_cols_vector (max_nnz);
+                std::vector<SC> local_vals_vector (max_nnz);
+                if ( subdomainMatrix->isLocallyIndexed () ) {
+                    //MPI_Barrier(MPI_COMM_WORLD); printf( " Locally insrt\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+                    #ifdef EXTRACT_WITH_LOCAL_MAT
+                    auto localGlobalSubMatrix  = subdomainMatrix->getLocalMatrixHost();
+                    #endif
+                    for (unsigned i=0; i<subdomainRowMap->getLocalNumElements(); i++) {
+                        #ifdef EXTRACT_WITH_LOCAL_MAT
+                        LO size = localGlobalSubMatrix.graph.row_map(i+1)-localGlobalSubMatrix.graph.row_map(i);
+                        #else
+                        ArrayView<const LO> local_indices;
+                        ArrayView<const SC> local_values;
+                        subdomainMatrix->getLocalRowView(i,local_indices,local_values);
+                        LO size = local_indices.size();
+                        #endif
+
+                        if (size>0) {
+                            // using "workspace" not to overwrite what's in localSubdomainMatrix
+                            size_t new_nnz = 0;
+                            ArrayView<LO> local_cols (local_cols_vector);
+                            ArrayView<SC> local_vals (local_vals_vector);
+                            for (LO j=0; j<size; j++) {
+                                #ifdef EXTRACT_WITH_LOCAL_MAT
+                                LO localIndex = localGlobalSubMatrix.graph.entries(j);
+                                #else
+                                LO localIndex = local_indices[j];
+                                #endif
+                                GO globalIndex = subdomainRowMap->getGlobalElement(localIndex);
+                                //if (subdomainRowMap->getComm()->getRank()==2) printf(" > %d: %d -> %d -> %d\n",j,localIndex,globalIndex,localSubdomainMatrix->getRowMap()->getLocalElement(globalIndex) );
+                                // TODO: do we need global index here???
+                                if (localSubdomainMatrix->getRowMap()->getLocalElement(globalIndex)>=0) {
+                                    local_cols[new_nnz] = localIndex;
+                                    #ifdef EXTRACT_WITH_LOCAL_MAT
+                                    local_vals[new_nnz] = localGlobalSubMatrix.values[j];
+                                    #else
+                                    local_vals[new_nnz] = local_values[j];
+                                    #endif
+                                    new_nnz ++;
+                                }
+                            }
+                            //if (subdomainRowMap->getComm()->getRank()==0) printf( " %d(%d): size=%d, new_nnz=%d\n",i,subdomainRowMap->getComm()->getRank(),size,new_nnz ); fflush(stdout);
+                            {
+                              auto caseTimer = Teuchos::TimeMonitor::getNewTimer("ExtractLocalSubdomainMatrix_Compute::replaceLocalVals");
+                              Teuchos::TimeMonitor CaseTimer( *caseTimer );
+                              localSubdomainMatrix->replaceLocalValues(i, local_cols(0, new_nnz), local_vals(0, new_nnz));
+                            }
+                        }
+                    }
+                } else {
+                    for (unsigned i=0; i<subdomainRowMap->getLocalNumElements(); i++) {
+                        ArrayView<const GO> indices;
+                        ArrayView<const SC> values;
+                        subdomainMatrix->getGlobalRowView(subdomainRowMap->getGlobalElement(i),indices,values);
+
+                        LO size = indices.size();
+                        if (size>0) {
+                            // using "workspace" not to overwrite what's in localSubdomainMatrix
+                            size_t new_nnz = 0;
+                            ArrayView<LO> local_cols (local_cols_vector);
+                            ArrayView<SC> local_vals (local_vals_vector);
+                            for (LO j=0; j<size; j++) {
+                                LO localIndex = subdomainRowMap->getLocalElement(indices[j]);
+                                if (localIndex>=0) {
+                                    local_cols[new_nnz] = localIndex;
+                                    local_vals[new_nnz] = values[j];
+                                    new_nnz ++;
+                                }
+                            }
+                            //if (subdomainRowMap->getComm()->getRank()==0) printf( " %d(%d): size=%d, new_nnz=%d\n",i,subdomainRowMap->getComm()->getRank(),size,new_nnz ); fflush(stdout);
+                            localSubdomainMatrix->replaceLocalValues(i, local_cols(0, new_nnz), local_vals(0, new_nnz));
+                        }
+                    }
+                }
+            }
+            RCP<ParameterList> fillCompleteParams(new ParameterList);
+            fillCompleteParams->set("No Nonlocal Changes", true);
+            localSubdomainMatrix->fillComplete(fillCompleteParams);
+        }
+	/*{
+            MPI_Barrier(MPI_COMM_WORLD);
+            if (subdomainRowMap->getComm()->getRank() == 0) {
+                printf( "\n [\n" );
+                for (unsigned i=0; i< localSubdomainMatrix->getLocalNumRows(); i++) {
+                    ArrayView<const LO> local_indices;
+                    ArrayView<const SC> local_values;
+                    localSubdomainMatrix->getLocalRowView(i,local_indices,local_values);
+                    for (LO j=0; j<local_indices.size(); j++) printf( "%d %d %e\n",i,local_indices[j],local_values[j] );
+                }
+                printf( " ];\n\n" ); fflush(stdout);
+            }
+            MPI_Barrier(MPI_COMM_WORLD);
+        }*/
+        //MPI_Barrier(MPI_COMM_WORLD);
+	if (subdomainRowMap->getComm()->getRank() == 0) {
+          printf( " ExtractLocalSubdomainMatrix_Compute(Custom, %s) done\n",(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global") ); fflush(stdout);
+	}
+        //MPI_Barrier(MPI_COMM_WORLD); 
+        return;
+    }
+
+    template <class SC,class LO,class GO,class NO>
     void ExtractLocalSubdomainMatrix_Compute(RCP<      Import<LO,GO,NO> >    scatter,
                                              RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
                                              RCP<      Matrix<SC,LO,GO,NO> > subdomainMatrix,
                                              RCP<      Matrix<SC,LO,GO,NO> > localSubdomainMatrix)
     {
-        FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_compute, "ExtractLocalSubdomainMatrix_Compute");
+        FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_compute, "ExtractLocalSubdomainMatrix_Compute(Original)");
         const SC zero = ScalarTraits<SC>::zero();
         auto subdomainRowMap = subdomainMatrix->getRowMap();
 
         subdomainMatrix->setAllToScalar(zero);
         subdomainMatrix->resumeFill();
-        subdomainMatrix->doImport(*globalMatrix, *scatter, ADD);
+
+#if 0
+        {
+            subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(subdomainRowMap);
+            const CrsMatrixWrap<SC,LO,GO,NO>& crsSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*subdomainMatrix);
+            const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsSubOp.getCrsMatrix());
+            auto tpetraSubMat = xTpetraSubMat.getTpetra_CrsMatrixNonConst();
+
+            const CrsMatrixWrap<SC,LO,GO,NO>& crsGlbOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*globalMatrix);
+            const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraGlbMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsGlbOp.getCrsMatrix());
+            auto tpetraGlbMat = xTpetraGlbMat.getTpetra_CrsMatrixNonConst();
+        }
+#endif
 
 // "fillComplete" is quite expensive, and it seem to be cheaper to replace values each row at a time
 #if 0 //defined(HAVE_XPETRA_TPETRA)
         if (globalMatrix->getRowMap()->lib() == UseTpetra) 
         {
+#if 1
             // NOTE: this fillComplete is expensive on GPUs
+            subdomainMatrix->doImport(*globalMatrix, *scatter, ADD);
             subdomainMatrix->fillComplete();
+#else
+            {
+                subdomainMatrix = MatrixFactory<SC,LO,GO,NO>::Build(subdomainRowMap);
+                const CrsMatrixWrap<SC,LO,GO,NO>& crsSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*subdomainMatrix);
+                const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsSubOp.getCrsMatrix());
+                auto tpetraSubMat = xTpetraSubMat.getTpetra_CrsMatrixNonConst();
+
+                const CrsMatrixWrap<SC,LO,GO,NO>& crsGlbOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*globalMatrix);
+                const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraGlbMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsGlbOp.getCrsMatrix());
+                auto tpetraGlbMat = xTpetraGlbMat.getTpetra_CrsMatrixNonConst();
+
+                const TpetraImport<LO,GO,NO> &xTpetraImport = dynamic_cast<const TpetraImport<LO,GO,NO>&>(*scatter);
+                const TpetraMap<LO,GO,NO> &xTpetraMap = dynamic_cast<const TpetraMap<LO,GO,NO>&>(*subdomainRowMap);
+
+                tpetraGlbMat->importAndFillComplete(tpetraSubMat, *(xTpetraImport.getTpetra_Import()), xTpetraMap.getTpetra_Map(), xTpetraMap.getTpetra_Map());
+            }
+#endif
             auto devSubdomainMap         = subdomainRowMap->getLocalMap();
             auto devSubdomainMatrix      = subdomainMatrix->getLocalMatrixDevice();
             auto devLocalSubdomainMatrix = localSubdomainMatrix->getLocalMatrixDevice();
@@ -145,6 +389,8 @@ namespace FROSch {
         } else
 #endif
         {
+            printf( " %d: ExtractLocalSubdomainMatrix_Compute(Original) with nrows=%d,%d\n",subdomainRowMap->getComm()->getRank(),subdomainMatrix->getLocalNumRows(),localSubdomainMatrix->getLocalNumRows() );
+            subdomainMatrix->doImport(*globalMatrix, *scatter, ADD);
             localSubdomainMatrix->resumeFill();
 
             size_t max_nnz = localSubdomainMatrix->getLocalMaxNumRowEntries();

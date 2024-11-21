@@ -46,6 +46,28 @@ namespace FROSch {
                                              RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
                                              RCP<      Matrix<SC,LO,GO,NO> > subdomainMatrix,
                                              RCP<      Matrix<SC,LO,GO,NO> > repeatedMatrix);
+
+    template <class SC,class LO,class GO,class NO> 
+    void ExtractLocalSubdomainMatrix_Compute(const size_t numTerms,
+                                             const size_t locCount,
+                                             std::vector<size_t> sourceSize,
+                                             std::vector<size_t> targetSize,
+                                             Teuchos::ArrayRCP<size_t> rowCount,
+                                             //  
+                                             RCP<Tpetra::Distributor> distributor,
+                                             //  
+                                             std::vector<GO> targetMapGIDs,
+                                             std::vector<LO> targetMapGIDsBegin,
+                                             std::vector<GO> ownedRowGIDs,
+                                             std::vector<LO> localRowsSend,
+                                             std::vector<LO> localRowsSendBegin,
+                                             std::vector<LO> localRowsRecv,
+                                             std::vector<LO> localRowsRecvBegin,
+					     std::vector<LO> columnsRecv,
+                                             //  
+                                             RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
+                                             RCP<      Matrix<SC,LO,GO,NO> > subdomainMatrix,
+                                             RCP<      Matrix<SC,LO,GO,NO> > localSubdomainMatrix);
     // ----------------------------------------------------------- //
 
     template <class SC,class LO,class GO,class NO>

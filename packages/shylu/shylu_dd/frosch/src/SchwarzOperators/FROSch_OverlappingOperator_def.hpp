@@ -199,13 +199,16 @@ namespace FROSch {
             // initializeSubdomainSolver is called during symbolic only if reuseSymbolicFactorization=true
             // so if reuseSymbolicFactorization=false, we always call initializeSubdomainSolver 
             if (this->IsComputed_ && this->Verbose_) cout << "FROSch::OverlappingOperator : Recomputing the Symbolic Factorization" << endl;
+	    //printf( " initializeSubdomainSolver\n" ); fflush(stdout);
             initializeSubdomainSolver(this->OverlappingMatrix_);
         } else if (this->IsComputed_) {
             // if !IsComputed, then this is the first timing calling "compute" after initializeSubdomainSolver is called in symbolic phase
             // so no need to do anything
+	    //printf( " updateMatrix\n" ); fflush(stdout);
             SubdomainSolver_->updateMatrix(this->OverlappingMatrix_,true);
         }
         this->IsComputed_ = true;
+	//printf( " calling SubdomainSolver_->compute\n" ); fflush(stdout);
         return SubdomainSolver_->compute();
     }
 }
