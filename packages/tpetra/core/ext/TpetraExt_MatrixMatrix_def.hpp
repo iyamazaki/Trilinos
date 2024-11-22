@@ -1295,7 +1295,7 @@ void mult_AT_B_newmatrix(
   RCP<Tpetra::CrsMatrix<SC, LO, GO, NO>> Atrans;
 {
 Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_A_B_newmatrix::transpose");
-Teuchos::TimeMonitor LocTimer(*locTimer_);a
+Teuchos::TimeMonitor LocTimer(*locTimer_);
   /* create transpose */
   Atrans = transposer.createTransposeLocal (transposeParams);
 }
