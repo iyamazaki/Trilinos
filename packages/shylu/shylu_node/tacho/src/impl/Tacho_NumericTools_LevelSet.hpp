@@ -62,6 +62,8 @@
 #include "Tacho_TeamFunctor_SolveLowerLU.hpp"
 #include "Tacho_TeamFunctor_SolveUpperLU.hpp"
 
+#include "mpi.h"
+
 //#define TACHO_TEST_LEVELSET_TOOLS_KERNEL_OVERHEAD
 //#define TACHO_ENABLE_LEVELSET_TOOLS_USE_LIGHT_KERNEL
 
@@ -464,6 +466,76 @@ public:
     track_alloc(_level_sids.span() * sizeof(ordinal_type));
 
     ///
+    /// classification of problems
+    ///
+    timer.reset();
+    _device_level_cut = min(device_level_cut, _nlevel);
+    _device_factorize_thres = device_factorize_thres;
+    _device_solve_thres = (variant == 3 ? 0 : device_solve_thres);
+
+    _h_factorize_mode = ordinal_type_array_host(do_not_initialize_tag("h_factorize_mode"), _nsupernodes);
+    Kokkos::deep_copy(_h_factorize_mode, -1);
+
+    _h_solve_mode = ordinal_type_array_host(do_not_initialize_tag("h_solve_mode"), _nsupernodes);
+    Kokkos::deep_copy(_h_solve_mode, -1);
+
+    if (_device_level_cut > 0) {
+      for (ordinal_type lvl = 0; lvl < _device_level_cut; ++lvl) {
+        const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
+        for (ordinal_type p = pbeg; p < pend; ++p) {
+          const ordinal_type sid = _h_level_sids(p);
+          _h_solve_mode(sid) = 0;
+          _h_factorize_mode(sid) = 0;
+          ++stat_level.n_device_solve;
+          ++stat_level.n_device_factorize;
+        }
+      }
+    }
+
+int myRank; MPI_Comm_rank(MPI_COMM_WORLD,&myRank);
+    _team_serial_level_cut = _nlevel;
+    {
+      for (ordinal_type lvl = _device_level_cut; lvl < _team_serial_level_cut; ++lvl) {
+        const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
+        bool device_fact = false; // by level to make it easier to track buffer
+        for (ordinal_type p = pbeg; p < pend; ++p) {
+          const ordinal_type sid = _h_level_sids(p);
+          const auto s = _h_supernodes(sid);
+          const ordinal_type m = s.m;    //, n_m = s.n-s.m;
+          if (m > _device_factorize_thres) { // || n_m > _device_factorize_thres)
+            device_fact = true;
+            break;
+          }
+        }
+        if (myRank == 0) printf( " lvl=%d (%d)\n",lvl,(device_fact ? 0 : 1) );
+        if (device_fact) {
+          for (ordinal_type p = pbeg; p < pend; ++p) {
+            const ordinal_type sid = _h_level_sids(p);
+            _h_factorize_mode(sid) = 0;
+            _h_solve_mode(sid) = 0;
+            ++stat_level.n_device_factorize;
+            ++stat_level.n_device_solve;
+          }
+        } else {
+          for (ordinal_type p = pbeg; p < pend; ++p) {
+            const ordinal_type sid = _h_level_sids(p);
+            _h_factorize_mode(sid) = 1;
+            _h_solve_mode(sid) = 1;
+            ++stat_level.n_team_factorize;
+            ++stat_level.n_team_solve;
+          }
+        }
+      }
+    }
+
+    _factorize_mode = Kokkos::create_mirror_view_and_copy(exec_memory_space(), _h_factorize_mode);
+    track_alloc(_factorize_mode.span() * sizeof(ordinal_type));
+
+    _solve_mode = Kokkos::create_mirror_view_and_copy(exec_memory_space(), _h_solve_mode);
+    track_alloc(_solve_mode.span() * sizeof(ordinal_type));
+    stat.t_mode_classification = timer.seconds();
+
+    ///
     /// workspace
     ///
     _h_buf_level_ptr = ordinal_type_array_host(do_not_initialize_tag("h_buf_factor_level_ptr"), _nlevel + 1);
@@ -481,12 +553,26 @@ public:
     _h_buf_factor_ptr = size_type_array_host(do_not_initialize_tag("h_buf_factor_ptr"), _h_buf_level_ptr(_nlevel));
     _h_buf_solve_ptr = size_type_array_host(do_not_initialize_tag("h_buf_solve_ptr"), _h_buf_level_ptr(_nlevel));
     {
+      size_type_array_host h_device_factor_buf_size("h_device_factor_buf_size",1+nstreams);
+      size_type_array_host h_device_solve_buf_size("h_device_solve_buf_size",1+nstreams);
       for (ordinal_type i = 0; i < _nlevel; ++i) {
+if (myRank == 0) printf("\n === lvl = %d ===\n",i ); fflush(stdout);
         const ordinal_type lbeg = _h_buf_level_ptr(i);
-        const ordinal_type pbeg = _h_level_ptr(i), pend = _h_level_ptr(i + 1);
+        const ordinal_type pbeg = _h_level_ptr(i);
+        const ordinal_type pend = _h_level_ptr(i + 1);
 
         _h_buf_factor_ptr(lbeg) = 0;
         _h_buf_solve_ptr(lbeg) = 0;
+
+        bool my_flag = false;
+        const ordinal_type sid_s = _h_level_sids(pbeg);
+        if (_h_factorize_mode(sid_s) == 0) {
+          // max workspace for each stream
+          for (ordinal_type s = 0; s < nstreams+1; s++) {
+            h_device_factor_buf_size(s) = 0;
+            h_device_solve_buf_size(s) = 0;
+          }
+        }
         for (ordinal_type p = pbeg, k = (lbeg + 1); p < pend; ++p, ++k) {
           const ordinal_type sid = _h_level_sids(p);
           const auto s = _h_supernodes(sid);
@@ -521,12 +607,44 @@ public:
           const ordinal_type factor_work_size = factor_work_size_variants[index_work_size];
           const ordinal_type solve_work_size = solve_work_size_variants[index_work_size];
 
-          _h_buf_factor_ptr(k) = factor_work_size + _h_buf_factor_ptr(k - 1);
-          _h_buf_solve_ptr(k) = solve_work_size + _h_buf_solve_ptr(k - 1);
-        }
+          if (my_flag && _h_factorize_mode(sid) == 0) {
+            // device  
+            const ordinal_type  id = (p-pbeg) % nstreams;  // ID for this supernode
+            if (myRank == 0) {
+              printf( " %d:%d: factor_max_work_size (%d) = max(%d,%d) %dx%d (%d -> %d)\n",i,p,id+1, h_device_factor_buf_size(id+1),factor_work_size,m,n, (m > _device_solve_thres ? 0 : 1),_h_factorize_mode(sid) );
+              fflush(stdout);
+            }
+            h_device_factor_buf_size(id+1) = max(h_device_factor_buf_size(id+1), factor_work_size);
+            h_device_solve_buf_size(id+1) = max(h_device_solve_buf_size(id+1), solve_work_size);
+          } else {
+            // team
+            _h_buf_factor_ptr(k) = factor_work_size + _h_buf_factor_ptr(k - 1);
+            _h_buf_solve_ptr(k) = solve_work_size + _h_buf_solve_ptr(k - 1);
+            if (myRank == 0) printf( " %d: factor_work_size (%d) = %d => %d, %dx%d (%d -> %d)\n",i,k, factor_work_size,_h_buf_factor_ptr(k), m,n, (m > _device_solve_thres ? 0 : 1),_h_factorize_mode(sid) );
+          }
+        } // finish going through supernodes in this level
+
         const ordinal_type last_idx = lbeg + pend - pbeg;
+        if (my_flag && _h_factorize_mode(sid_s) == 0) {
+          // one workspace / stream
+          for (ordinal_type p = 0; p < nstreams; ++p) {
+            h_device_factor_buf_size(p+1) += h_device_factor_buf_size(p);
+            h_device_solve_buf_size(p+1) += h_device_solve_buf_size(p);
+          }
+          for (ordinal_type p = pbeg, k = (lbeg + 1); p < pend; ++p, ++k) {
+            const ordinal_type id = (p-pbeg) % nstreams;  // ID for this supernode
+            _h_buf_factor_ptr(k) = h_device_factor_buf_size(id);
+            _h_buf_solve_ptr(k) = h_device_solve_buf_size(id);
+            if (myRank == 0) printf( " * %d:%d: factor_work_size (%d,%d) = %d\n",i,k, p-pbeg,id, h_device_factor_buf_size(id) );
+          }
+	  // keep track of total buf size
+          _h_buf_factor_ptr(last_idx) = h_device_factor_buf_size(nstreams);
+          _h_buf_solve_ptr(last_idx) = h_device_solve_buf_size(nstreams);
+          if (myRank == 0) printf( " + %d: factor_work_size(%d) = %d\n",i,lbeg+(pend-pbeg), h_device_factor_buf_size(nstreams) );
+        }
         _bufsize_factorize = max(_bufsize_factorize, _h_buf_factor_ptr(last_idx));
         _bufsize_solve = max(_bufsize_solve, _h_buf_solve_ptr(last_idx));
+        if (myRank == 0) printf( " => _buf_factorize = %d (vs %d)\n",_bufsize_factorize,_h_buf_factor_ptr(last_idx) );
       }
     }
 
@@ -569,6 +687,7 @@ public:
     _nrhs = 1;
     Kokkos::resize(_buf, max(_bufsize_factorize, _bufsize_solve));
     track_alloc(_buf.span() * sizeof(value_type));
+    MPI_Barrier(MPI_COMM_WORLD); printf( " done alloc buf (%d,%d)\n",_bufsize_factorize,_bufsize_solve ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
     // pre-allocate work
     _worksize = 0;
     switch (this->getSolutionMethod()) {
@@ -601,70 +720,12 @@ public:
     size_type worksize = _worksize * (nstreams + 1);
     Kokkos::resize(_work, worksize);
     track_alloc(_work.span() * sizeof(value_type));
-    stat.t_init = timer.seconds();
 
-    ///
-    /// classification of problems
-    ///
-    timer.reset();
-
-    _device_level_cut = min(device_level_cut, _nlevel);
-    _device_factorize_thres = device_factorize_thres;
-    _device_solve_thres = (variant == 3 ? 0 : device_solve_thres);
-
-    _h_factorize_mode = ordinal_type_array_host(do_not_initialize_tag("h_factorize_mode"), _nsupernodes);
-    Kokkos::deep_copy(_h_factorize_mode, -1);
-
-    _h_solve_mode = ordinal_type_array_host(do_not_initialize_tag("h_solve_mode"), _nsupernodes);
-    Kokkos::deep_copy(_h_solve_mode, -1);
-
-    if (_device_level_cut > 0) {
-      for (ordinal_type lvl = 0; lvl < _device_level_cut; ++lvl) {
-        const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
-        for (ordinal_type p = pbeg; p < pend; ++p) {
-          const ordinal_type sid = _h_level_sids(p);
-          _h_solve_mode(sid) = 0;
-          _h_factorize_mode(sid) = 0;
-          ++stat_level.n_device_solve;
-          ++stat_level.n_device_factorize;
-        }
-      }
-    }
-
-    _team_serial_level_cut = _nlevel;
-    {
-      for (ordinal_type lvl = _device_level_cut; lvl < _team_serial_level_cut; ++lvl) {
-        const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
-        for (ordinal_type p = pbeg; p < pend; ++p) {
-          const ordinal_type sid = _h_level_sids(p);
-          const auto s = _h_supernodes(sid);
-          const ordinal_type m = s.m;    //, n_m = s.n-s.m;
-          if (m > _device_solve_thres) { // || n > _device_solve_thres)
-            _h_solve_mode(sid) = 0;
-            ++stat_level.n_device_solve;
-          } else {
-            _h_solve_mode(sid) = 1;
-            ++stat_level.n_team_solve;
-          }
-          if (m > _device_factorize_thres) { // || n_m > _device_factorize_thres)
-            _h_factorize_mode(sid) = 0;
-            ++stat_level.n_device_factorize;
-          } else {
-            _h_factorize_mode(sid) = 1;
-            ++stat_level.n_team_factorize;
-          }
-        }
-      }
-    }
-
-    _factorize_mode = Kokkos::create_mirror_view_and_copy(exec_memory_space(), _h_factorize_mode);
-    track_alloc(_factorize_mode.span() * sizeof(ordinal_type));
-
-    _solve_mode = Kokkos::create_mirror_view_and_copy(exec_memory_space(), _h_solve_mode);
-    track_alloc(_solve_mode.span() * sizeof(ordinal_type));
-
+    // create streams
     createStream(nstreams, verbose);
-    stat.t_mode_classification = timer.seconds();
+    stat.t_init = timer.seconds();
+    MPI_Barrier(MPI_COMM_WORLD); printf( " done alloc work (%dx%d, %d)\n",_info.max_supernode_size,_info.max_num_cols,worksize ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+
     if (verbose) {
       switch (this->getSolutionMethod()) {
       case 1: {
