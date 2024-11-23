@@ -36,13 +36,16 @@ public:
 
 private:
   supernode_info_type _info;
-  ordinal_type_array _compute_mode, _level_sids;
+  ordinal_type_array _compute_mode;
+  bool _parallel_device_update;
+  ordinal_type_array _level_sids;
   ordinal_type _pbeg, _pend;
 
   ordinal_type_array _piv;
 
-  size_type_array _buf_ptr;
   value_type_array _buf;
+  ordinal_type _buf_offset;
+  size_type_array _buf_ptr;
 
   int *_rval;
 
@@ -51,17 +54,20 @@ public:
   TeamFunctor_FactorizeLU() = delete;
 
   KOKKOS_INLINE_FUNCTION
-  TeamFunctor_FactorizeLU(const supernode_info_type &info, const ordinal_type_array &compute_mode,
+  TeamFunctor_FactorizeLU(const supernode_info_type &info, const ordinal_type_array &compute_mode, const bool parallel_device_update,
                           const ordinal_type_array &level_sids, const ordinal_type_array &piv,
                           const value_type_array buf, int *rval)
-      : _info(info), _compute_mode(compute_mode), _level_sids(level_sids), _piv(piv), _buf(buf), _rval(rval) {}
+      : _info(info), _compute_mode(compute_mode), _parallel_device_update(parallel_device_update), _level_sids(level_sids), _piv(piv),
+	_buf(buf), _buf_offset(0), _rval(rval) {}
 
   inline void setRange(const ordinal_type pbeg, const ordinal_type pend) {
     _pbeg = pbeg;
     _pend = pend;
   }
 
+  inline void setParallelDeviceUpdate(const bool parallel_device_update) { _parallel_device_update = parallel_device_update; }
   inline void setBufferPtr(const size_type_array &buf_ptr) { _buf_ptr = buf_ptr; }
+  inline void setBufferOffset(const ordinal_type buf_offset) { _buf_offset = buf_offset; }
 
   ///
   /// Main functions
@@ -427,7 +433,7 @@ public:
         factorize_var2(member, s, P, T, ABR);
       }
     } else if (mode == -1) {
-      Kokkos::printf("Error: TeamFunctorFactorizeChol, computing mode is not determined\n");
+      Kokkos::printf("Error: TeamFunctorFactorizeLU, computing mode is not determined\n");
     } else {
       // skip
     }
@@ -437,14 +443,17 @@ public:
   KOKKOS_INLINE_FUNCTION void operator()(const UpdateTag &, const MemberType &member) const {
     const ordinal_type lid = member.league_rank();
     const ordinal_type p = _pbeg + lid;
-    if (p < _pend) {
+    const ordinal_type sid = _level_sids(p);
+    const ordinal_type mode = _compute_mode(sid);
+    if (p < _pend && (_parallel_device_update || mode == 1)) {
       const ordinal_type sid = _level_sids(p);
       auto &s = _info.supernodes(sid);
       const ordinal_type n_m = s.n - s.m;
-      value_type *bufptr = _buf.data() + _buf_ptr(lid);
+      value_type *bufptr = _buf.data() + _buf_ptr(_buf_offset+lid);
       UnmanagedViewType<value_type_matrix> ABR(bufptr, n_m, n_m);
       update(member, s, ABR);
 
+      //if (mode == 0) printf( " lid=%d+%d, p=%d+%d=%d, sid=%d: (%dx%d) : %d\n",_buf_offset,lid, _pbeg,lid,p, sid, s.n,s.m, _buf_ptr(_buf_offset+lid) );
       const ordinal_type offm = s.row_begin;
       UnmanagedViewType<ordinal_type_array> fpiv(_piv.data() + offm * 4 + s.m, s.m);
       check(member, s, fpiv);
