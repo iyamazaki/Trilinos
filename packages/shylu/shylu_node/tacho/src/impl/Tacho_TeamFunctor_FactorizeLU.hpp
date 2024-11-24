@@ -453,7 +453,8 @@ public:
       UnmanagedViewType<value_type_matrix> ABR(bufptr, n_m, n_m);
       update(member, s, ABR);
 
-      //if (mode == 0) printf( " lid=%d+%d, p=%d+%d=%d, sid=%d: (%dx%d) : %d\n",_buf_offset,lid, _pbeg,lid,p, sid, s.n,s.m, _buf_ptr(_buf_offset+lid) );
+      //if (mode == 0) 
+      //  printf( " lid=%d+%d, p=%d+%d=%d, sid=%d: (%dx%d) : %d\n",_buf_offset,lid, _pbeg,lid,p, sid, s.n,s.m, _buf_ptr(_buf_offset+lid) );
       const ordinal_type offm = s.row_begin;
       UnmanagedViewType<ordinal_type_array> fpiv(_piv.data() + offm * 4 + s.m, s.m);
       check(member, s, fpiv);
