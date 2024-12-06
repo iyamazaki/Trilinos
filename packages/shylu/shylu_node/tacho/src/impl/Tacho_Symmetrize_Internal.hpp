@@ -63,5 +63,28 @@ template <> struct Symmetrize<Uplo::Lower, Algo::Internal> {
   }
 };
 
+template <> struct SkSymmetrize<Uplo::Upper, Algo::Internal> {
+  template <typename MemberType, typename ViewTypeA>
+  KOKKOS_INLINE_FUNCTION static int invoke(MemberType &member, const ViewTypeA &A) {
+    const ordinal_type m = A.extent(0), n = A.extent(1);
+
+    if (m == n) {
+      if (A.span() > 0) {
+        KOKKOS_IF_ON_DEVICE((
+        Kokkos::parallel_for(Kokkos::TeamThreadRange(member, n), [&](const ordinal_type &j) {
+          Kokkos::parallel_for(Kokkos::ThreadVectorRange(member, j), [&](const ordinal_type &i) { A(j, i) = A(i, j); });
+        });))
+        KOKKOS_IF_ON_HOST((
+        for (ordinal_type j = 0; j < n; ++j)
+          for (ordinal_type i = 0; i < j; ++i)
+            A(j, i) = -A(i, j);))
+      }
+    } else {
+      Kokkos::printf("Error: SkSymmetrize<Algo::Internal> A is not square\n");
+    }
+    return 0;
+  }
+};
+
 } // namespace Tacho
 #endif

@@ -72,6 +72,9 @@
 #include "Tacho_LDL_Internal.hpp"
 //#include "Tacho_LDL_ByBlocks.hpp"
 
+#include "Tacho_SkLDL.hpp"
+#include "Tacho_SkLDL_Internal.hpp"
+
 #include "Tacho_LU.hpp"
 #include "Tacho_LU_Serial.hpp"
 #include "Tacho_LU_External.hpp"

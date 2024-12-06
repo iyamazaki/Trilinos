@@ -108,8 +108,10 @@ void Driver<VT, DT>::setSolutionMethod(const int method) { // 1 - Chol, 2 - LDL,
   {
     std::stringstream ss;
     ss << "Error: the given method (" << method << ") is not supported, 1 - Chol, 2 - LDL, 3 - SymLU";
-    TACHO_TEST_FOR_EXCEPTION(method != Cholesky && method != LDL && method != SymLU, std::logic_error,
-                             ss.str().c_str());
+    TACHO_TEST_FOR_EXCEPTION(method != Cholesky && method != LDL && method != SymLU
+                             && method != SkewLDL // TODO: only for serial
+                             , std::logic_error
+                             , ss.str().c_str());
   }
   _method = method;
 }
@@ -409,6 +411,11 @@ template <typename VT, typename DT> int Driver<VT, DT>::factorize(const value_ty
       printf("============================\n");
       break;
     }
+    case SkewLDL: {
+      printf("TachoSolver: Factorize SkewLDL\n");
+      printf("==============================\n");
+      break;
+    }
     }
   }
 
@@ -463,7 +470,7 @@ template <typename VT, typename DT> int Driver<VT, DT>::factorize_small_host(con
     }
     default: {
       std::stringstream ss;
-      ss << "Error: the solution method (" << _method << ") is not supported, 1 - Chol, 2 - LDL, 3 - SymLU";
+      ss << "Error: the solution method (" << _method << ") is not supported, 1 - Chol, 2 - LDL, 3 - SymLU, for ** small problem **";
       TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, ss.str().c_str());
     }
     }

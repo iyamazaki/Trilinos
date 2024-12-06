@@ -98,6 +98,8 @@ template <typename value_type> int driver(int argc, char *argv[]) {
     method = 2;
   else if (method_name == "lu")
     method = 3;
+  else if (method_name == "skew")
+    method = 5;
   else {
     std::cout << "Error: not supported solution method\n";
     return -1;

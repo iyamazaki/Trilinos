@@ -79,7 +79,7 @@ public:
   using numeric_tools_levelset_var2_type = NumericToolsLevelSet<value_type, device_type, 2>;
 
 private:
-  enum : int { Cholesky = 1, LDL = 2, SymLU = 3, LU = 4 };
+  enum : int { Cholesky = 1, LDL = 2, SymLU = 3, LU = 4, SkewLDL = 5 };
 
   // ** solver mode
   ordinal_type _method;
@@ -401,34 +401,69 @@ public:
               const bool duplicate = false) {
 
     if (blk_size > 1) {
-      //condense graph before calling analyze
       const size_type nnz = ap(m);
       ordinal_type m_graph = m / blk_size;
-      size_type nnz_graph = nnz / (blk_size*blk_size);
-      TACHO_TEST_FOR_EXCEPTION((m != blk_size * m_graph || nnz != size_type(blk_size*blk_size) * nnz_graph),
-        std::logic_error, "Failed to initialize the condensed graph");
 
-      size_type_array_host ap_graph
-        (Kokkos::ViewAllocateWithoutInitializing("ap_graph"), 1+m_graph);
-      ordinal_type_array_host aj_graph
-        (Kokkos::ViewAllocateWithoutInitializing("aj_graph"), nnz_graph);
       ordinal_type_array_host aw_graph
         (Kokkos::ViewAllocateWithoutInitializing("wgs"), m_graph);
-      // condense the graph
-      nnz_graph = 0;
-      ap_graph(0) = 0;
-      for (ordinal_type i = 0; i < m; i += blk_size) {
-        for (size_type k = ap(i); k < ap(i+1); k++) {
-          if (aj(k)%blk_size == 0) {
-            aj_graph(nnz_graph) = aj(k)/blk_size;
-            nnz_graph++;
+      size_type_array_host ap_graph
+        (Kokkos::ViewAllocateWithoutInitializing("ap_graph"), 1+m_graph);
+      ordinal_type_array_host aj_graph;
+
+      //condense graph before calling analyze
+      bool explicit_zeros = true; // TODO: move it as a user-specified paremeter
+      if (explicit_zeros) {
+        TACHO_TEST_FOR_EXCEPTION((m != blk_size * m_graph),
+          std::logic_error, "Failed to initialize the condensed graph");
+        size_type nnz_graph = nnz; // TODO: count nnz
+        Kokkos::resize(aj_graph, nnz_graph);
+
+        // condense the graph
+        size_type_array_host col_graph
+          (Kokkos::ViewAllocateWithoutInitializing("col_graph"), m_graph);
+        nnz_graph = 0;
+        ap_graph(0) = 0;
+        for (ordinal_type b = 0; b < m; b += blk_size) {
+          // TODO: zero out using ap_graph & aj_graph
+          for (ordinal_type i = 0; i < m_graph; i++) {
+            col_graph(i) = 0;
           }
-          aw_graph(i/blk_size) = blk_size;
-          ap_graph((i/blk_size)+1) = nnz_graph;
+          for (ordinal_type i = b; i < b+blk_size; i++) {
+            for (size_type k = ap(i); k < ap(i+1); k++) {
+              size_t bj = aj(k)/blk_size;
+              if (col_graph(bj) == 0) {
+                aj_graph(nnz_graph) = bj;
+                col_graph(bj) = 1;
+                nnz_graph++;
+              }
+            }
+          }
+          aw_graph(b/blk_size) = blk_size;
+          ap_graph((b/blk_size)+1) = nnz_graph;
         }
+        Kokkos::resize(aj_graph, nnz_graph);
+      } else {
+        size_type nnz_graph = nnz / (blk_size*blk_size);
+        TACHO_TEST_FOR_EXCEPTION((m != blk_size * m_graph || nnz != size_type(blk_size*blk_size) * nnz_graph),
+          std::logic_error, "Failed to initialize the condensed graph");
+        Kokkos::resize(aj_graph, nnz_graph);
+
+        // condense the graph
+        nnz_graph = 0;
+        ap_graph(0) = 0;
+        for (ordinal_type i = 0; i < m; i += blk_size) {
+          for (size_type k = ap(i); k < ap(i+1); k++) {
+            if (aj(k)%blk_size == 0) {
+              aj_graph(nnz_graph) = aj(k)/blk_size;
+              nnz_graph++;
+            }
+            aw_graph(i/blk_size) = blk_size;
+            ap_graph((i/blk_size)+1) = nnz_graph;
+          }
+        }
+        TACHO_TEST_FOR_EXCEPTION((nnz != size_type(blk_size*blk_size) * nnz_graph),
+          std::logic_error, "Failed to condense graph");
       }
-      TACHO_TEST_FOR_EXCEPTION((nnz != size_type(blk_size*blk_size) * nnz_graph),
-        std::logic_error, "Failed to condense graph");
       return analyze(m, ap, aj, m_graph, ap_graph, aj_graph, aw_graph, duplicate);
     } else {
       return analyze(m, ap, aj, duplicate);
