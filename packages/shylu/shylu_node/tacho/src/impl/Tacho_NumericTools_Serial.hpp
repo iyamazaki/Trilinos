@@ -26,6 +26,9 @@
 #include "Tacho_LDL_Supernodes.hpp"
 #include "Tacho_LDL_Supernodes_Serial.hpp"
 
+#include "Tacho_SkLDL_Supernodes.hpp"
+#include "Tacho_SkLDL_Supernodes_Serial.hpp"
+
 #include "Tacho_LU_Supernodes.hpp"
 #include "Tacho_LU_Supernodes_Serial.hpp"
 
@@ -367,6 +370,116 @@ public:
   }
 
   ///
+  /// Skewed LDL
+  ///
+  inline void factorizeSkLDL(const value_type_array &ax, const ordinal_type verbose) {
+    {
+      const bool test = !std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+      TACHO_TEST_FOR_EXCEPTION(test, std::logic_error, "Serial interface works on host device only");
+    }
+
+    Kokkos::Timer timer;
+    {
+      timer.reset();
+      {
+        /// matrix values
+        _ax = ax;
+
+        /// copy the input matrix into super panels
+        const bool copy_to_l_buf(false);
+        _info.copySparseToSuperpanels(copy_to_l_buf, _ap, _aj, _ax, _perm, _peri);
+      }
+      stat.t_copy = timer.seconds();
+    }
+
+    timer.reset();
+    {
+      /// valgrind reports the following buf array as uninitialized even if it is initialized
+      /// while the task is executed. to remove the valgrind error, we initialize the array with zero.
+      /// value_type_array buf(do_not_initialize_tag("buf"), _info.max_schur_size*(_info.max_schur_size + 1));
+      value_type_array buf("buf",
+                           _info.max_schur_size * (_info.max_schur_size + 1) + // ABR
+                               _info.max_supernode_size *
+                                   std::max(32, _info.max_schur_size)); // ATR copy and workspace for LDL
+      const size_t bufsize = buf.span() * sizeof(value_type);
+      track_alloc(bufsize);
+
+      /// recursive tree traversal
+      const ordinal_type member = 0, nroots = _stree_roots.extent(0);
+      for (ordinal_type i = 0; i < nroots; ++i) {
+        //printf( " %d : SkLDL_Supernodes::factorize_recursive_serial\n",i );
+        SkLDL_Supernodes<Algo::Workflow::Serial>::factorize_recursive_serial(
+            member, _info, _stree_roots(i), true, _piv.data(), _diag.data(), buf.data(), bufsize);
+      }
+      track_free(bufsize);
+    }
+    stat.t_factor = timer.seconds();
+
+    if (verbose) {
+      printf("Summary: NumericTools, Skewed LDL (SerialFactorization)\n");
+      printf("=======================================================\n");
+
+      print_stat_factor();
+    }
+  }
+
+  inline void solveSkLDL(const value_type_matrix &x, // solution
+                         const value_type_matrix &b, // right hand side
+                         const value_type_matrix &t, // temporary workspace (store permuted vectors)
+                         const ordinal_type verbose) {
+    {
+      const bool test = !std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+      TACHO_TEST_FOR_EXCEPTION(test, std::logic_error, "Serial interface works on host device only");
+      TACHO_TEST_FOR_EXCEPTION(x.extent(0) != b.extent(0) || x.extent(1) != b.extent(1) || x.extent(0) != t.extent(0) ||
+                                   x.extent(1) != t.extent(1),
+                               std::logic_error, "supernode data structure is not allocated");
+      TACHO_TEST_FOR_EXCEPTION(x.data() == b.data() || x.data() == t.data() || t.data() == b.data(), std::logic_error,
+                               "x, b and t have the same data pointer");
+    }
+
+    Kokkos::Timer timer;
+
+    _info.x = t;
+
+    // copy b -> t
+    timer.reset();
+    const auto exec_instance = exec_space();
+    ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, b, _perm, t);
+    stat.t_extra = timer.seconds();
+
+    timer.reset();
+    {
+      value_type_array buf(do_not_initialize_tag("buf"), _info.max_schur_size * x.extent(1));
+      const size_t bufsize = buf.span() * sizeof(value_type);
+      track_alloc(bufsize);
+
+      /// recursive tree traversal
+      const ordinal_type member = 0, nroots = _stree_roots.extent(0);
+      for (ordinal_type i = 0; i < nroots; ++i)
+        LDL_Supernodes<Algo::Workflow::Serial>::solve_lower_recursive_serial(member, _info, _stree_roots(i), true,
+                                                                             _piv.data(), buf.data(), bufsize);
+      for (ordinal_type i = 0; i < nroots; ++i)
+        LDL_Supernodes<Algo::Workflow::Serial>::solve_upper_recursive_serial(
+            member, _info, _stree_roots(i), true, _piv.data(), _diag.data(), buf.data(), bufsize);
+
+      track_free(bufsize);
+    }
+    stat.t_solve = timer.seconds();
+
+    // copy t -> x
+    timer.reset();
+    ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, t, _peri, x);
+    stat.t_extra += timer.seconds();
+
+    if (verbose) {
+      printf("Summary: NumericTools, Skewed LDL (SerialSolve: %3d)\n", ordinal_type(x.extent(1)));
+      printf("====================================================\n");
+
+      print_stat_solve();
+    }
+  }
+
+  ///
   /// LU
   ///
   inline void factorizeLU(const value_type_array &ax, const ordinal_type verbose) {
@@ -481,6 +594,7 @@ public:
       const bool test = !std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
       TACHO_TEST_FOR_EXCEPTION(test, std::logic_error, "Serial interface works on host device only");
     }
+    //printf( " factorize(%d)\n",this->getSolutionMethod() );
     /// reset the supernode buffer for potential reuse cases
     Kokkos::deep_copy(_superpanel_buf, value_type(0));
     switch (this->getSolutionMethod()) {
@@ -525,6 +639,18 @@ public:
       factorizeLU(ax, verbose);
       break;
     }
+    case 5: { /// Skewed LDL
+      {
+        const ordinal_type rlen = 4 * _m, plen = _piv.span();
+        if (plen < rlen) {
+          track_free(this->_piv.span() * sizeof(ordinal_type));
+          this->_piv = ordinal_type_array("piv", rlen);
+          track_alloc(this->_piv.span() * sizeof(ordinal_type));
+        }
+      }
+      factorizeSkLDL(ax, verbose);
+      break;
+    }
     default: {
       TACHO_TEST_FOR_EXCEPTION(false, std::logic_error, "The solution method is not supported");
       break;
@@ -559,7 +685,13 @@ public:
       solveLU(x, b, t, verbose);
       break;
     }
+    case 5: {
+      solveSkLDL(x, b, t, verbose);
+      break;
+    }
     default: {
+      TACHO_TEST_FOR_EXCEPTION(false, std::logic_error, "The solution method is not supported");
+      break;
     }
     }
   }

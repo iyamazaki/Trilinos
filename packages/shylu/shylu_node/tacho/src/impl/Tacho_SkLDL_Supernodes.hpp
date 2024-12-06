@@ -8,24 +8,18 @@
 // *****************************************************************************
 // @HEADER
 // clang-format on
-#ifndef __TACHO_SYMMETRIZE_HPP__
-#define __TACHO_SYMMETRIZE_HPP__
+#ifndef __TACHO_SKLDL_SUPERNODES_HPP__
+#define __TACHO_SKLDL_SUPERNODES_HPP__
 
-/// \file Tacho_Symmetrize.hpp
-/// \brief Front interface for Symmetrize
+/// \file Tacho_LDL_Supernodes.hpp
 /// \author Kyungjoo Kim (kyukim@sandia.gov)
 
 #include "Tacho_Util.hpp"
 
 namespace Tacho {
 
-///
-/// Symmetrize
-///
+template <typename ArgWorkflowAlgo> struct SkLDL_Supernodes;
 
-/// various implementation for different uplo and algo parameters
-template <typename ArgUplo, typename ArgAlgo> struct Symmetrize;
-template <typename ArgUplo, typename ArgAlgo> struct SkSymmetrize;
-} // namespace Tacho
+}
 
 #endif

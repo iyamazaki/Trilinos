@@ -8,11 +8,11 @@
 // *****************************************************************************
 // @HEADER
 // clang-format on
-#ifndef __TACHO_SYMMETRIZE_HPP__
-#define __TACHO_SYMMETRIZE_HPP__
+#ifndef __TACHO_SKLDL_HPP__
+#define __TACHO_SKLDL_HPP__
 
-/// \file Tacho_Symmetrize.hpp
-/// \brief Front interface for Symmetrize
+/// \file Tacho_LDL.hpp
+/// \brief Front interface for LDL^t dense factorization
 /// \author Kyungjoo Kim (kyukim@sandia.gov)
 
 #include "Tacho_Util.hpp"
@@ -20,12 +20,13 @@
 namespace Tacho {
 
 ///
-/// Symmetrize
+/// LDL:
+///
 ///
 
 /// various implementation for different uplo and algo parameters
-template <typename ArgUplo, typename ArgAlgo> struct Symmetrize;
-template <typename ArgUplo, typename ArgAlgo> struct SkSymmetrize;
+template <typename ArgUplo, typename ArgAlgo> struct SkLDL;
+
 } // namespace Tacho
 
 #endif
