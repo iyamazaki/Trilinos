@@ -352,7 +352,7 @@ namespace FROSch {
                                                        this->columnsRecv, tpetraNewMat, replaceVals);
                   //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix === \n\n"; tpetraNewMat->describe(*fancy,VERB_EXTREME); }
               }
-	      MPI_Barrier(MPI_COMM_WORLD); if (this->subdomainMatrix_->getRowMap()->getComm()->getRank() == 0) printf( " importSquareMatrix_import (done)\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+              //MPI_Barrier(MPI_COMM_WORLD); if (this->subdomainMatrix_->getRowMap()->getComm()->getRank() == 0) printf( " importSquareMatrix_import (done)\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 #endif
             }
 
@@ -364,7 +364,9 @@ namespace FROSch {
             // fill in column indexes
             ExtractLocalSubdomainMatrix_Symbolic(this->subdomainMatrix_, // input
                                                  this->localSubdomainMatrix_);   // output
-	    MPI_Barrier(MPI_COMM_WORLD); if (this->subdomainMatrix_->getRowMap()->getComm()->getRank() == 0) printf( " FROSch_AlgebraicOverlappingOperator::ExtractLocalSubdomainMatrix_Symbolic (done)\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            //MPI_Barrier(MPI_COMM_WORLD);
+            if (this->subdomainMatrix_->getRowMap()->getComm()->getRank() == 0) printf( " FROSch_AlgebraicOverlappingOperator::ExtractLocalSubdomainMatrix_Symbolic (done)\n" ); fflush(stdout); 
+            MPI_Barrier(MPI_COMM_WORLD);
             // turn flag on
             this->ExtractLocalSubdomainMatrix_Symbolic_Done_ = true;
         }

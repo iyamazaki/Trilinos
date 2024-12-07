@@ -42,13 +42,13 @@ namespace FROSch {
             {
                 ExtractLocalSubdomainMatrix_Compute(this->numTerms, this->locCount,
                                                     this->sourceSize,this->targetSize,
-						    this->rowCount,
+                                                    this->rowCount,
                                                     //  
                                                     this->distributor,
                                                     //  
                                                     this->targetMapGIDs,this->targetMapGIDsBegin,this->ownedRowGIDs,
                                                     this->localRowsSend,this->localRowsSendBegin,this->localRowsRecv,this->localRowsRecvBegin,
-						    this->columnsRecv,
+                                                    this->columnsRecv,
                                                     //  
                                                     this->K_.getConst(),
                                                     this->coarseSubdomainMatrix_,
@@ -152,7 +152,7 @@ namespace FROSch {
         RCP<ParameterList> coarseSpaceList = sublist(sublist(this->ParameterList_,"Blocks"),blockIdString.c_str());
         bool useForCoarseSpace = coarseSpaceList->get("Use For Coarse Space",true);
 
-	if (useForCoarseSpace) {
+        if (useForCoarseSpace) {
             // Das könnte man noch ändern
             NumberOfBlocks_++;
 
@@ -491,7 +491,7 @@ namespace FROSch {
                                                                                                                          SC tresholdDropping,
                                                                                                                          SC tresholdOrthogonalization)
     {
-      MPI_Barrier(MPI_COMM_WORLD);
+      //MPI_Barrier(MPI_COMM_WORLD);
       {
         FROSCH_DETAILTIMER_START_LEVELID(detectLinearDependenciesTime,"HarmonicCoarseOperator::detectLinearDependencies");
         LOVecPtr linearDependentVectors(AssembledInterfaceCoarseSpace_->getBasisMap()->getLocalNumElements()); //if (this->Verbose_) cout << AssembledInterfaceCoarseSpace_->getAssembledBasis()->getNumVectors() << " " << AssembledInterfaceCoarseSpace_->getAssembledBasis()->getLocalLength() << " " << indicesGammaDofsAll.size() << endl;
@@ -579,13 +579,13 @@ namespace FROSch {
                 graph_type crsgraph (Indices, Rowptr);
                 crsmat_type crsmat = crsmat_type ("CrsMatrix", numRows, Values, crsgraph);
 
-		{
+                {
                   Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Build");
                   Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
 
                   phiGamma = MatrixFactory<SC,LO,GO,NO>::Build(crsmat, rowMap, basisMap, basisMapUnique, rangeMap,
                                                                params);
-		}
+                }
             } else
 #endif
             {
@@ -625,7 +625,7 @@ namespace FROSch {
 
             //Compute Phi^T * Phi
             XMatrixPtr phiTPhi;
-	    {
+            {
               Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::SpGEMM");
               Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
 
@@ -635,12 +635,12 @@ namespace FROSch {
 
             // Extract local part of the matrix
             ConstXMatrixPtr repeatedPhiTPhi;
-	    {
+            {
               Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Extract");
               Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
 
               repeatedPhiTPhi = ExtractLocalSubdomainMatrix(phiTPhi.getConst(),AssembledInterfaceCoarseSpace_->getBasisMap());
-	    }
+            }
             //Communicate matrix to the repeated map
             // repeatedPhiTPhi = MatrixFactory<SC,LO,GO,NO>::Build(AssembledInterfaceCoarseSpace_->getBasisMap());
             // XExportPtr exporter = ExportFactory<LO,GO,NO>::Build(rowMap,repeatedMap);
@@ -648,7 +648,7 @@ namespace FROSch {
 
             UN numRows = repeatedPhiTPhi->getRowMap()->getLocalNumElements();
             TSerialDenseMatrixPtr denseRepeatedPhiTPhi(new SerialDenseMatrix<LO,SC>(numRows,repeatedPhiTPhi->getColMap()->getLocalNumElements()));
-	    {
+            {
               Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Dense");
               Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
               for (UN i=0; i<numRows; i++) {
@@ -1211,7 +1211,7 @@ namespace FROSch {
                                                                                   this->sourceSize,this->targetSize,this->rowCount,
                                                                                   this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
                                                                                   this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
-										  this->columnsRecv);
+                                                                                  this->columnsRecv);
               //if (this->coarseSubdomainMatrix_->isLocallyIndexed ()) printf( " isLocal(1)\n" );
               //else printf( " not isLocal(1)\n" ); fflush(stdout);
               // insert column indices (and also numerical values) 
@@ -1226,7 +1226,8 @@ namespace FROSch {
                                                        this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
                                                        this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
                                                        this->columnsRecv, tpetraNewMat, replaceVals);
-                  //MPI_Barrier(MPI_COMM_WORLD); printf( " HarmonicCoarseOperator::extractLocalSubdomainMatrix_Symbolic::doImport done\n" );
+                  //MPI_Barrier(MPI_COMM_WORLD); 
+                  printf( " HarmonicCoarseOperator::extractLocalSubdomainMatrix_Symbolic::doImport done\n" );
                   //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix === \n\n"; tpetraNewMat->describe(*fancy,VERB_EXTREME); }
               } else
               {
@@ -1246,7 +1247,9 @@ namespace FROSch {
             // fill in column indexes
             ExtractLocalSubdomainMatrix_Symbolic(this->coarseSubdomainMatrix_, // input
                                                  this->coarseLocalSubdomainMatrix_); // output
-            MPI_Barrier(MPI_COMM_WORLD); if(repeatedMap->getComm()->getRank()==0) printf( " FROSch_HarmonicCoarseOperator::ExtractLocalSubdomainMatrix_Symbolic (done)\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            //MPI_Barrier(MPI_COMM_WORLD); 
+            if(repeatedMap->getComm()->getRank()==0) printf( " FROSch_HarmonicCoarseOperator::ExtractLocalSubdomainMatrix_Symbolic (done)\n" ); fflush(stdout); 
+            //MPI_Barrier(MPI_COMM_WORLD);
 
             // turn flag on
             this->coarseExtractLocalSubdomainMatrix_Symbolic_Done_ = true;
@@ -1276,9 +1279,9 @@ namespace FROSch {
             auto repeatedMatrix = this->coarseLocalSubdomainMatrix_;
             BuildSubmatrices(repeatedMatrix.getConst(),indicesIDofsAll(),kII,kIGamma,kGammaI,kGammaGamma);
 
-	    // warmup SpMVa
+            // warmup SpMVa
             #if 1
-	    (void)KokkosKernels::Impl::CusparseSingleton::singleton();
+            (void)KokkosKernels::Impl::CusparseSingleton::singleton();
             #else
             XMultiVectorPtr mVtmp = MultiVectorFactory<SC,LO,GO,NO>::Build(kII->getRowMap(),1/*AssembledInterfaceCoarseSpace_->getBasisMap()->getLocalNumElements()*/);
             XMultiVectorPtr mVPhiGamma = MultiVectorFactory<SC,LO,GO,NO>::Build(kIGamma->getDomainMap(),1/*AssembledInterfaceCoarseSpace_->getBasisMap()->getLocalNumElements()*/);

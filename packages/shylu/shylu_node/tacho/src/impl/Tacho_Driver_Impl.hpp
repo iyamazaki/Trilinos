@@ -179,7 +179,7 @@ typename Driver<VT, DT>::ordinal_type_array Driver<VT, DT>::getInversePermutatio
 // internal only
 template <typename VT, typename DT> int Driver<VT, DT>::analyze() {
   int r_val(0);
-  if (_m < _small_problem_thres) {
+  if (_m <= _small_problem_thres) {
     /// do nothing
     if (_verbose) {
       printf("TachoSolver: Analyze\n");
@@ -330,7 +330,7 @@ template <typename VT, typename DT> int Driver<VT, DT>::initialize() {
   ///
   /// initialize numeric tools
   ///
-  if (_m < _small_problem_thres) {
+  if (_m <= _small_problem_thres) {
     /// do nothing
   } else {
     ///
@@ -370,7 +370,7 @@ template <typename VT, typename DT> int Driver<VT, DT>::factorize(const value_ty
     }
   }
 
-  if (_m < _small_problem_thres) {
+  if (_m <= _small_problem_thres) {
     factorize_small_host(ax);
   } else {
     _N->factorize(ax, _verbose);
@@ -463,7 +463,7 @@ int Driver<VT, DT>::solve(const value_type_matrix &x, const value_type_matrix &b
     }
   }
 
-  if (_m < _small_problem_thres) {
+  if (_m <= _small_problem_thres) {
     solve_small_host(x, b, t);
   } else {
     TACHO_TEST_FOR_EXCEPTION(t.extent(0) < x.extent(0) || t.extent(1) < x.extent(1), std::logic_error,
@@ -553,7 +553,7 @@ void Driver<VT, DT>::computeSpMV(const value_type_array &ax, const value_type_ma
 }
 
 template <typename VT, typename DT> int Driver<VT, DT>::exportFactorsToCrsMatrix(crs_matrix_type &A) {
-  if (_m < _small_problem_thres) {
+  if (_m <= _small_problem_thres) {
     typedef ArithTraits<value_type> ats;
     const typename ats::mag_type zero(0);
 
