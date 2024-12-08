@@ -503,25 +503,29 @@ public:
       }
     }
 
-#define TACHO_DEBUG
+//#define TACHO_DEBUG
 #ifdef TACHO_DEBUG
 int myRank = 0; 
-int printRank = 40;
-#define TACHO_USE_MPI
+int printRank = 0;
+//#define TACHO_USE_MPI
 #ifdef TACHO_USE_MPI
 MPI_Comm_rank(MPI_COMM_WORLD,&myRank);
 #endif
 FILE *fp = nullptr;
-{
+/*{
   char filename[200];
   sprintf(filename,"level_stats_%d.dat", myRank);
   fp = fopen(filename,"w");
   if (!fp) printf( " Failed to open %s\n",filename );
-}
+}*/
 #endif
     _team_serial_level_cut = _nlevel;
-    _parallel_device_update = true; //false; // use team-update for supernode with device factor
-    bool _mode_by_level = false; //true;
+    // original                                               : _parallel_device_update = true & _mode_by_level = false
+    // device or team by level (still use separate workspace) : _parallel_device_update = true & _mode_by_level = true
+    // device or team by level (use one workspace per stream) : _parallel_device_update = false & _mode_by_level = true
+    // use one workspace per stream : _parallel_device_update = false & _mode_by_level = false
+    _parallel_device_update = false; // use team-update for supernode with device factor
+    bool _mode_by_level = false;
     {
       for (ordinal_type lvl = _device_level_cut; lvl < _team_serial_level_cut; ++lvl) {
         const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
@@ -539,10 +543,10 @@ FILE *fp = nullptr;
             }
           } else {
             if (m > _device_factorize_thres) { // || n_m > _device_factorize_thres)
-              _h_factorize_mode(sid) = 0;
+              _h_factorize_mode(sid) = 0;   // device
               ++stat_level.n_device_factorize;
             } else {
-              _h_factorize_mode(sid) = 1;
+              _h_factorize_mode(sid) = 1;   // team
               ++stat_level.n_team_factorize;
             }
           }
@@ -604,7 +608,6 @@ FILE *fp = nullptr;
     _h_buf_solve_ptr = size_type_array_host(do_not_initialize_tag("h_buf_solve_ptr"), _h_buf_level_ptr(_nlevel));
     {
       size_type_array_host h_device_factor_buf_size("h_device_factor_buf_size",1+nstreams);
-      size_type_array_host h_device_solve_buf_size("h_device_solve_buf_size",1+nstreams);
       for (ordinal_type i = 0; i < _nlevel; ++i) {
         #ifdef TACHO_DEBUG
         if (fp) fprintf(fp,"\n === lvl = %d ===\n",i );
@@ -617,12 +620,11 @@ FILE *fp = nullptr;
         _h_buf_factor_ptr(lbeg) = 0;
         _h_buf_solve_ptr(lbeg) = 0;
 
+        bool has_device = false;
         bool my_flag = (!_parallel_device_update); //false; // flag to reuse workspace on each stream (a single workspace / stream)
-        const ordinal_type sid_s = _h_level_sids(pbeg);
         // max workspace for each stream
         for (ordinal_type s = 0; s < nstreams+1; s++) {
           h_device_factor_buf_size(s) = 0;
-          h_device_solve_buf_size(s) = 0;
         }
         for (ordinal_type p = pbeg, k = (lbeg + 1); p < pend; ++p, ++k) {
           const ordinal_type sid = _h_level_sids(p);
@@ -660,51 +662,55 @@ FILE *fp = nullptr;
 
           if (my_flag && _h_factorize_mode(sid) == 0) { // !parallel_update & device
             // device  
+            has_device = true;
             const ordinal_type  id = (p-pbeg) % nstreams;  // ID for this supernode
-             #ifdef TACHO_DEBUG
+            #ifdef TACHO_DEBUG
             if (fp)
-              fprintf(fp, " %d:%d: factor_max_work_size (%d) = max(%d,%d) %dx%d (%d -> %d)\n",i,p,id+1, h_device_factor_buf_size(id+1),factor_work_size,m,n, (m > _device_solve_thres ? 0 : 1),_h_factorize_mode(sid) );
+              fprintf(fp, " %d:%d: factor_max_work_size (%d) = max(%d,%d) %dx%d (%d -> %d)\n",i,p,id+1, h_device_factor_buf_size(id+1),factor_work_size,m,n, (m > _device_factorize_thres ? 0 : 1),_h_factorize_mode(sid) );
             else if (myRank == printRank) {
-              printf( " %d:%d: factor_max_work_size (%d) = max(%d,%d) %dx%d (%d -> %d)\n",i,p,id+1, h_device_factor_buf_size(id+1),factor_work_size,m,n, (m > _device_solve_thres ? 0 : 1),_h_factorize_mode(sid) );
-              fflush(stdout);
+              printf( " %d:%d: factor_max_work_size (%d) = max(%d,%d) %dx%d (%d -> %d)\n",i,p,id+1, h_device_factor_buf_size(id+1),factor_work_size,m,n, (m > _device_factorize_thres ? 0 : 1),_h_factorize_mode(sid) );
             }
+            printf( " > (device) _h_buf_factor_ptr(%d) = %d\n",k, _h_buf_factor_ptr(k - 1) );
+            fflush(stdout);
             #endif
             h_device_factor_buf_size(id+1) = max(h_device_factor_buf_size(id+1), factor_work_size);
-            h_device_solve_buf_size(id+1) = max(h_device_solve_buf_size(id+1), solve_work_size);
+            // skip for now
+            _h_buf_factor_ptr(k) = _h_buf_factor_ptr(k - 1);
           } else {
             // team, or device but separate buffer for each supernode
             _h_buf_factor_ptr(k) = factor_work_size + _h_buf_factor_ptr(k - 1);
             #ifdef TACHO_DEBUG
-            if (fp) fprintf(fp, " %d: buf_factor_ptr (%d) = %d => %d, %dx%d (%d -> %d)\n",i,k, factor_work_size,_h_buf_factor_ptr(k), m,n, (m > _device_solve_thres ? 0 : 1),_h_factorize_mode(sid) );
-            else if (myRank == printRank) printf( " %d: buf_factor_ptr (%d) = %d => %d, %dx%d (%d -> %d)\n",i,k, factor_work_size,_h_buf_factor_ptr(k), m,n, (m > _device_solve_thres ? 0 : 1),_h_factorize_mode(sid) );
+            if (fp) fprintf(fp, " %d: buf_factor_ptr (%d:%d) = %d => %d, %dx%d (%d -> %d)\n",i,k,k-(lbeg+1), factor_work_size,_h_buf_factor_ptr(k), m,n, (m > _device_factorize_thres ? 0 : 1),_h_factorize_mode(sid) );
+            else if (myRank == printRank) printf( " + (team) %d: _h_buf_factor_ptr (%d) = %d => %d, %dx%d (%d -> %d)\n",i,k, factor_work_size,_h_buf_factor_ptr(k), m,n, (m > _device_factorize_thres ? 0 : 1),_h_factorize_mode(sid) );
             #endif
           }
           _h_buf_solve_ptr(k) = solve_work_size + _h_buf_solve_ptr(k - 1);
         } // finish going through supernodes in this level
 
         const ordinal_type last_idx = lbeg + pend - pbeg;
-        if (my_flag && _h_factorize_mode(sid_s) == 0) {
-          // TODO: assuming level-based mode (using sid_s)
+        if (my_flag && has_device) {
           // one workspace / stream
+          h_device_factor_buf_size(0) = _h_buf_factor_ptr(last_idx); // after team-buffer
           for (ordinal_type p = 0; p < nstreams; ++p) {
+            #ifdef TACHO_DEBUG
+            printf( " - h_device_factor_buf_size(%d) = %d + %d = %d\n",p+1,h_device_factor_buf_size(p),h_device_factor_buf_size(p+1),h_device_factor_buf_size(p)+h_device_factor_buf_size(p+1));
+            #endif
             h_device_factor_buf_size(p+1) += h_device_factor_buf_size(p);
-            h_device_solve_buf_size(p+1) += h_device_solve_buf_size(p);
           }
+          // assign workspace to each device super node
           for (ordinal_type p = pbeg, k = (lbeg + 1); p < pend; ++p, ++k) {
             const ordinal_type sid = _h_level_sids(p);
             if (_h_factorize_mode(sid) == 0) {
               const ordinal_type id = (p-pbeg) % nstreams;  // ID for this supernode
-              _h_buf_factor_ptr(k) = h_device_factor_buf_size(id);
-              //_h_buf_solve_ptr(k) = h_device_solve_buf_size(id);
+              _h_buf_factor_ptr(k-1) = h_device_factor_buf_size(id); // (k-1) points to start of buffer
               #ifdef TACHO_DEBUG
               if (fp) fprintf(fp, " * %d:%d: factor_ptr (%d,%d) = %d\n",i,k, p-pbeg,id, h_device_factor_buf_size(id) );
-              else if (myRank == printRank) printf( " * %d:%d: factor_ptr (%d,%d) = %d\n",i,k, p-pbeg,id, h_device_factor_buf_size(id) );
+              else if (myRank == printRank) printf( " * %d:%d: factor_ptr (%d,%d) = %d\n",i,p-pbeg,id,k, h_device_factor_buf_size(id) );
               #endif
             }
           }
           // keep track of total buf size
           _h_buf_factor_ptr(last_idx) = h_device_factor_buf_size(nstreams);
-          //_h_buf_solve_ptr(last_idx) = h_device_solve_buf_size(nstreams);
           #ifdef TACHO_DEBUG
           if (fp) fprintf(fp, " + %d: factor_work_size(%d) = %d\n",i,lbeg+(pend-pbeg), h_device_factor_buf_size(nstreams) );
           else if (myRank == printRank) printf( " + %d: factor_work_size(%d) = %d\n",i,lbeg+(pend-pbeg), h_device_factor_buf_size(nstreams) );
@@ -713,8 +719,14 @@ FILE *fp = nullptr;
         _bufsize_factorize = max(_bufsize_factorize, _h_buf_factor_ptr(last_idx));
         _bufsize_solve = max(_bufsize_solve, _h_buf_solve_ptr(last_idx));
         #ifdef TACHO_DEBUG
-        if (fp) fprintf(fp, " => _buf_factorize = %d (vs %d)\n",_bufsize_factorize,_h_buf_factor_ptr(last_idx) );
+        printf("\n");
+        if (fp) fprintf(fp, " => _buf_factorize = _h_buf_factor_ptr(%d) = %d (vs %d)\n",_bufsize_factorize,last_idx,_h_buf_factor_ptr(last_idx) );
         else if (myRank == printRank) printf( " => _buf_factorize = %d (vs %d)\n",_bufsize_factorize,_h_buf_factor_ptr(last_idx) );
+        printf("\n");
+        for (ordinal_type k = lbeg; k <= last_idx; ++k) {
+          printf( " >> _h_buf_factor_ptr(%d) = %d\n",k,_h_buf_factor_ptr(k) );
+        }
+        printf("\n");
         #endif
       }
     }
@@ -1533,9 +1545,10 @@ FILE *fp = nullptr;
       vector_size = std::min(32 ,vector_size);
       //vector_size = 1; printf( " * debug: vector-size = 1\n" );
     }
+    #if 0
     for (ordinal_type p = pbeg; p < pend; ++p) {
       const ordinal_type sid = _h_level_sids(p);
-      if (_h_factorize_mode(sid) == 0) {
+      if (_h_factorize_mode(sid) == 1) { // team
 #if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
         const ordinal_type qid = q % _nstreams;
         blas_handle_type   handle_blas   = getBlasHandle(qid);
@@ -1555,6 +1568,86 @@ FILE *fp = nullptr;
         const auto &s = _h_supernodes(sid);
         {
           const ordinal_type offs = s.row_begin, m = s.m, n = s.n, n_m = n - m;
+          printf( " + team(%d): %dx%d, h_buf_factor_ptr(%d) = %d\n",sid,m,n, p-pbeg,h_buf_factor_ptr(p - pbeg) ); fflush(stdout);
+          if (m > 0) {
+            value_type *uptr = s.u_buf;
+            UnmanagedViewType<value_type_matrix> AT(uptr, m, n);
+
+            ordinal_type *pivptr = _piv.data() + 4 * offs;
+            UnmanagedViewType<ordinal_type_array> P(pivptr, 4 * m);
+            _status = LU<Algo::OnDevice>::invoke(handle_lapack, AT, P, W);
+            checkDeviceLapackStatus("lu::invoke");
+
+            _status = LU<Algo::OnDevice>::modify(exec_instance, m, P);
+            checkDeviceLapackStatus("lu::modify");
+
+            if (n_m > 0) {
+              UnmanagedViewType<value_type_matrix> ATL(uptr, m, m);
+              uptr += m * m;
+              UnmanagedViewType<value_type_matrix> ATR(uptr, m, n_m);
+
+              UnmanagedViewType<value_type_matrix> AL(s.l_buf, n, m);
+              const auto ABL = Kokkos::subview(AL, range_type(m, n), Kokkos::ALL());
+              UnmanagedViewType<value_type_matrix> ABR(_buf.data() + h_buf_factor_ptr(p - pbeg), n_m, n_m);
+
+              _status = Trsm<Side::Right, Uplo::Upper, Trans::NoTranspose, Algo::OnDevice>::invoke(
+                  handle_blas, Diag::NonUnit(), one, ATL, ABL);
+              checkDeviceBlasStatus("trsm");
+
+              _status = Gemm<Trans::NoTranspose, Trans::NoTranspose, Algo::OnDevice>::invoke(handle_blas, minus_one,
+                                                                                             ABL, ATR, zero, ABR);
+              checkDeviceBlasStatus("gemm");
+              // update after each team factorization
+              /*if (!_parallel_device_update) {
+                functor.setRange(p, p+1);              // just this supernode
+                functor.setBufferOffset(p-pbeg);       // offsett for buffer
+                functor.setParallelDeviceUpdate(false); // enable update
+                policy_update = team_policy_lu_update(1, 1, vector_size);
+        Kokkos::fence();
+                Kokkos::parallel_for("update factor", policy_update, functor);
+        Kokkos::fence();
+              }*/
+            }
+          }
+        }
+      }
+    }
+    {
+      // update with all team-factor
+      Kokkos::fence();
+      functor.setBufferOffset(0);
+      functor.setRange(pbeg, pend);
+      functor.setParallelDeviceUpdate(false); // enable update
+      printf( " > Upate(%d:%d)\n",pbeg,pend );
+      policy_update = team_policy_lu_update(pend - pbeg, 1, vector_size);
+      Kokkos::parallel_for("update factor", policy_update, functor);
+      Kokkos::fence();
+    }
+    #endif
+    // device factor + update
+    for (ordinal_type p = pbeg; p < pend; ++p) {
+      const ordinal_type sid = _h_level_sids(p);
+      if (_h_factorize_mode(sid) == 0) { // device
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
+        const ordinal_type qid = q % _nstreams;
+        blas_handle_type   handle_blas   = getBlasHandle(qid);
+        lapack_handle_type handle_lapack = getLapackHandle(qid);
+        setStreamOnHandle(qid);
+        exec_instance = _exec_instances[qid];
+
+        const size_type worksize = work.extent(0) / _nstreams;
+        value_type_array W(work.data() + worksize * qid, worksize);
+        ++q;
+#else
+        blas_handle_type   handle_blas   = getBlasHandle();
+        lapack_handle_type handle_lapack = getLapackHandle();
+        value_type_array W = work;
+#endif
+
+        const auto &s = _h_supernodes(sid);
+        {
+          const ordinal_type offs = s.row_begin, m = s.m, n = s.n, n_m = n - m;
+          //printf( " * device(%d): %dx%d, h_buf_factor_ptr(%d) = %d\n",sid,m,n, p-pbeg,h_buf_factor_ptr(p - pbeg) ); fflush(stdout);
           if (m > 0) {
             value_type *uptr = s.u_buf;
             UnmanagedViewType<value_type_matrix> AT(uptr, m, n);
@@ -1588,9 +1681,9 @@ FILE *fp = nullptr;
                 functor.setBufferOffset(p-pbeg);       // offsett for buffer
                 functor.setParallelDeviceUpdate(true); // enable update
                 policy_update = team_policy_lu_update(1, 1, vector_size);
-//Kokkos::fence();
+        //Kokkos::fence();
                 Kokkos::parallel_for("update factor", policy_update, functor);
-//Kokkos::fence();
+        //Kokkos::fence();
               }
             }
           }
@@ -4461,14 +4554,14 @@ FILE *fp = nullptr;
         {
 #ifdef TACHO_DEBUG
 int myRank = 0;
-int printRank = 40;
+int printRank = 0;
 #ifdef TACHO_USE_MPI
 MPI_Comm_rank(MPI_COMM_WORLD,&myRank);
 #endif
 #endif
           for (ordinal_type lvl = (_team_serial_level_cut - 1); lvl >= 0; --lvl) {
             #ifdef TACHO_DEBUG
-            if (myRank == printRank) printf("\n === lvl = %d ===\n",lvl ); fflush(stdout);
+            if (myRank == printRank) printf("\n ~~~ lvl = %d ~~~\n",lvl ); fflush(stdout);
             #endif
             const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1), pcnt = pend - pbeg;
 
