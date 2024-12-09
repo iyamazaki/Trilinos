@@ -524,8 +524,13 @@ FILE *fp = nullptr;
     // device or team by level (still use separate workspace) : _parallel_device_update = true & _mode_by_level = true
     // device or team by level (use one workspace per stream) : _parallel_device_update = false & _mode_by_level = true
     // use one workspace per stream : _parallel_device_update = false & _mode_by_level = false
+    #if 1 // original
+    _parallel_device_update = true; // use team-update for supernode with device factor
+    bool _mode_by_level = false;
+    #else
     _parallel_device_update = false; // use team-update for supernode with device factor
     bool _mode_by_level = false;
+    #endif
     {
       for (ordinal_type lvl = _device_level_cut; lvl < _team_serial_level_cut; ++lvl) {
         const ordinal_type pbeg = _h_level_ptr(lvl), pend = _h_level_ptr(lvl + 1);
@@ -1539,11 +1544,17 @@ FILE *fp = nullptr;
     exec_space exec_instance;
     // get max vector length
     ordinal_type vector_size = 1;
+    ordinal_type team_size = 1;
     team_policy_lu_update policy_update(1, 1, 1);
     if (!is_host) {
+      // vector size
       vector_size = policy_update.vector_length_max();
-      vector_size = std::min(32 ,vector_size);
-      //vector_size = 1; printf( " * debug: vector-size = 1\n" );
+      //vector_size = std::min(32 ,vector_size);
+      policy_update = team_policy_lu_update(1, 1, vector_size);
+      // team size
+      team_size = policy_update.team_size_max(functor, Kokkos::ParallelForTag());
+      //team_size = std::min(16, team_size);
+      policy_update = team_policy_lu_update(1, team_size, vector_size);
     }
     #if 0
     for (ordinal_type p = pbeg; p < pend; ++p) {
@@ -1625,6 +1636,11 @@ FILE *fp = nullptr;
     }
     #endif
     // device factor + update
+    //Kokkos::Timer timer;
+    //Kokkos::Timer tic;
+    //double update_time = 0.0;
+    //double device_time = 0.0;
+    //timer.reset();
     for (ordinal_type p = pbeg; p < pend; ++p) {
       const ordinal_type sid = _h_level_sids(p);
       if (_h_factorize_mode(sid) == 0) { // device
@@ -1680,16 +1696,17 @@ FILE *fp = nullptr;
                 functor.setRange(p, p+1);              // just this supernode
                 functor.setBufferOffset(p-pbeg);       // offsett for buffer
                 functor.setParallelDeviceUpdate(true); // enable update
-                policy_update = team_policy_lu_update(1, 1, vector_size);
-        //Kokkos::fence();
+        //Kokkos::fence(); tic.reset();
                 Kokkos::parallel_for("update factor", policy_update, functor);
-        //Kokkos::fence();
+        //Kokkos::fence(); device_time = timer.seconds(); update_time += tic.seconds();
+        //printf( " (%d x %d) : %e / %e (%d,%d)\n",m,n,update_time,device_time,team_size,vector_size );
               }
             }
           }
         }
       }
     }
+    printf("\n");
     functor.setBufferOffset(0);
     functor.setRange(pbeg, pend);
     functor.setParallelDeviceUpdate(_parallel_device_update);
