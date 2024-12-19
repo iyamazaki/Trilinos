@@ -48,7 +48,7 @@ template <> struct ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevi
         }
       }
     } else {
-      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "A is not a square matrix");
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "A is not a square matrix("+std::to_string(m)+"x"+std::to_string(plen)+")");
     }
     return 0;
   }
