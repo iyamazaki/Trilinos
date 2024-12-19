@@ -19,6 +19,7 @@ SET(TACHO_HAVE_TRILINOS_SS ${Trilinos_ENABLE_TrilinosSS})
 SET(TACHO_HAVE_SUITESPARSE ${TPL_ENABLE_Cholmod})
                        
 SET(TACHO_HAVE_VTUNE ${TPL_ENABLE_VTune})
+SET(TACHO_HAVE_MATLAB ${TPL_ENABLE_MATLAB})
 
 #-----------------------------------------------------------------------------
 
