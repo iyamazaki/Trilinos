@@ -361,6 +361,38 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
     }
     return 0;
   }
+
+  template <typename MemberType, typename SupernodeInfoType>
+  KOKKOS_INLINE_FUNCTION static int
+  get_diag_recursive_serial(MemberType &member, const SupernodeInfoType &info,
+                            typename SupernodeInfoType::value_type_array::pointer_type diag,
+                            typename SupernodeInfoType::value_type_array::pointer_type D,
+                            const ordinal_type sid, const bool final) {
+    using supernode_info_type = SupernodeInfoType;
+    using value_type = typename supernode_info_type::value_type;
+    using value_type_matrix = typename supernode_info_type::value_type_matrix;
+    using value_type_array = typename supernode_info_type::value_type_array;
+    using ordinal_type_array = typename supernode_info_type::ordinal_type_array;
+
+    const auto &s = info.supernodes(sid);
+    if (final) {
+      // serial recursion
+      for (ordinal_type i = 0; i < s.nchildren; ++i)
+        get_diag_recursive_serial(member, info, diag, D, s.children[i], final);
+    }
+    {
+      const ordinal_type m = s.m;
+      const ordinal_type rbeg = s.row_begin;
+
+      UnmanagedViewType<value_type_matrix> dblk(diag + rbeg * 2, m, 2);
+      UnmanagedViewType<value_type_array>  d(D + rbeg, m);
+
+      for (ordinal_type i = 0; i < m; i++) {
+        d(i) = dblk(i,0);
+      }
+    }
+    return 0;
+  }
 };
 } // namespace Tacho
 

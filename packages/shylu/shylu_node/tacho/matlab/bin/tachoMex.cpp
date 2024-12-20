@@ -23,8 +23,8 @@ namespace Tacho {
 
 template <>
 TachoSystem<double>::TachoSystem() :
- verbose(false),
- dofs_per_node(1)
+ _verbose(false),
+ _dofs_per_node(1)
 {}
 template <>
 TachoSystem<double>::~TachoSystem() {}
@@ -36,13 +36,13 @@ template <typename Scalar>
 int TachoSystem<Scalar>::option(const mxArray** mx) {
   std::string option_name = loadDataFromMatlab<std::string>(mx[0]);
   if (option_name == "verbose") {
-    verbose = true;
-    solver.setVerbose(verbose);
-    if (verbose) printf( " > option(verbose)\n" );
+    _verbose = true;
+    solver.setVerbose(_verbose);
+    if (_verbose) printf( " > option(verbose)\n" );
   } else if (option_name == "method") {
     int method = 1;
     std::string method_name = loadDataFromMatlab<std::string>(mx[1]);
-    if (verbose) printf( " > option(method=%s)\n",method_name.c_str() );
+    if (_verbose) printf( " > option(method=%s)\n",method_name.c_str() );
     if (method_name == "chol")
       method = 1;
     else if (method_name == "ldl")
@@ -56,11 +56,11 @@ int TachoSystem<Scalar>::option(const mxArray** mx) {
     }
     solver.setSolutionMethod(method);
   } else if (option_name == "dofs-per-node") {
-    dofs_per_node = loadDataFromMatlab<int>(mx[1]);
-    if (verbose) printf( " > option(dofs-per-node=%d)\n",dofs_per_node );
+    _dofs_per_node = loadDataFromMatlab<int>(mx[1]);
+    if (_verbose) printf( " > option(dofs-per-node=%d)\n",_dofs_per_node );
   } else if (option_name == "small-problem-thres") {
     int small_problem_thres = loadDataFromMatlab<int>(mx[1]);
-    if (verbose) printf( " > option(small-problem-thres=%d)\n",small_problem_thres );
+    if (_verbose) printf( " > option(small-problem-thres=%d)\n",small_problem_thres );
     solver.setSmallProblemThresholdsize(small_problem_thres);
   }
   return IS_TRUE;
@@ -72,15 +72,15 @@ template <typename Scalar>
 int TachoSystem<Scalar>::setup(const mxArray* mx) {
   loadMatrixFromMatlab<double, host_device_type>(mx, A);
   try {
-    if (verbose) printf( " solver.analyze\n" );
-    if (dofs_per_node > 1) {
-      solver.analyze(A.NumRows(), dofs_per_node, A.RowPtr(), A.Cols());
+    if (_verbose) printf( " solver.analyze\n" );
+    if (_dofs_per_node > 1) {
+      solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols());
     } else {
       solver.analyze(A.NumRows(), A.RowPtr(), A.Cols());
     }
-    if (verbose) printf( " solver.initialize\n" );
+    if (_verbose) printf( " solver.initialize\n" );
     solver.initialize();
-    if (verbose) printf( " setup done\n" );
+    if (_verbose) printf( " setup done\n" );
   } catch (std::exception& e) {
     std::cout << "An error occurred during TachoMex setup:" << std::endl;
     std::cout << e.what() << std::endl;
@@ -90,14 +90,14 @@ int TachoSystem<Scalar>::setup(const mxArray* mx) {
 }
 
 
-/// Setup function
+/// Factor function
 template <typename Scalar>
 int TachoSystem<Scalar>::factor(const mxArray* mx) {
   loadMatrixFromMatlab<double, host_device_type>(mx, A);
   try {
-    if (verbose) printf( " solver.factorize\n" );
+    if (_verbose) printf( " solver.factorize\n" );
     solver.factorize(A.Values());
-    if (verbose) printf( " factorize done\n" );
+    if (_verbose) printf( " factorize done\n" );
   } catch (std::exception& e) {
     std::cout << "An error occurred during TachoMex setup:" << std::endl;
     std::cout << e.what() << std::endl;
@@ -111,18 +111,36 @@ int TachoSystem<Scalar>::factor(const mxArray* mx) {
 template <typename Scalar>
 mxArray* TachoSystem<Scalar>::solve(const mxArray* mx) {
   DenseMultiVectorType b;
-  loadVectorsFromMatlab<double, host_device_type>(mx, b);
+  loadMultiVectorsFromMatlab<double, host_device_type>(mx, b);
   DenseMultiVectorType x ("x", b.extent(0), b.extent(1));
   DenseMultiVectorType t ("t", b.extent(0), b.extent(1));
   mxArray* output;
   try {
-    if (verbose) printf( " solver.solve\n" );
+    if (_verbose) printf( " solver.solve\n" );
     this->solver.solve(x, b, t);
-    if (verbose) printf( " solver.solve done\n" );
-    output = saveVectorsToMatlab<double, host_device_type>(x);
-    if (verbose) printf( " solution saved\n" );
+    if (_verbose) printf( " solver.solve done\n" );
+    output = saveMultiVectorsToMatlab<double, host_device_type>(x);
+    if (_verbose) printf( " solution saved\n" );
   } catch (std::exception& e) {
     mexPrintf("Error occurred during TachoMex solve:\n");
+    std::cout << e.what() << std::endl;
+    output = mxCreateDoubleScalar(0);
+  }
+  return output;
+}
+
+
+/// Diag function
+template <typename Scalar>
+mxArray* TachoSystem<Scalar>::diag() {
+  DenseVectorType d ("d", A.NumRows());
+  mxArray* output;
+  try {
+    if (_verbose) printf( " solver.diag\n" );
+    this->solver.diag(d);
+    output = saveVectorToMatlab<double, host_device_type>(d);
+  } catch (std::exception& e) {
+    mexPrintf("Error occurred during TachoMex diag:\n");
     std::cout << e.what() << std::endl;
     output = mxCreateDoubleScalar(0);
   }
@@ -168,6 +186,14 @@ MODE_TYPE sanity_check(int nrhs, const mxArray* prhs[]) {
         mexErrMsgTxt("TachoMex Error: Invalid input for cleanup phase\n");
       }
       break;
+    case MODE_DIAG:
+      // problem ID and matrix or rhs must be numeric
+      if(nrhs == 1) {
+        rv = MODE_DIAG;
+      } else {
+        mexErrMsgTxt("TachoMex Error: Invalid input for diag phase\n");
+      }
+      break;
     case MODE_OPTION:
       if(nrhs == 2 || nrhs == 3) {
         rv = MODE_OPTION;
@@ -203,15 +229,15 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
   switch (mode) {
     case MODE_SETUP: {
       try {
-        printf( " -- Setup --\n" );
+        if (dp.verbose()) printf( " -- Setup --\n" );
         rv =  dp.setup(prhs[1]);
 	if (nlhs > 0) {
           plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
           *((int*)mxGetData(plhs[0])) = rv;
 	}
-        printf( " -- Setup done --\n" );
+        if (dp.verbose()) printf( " -- Setup done --\n" );
         mexLock();
-        printf( " -- Locked --\n\n" );
+        if (dp.verbose()) printf( " -- Locked --\n\n" );
       } catch (std::exception& e) {
         mexPrintf("An error occurred during setup routine:\n");
         std::cout << e.what() << std::endl;
@@ -220,13 +246,13 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     }
     case MODE_FACTOR: {
       try {
-        printf( " -- Factor --\n" );
+        if (dp.verbose()) printf( " -- Factor --\n" );
         rv =  dp.factor(prhs[1]);
 	if (nlhs > 0) {
           plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
           *((int*)mxGetData(plhs[0])) = rv;
 	}
-        printf( " -- Factor done --\n" );
+        if (dp.verbose()) printf( " -- Factor done --\n" );
       } catch (std::exception& e) {
         mexPrintf("An error occurred during factor routine:\n");
         std::cout << e.what() << std::endl;
@@ -236,13 +262,29 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     case MODE_SOLVE: {
       try {
         // get pointer to MATLAB array that will be "B" or "rhs" multivector
-        printf( " -- Solve --\n" );
+        if (dp.verbose()) printf( " -- Solve --\n" );
         mxArray* output = dp.solve(prhs[1]);
 	if (nlhs > 0) {
-          printf( " > return x\n" );
+          if (dp.verbose()) printf( " > return x\n" );
           plhs[0] = output;
 	}
-        printf( " -- Solve done! --\n\n" );
+        if (dp.verbose()) printf( " -- Solve done! --\n\n" );
+      } catch (std::exception& e) {
+        mexPrintf("An error occurred during the solve routine:\n");
+        std::cout << e.what() << std::endl;
+      }
+      break;
+    }
+    case MODE_DIAG: {
+      try {
+        // get pointer to MATLAB array that will be "B" or "rhs" multivector
+        if (dp.verbose()) printf( " -- Diag --\n" );
+        mxArray* output = dp.diag();
+	if (nlhs > 0) {
+          if (dp.verbose()) printf( " > return d\n" );
+          plhs[0] = output;
+	}
+        if (dp.verbose()) printf( " -- Dian done! --\n\n" );
       } catch (std::exception& e) {
         mexPrintf("An error occurred during the solve routine:\n");
         std::cout << e.what() << std::endl;

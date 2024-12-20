@@ -2,8 +2,8 @@ clear
 addpath '../bin'
 
 %load sherman3.mtx; a = sherman3(2:end,:);
-%load qc_penrose_2_tc2.10.mtx; a = qc_penrose_2_tc2_10(2:end,:);
-load qc_penrose_10_tc0.30.mtx; a = qc_penrose_10_tc0_30(2:end,:);
+load qc_penrose_2_tc2.10.mtx; a = qc_penrose_2_tc2_10(2:end,:);
+%load qc_penrose_10_tc0.30.mtx; a = qc_penrose_10_tc0_30(2:end,:);
 
 A = sparse(a(:,1),a(:,2),a(:,3));
 m = size(A,1);
@@ -28,3 +28,5 @@ r = b - A*x;
 nrmr = norm(r);
 nrmb = norm(b);
 fprintf(1,'residual = %e / %e = %e\n',nrmr,nrmb,nrmr/nrmb);
+
+d = tacho('diag');
