@@ -58,6 +58,7 @@ class TachoSystem
   int dofs_per_node;
   CrsMatrixBaseTypeHost A;
   Tacho::Driver<value_type, host_device_type> solver;
+  int dofs_per_node;
 };
 
 }// end namespace
