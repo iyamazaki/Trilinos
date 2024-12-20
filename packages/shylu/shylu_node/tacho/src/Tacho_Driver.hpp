@@ -478,6 +478,8 @@ public:
   int solve(const value_type_matrix &x, const value_type_matrix &b, const value_type_matrix &t);
   int solve_small_host(const value_type_matrix &x, const value_type_matrix &b, const value_type_matrix &t);
 
+  int diag(const value_type_array &d);
+
   double computeRelativeResidual(const value_type_array &ax, const value_type_matrix &x, const value_type_matrix &b);
   void   computeSpMV(const value_type_array &ax, const value_type_matrix &x, value_type_matrix &b);
 

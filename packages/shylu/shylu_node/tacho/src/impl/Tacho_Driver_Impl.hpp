@@ -509,6 +509,11 @@ int Driver<VT, DT>::solve(const value_type_matrix &x, const value_type_matrix &b
       printf("========================\n");
       break;
     }
+    case SkewLDL: {
+      printf("TachoSolver: Solve SkewLDL\n");
+      printf("==========================\n");
+      break;
+    }
     }
   }
 
@@ -580,6 +585,40 @@ int Driver<VT, DT>::solve_small_host(const value_type_matrix &x, const value_typ
     printf("             time for numeric solve:                          %10.6f s\n", t_solve);
     printf("             total time spent:                                %10.6f s\n", (t_solve + t_copy));
     printf("\n");
+  }
+  return 0;
+}
+
+template <typename VT, typename DT>
+int Driver<VT, DT>::diag(const value_type_array &d) {
+  if (_verbose) {
+    switch (_method) {
+    case Cholesky: {
+      printf("TachoSolver: Diag Cholesky\n");
+      printf("==========================\n");
+      break;
+    }
+    case LDL: {
+      printf("TachoSolver: Diag LDL\n");
+      printf("=====================\n");
+      break;
+    }
+    case SymLU: {
+      printf("TachoSolver: Diag SymLU\n");
+      printf("=======================\n");
+      break;
+    }
+    case SkewLDL: {
+      printf("TachoSolver: Diag SkewLDL\n");
+      printf("=========================\n");
+      break;
+    }
+    }
+  }
+
+  if (_m <= _small_problem_thres) {
+  } else {
+    _N->diag(d);
   }
   return 0;
 }

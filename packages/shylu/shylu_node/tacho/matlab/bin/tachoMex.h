@@ -34,7 +34,8 @@ typedef enum
     MODE_SOLVE,   //2
     MODE_CLEANUP, //3
     MODE_OPTION,  //4
-    MODE_ERROR    //5
+    MODE_DIAG,    //5
+    MODE_ERROR    //6
   } MODE_TYPE;
 
 
@@ -48,17 +49,19 @@ class TachoSystem
   using host_device_type = typename Tacho::UseThisDevice<Kokkos::DefaultHostExecutionSpace>::type;  
   using CrsMatrixBaseTypeHost = Tacho::CrsMatrixBase<value_type, host_device_type>;
   using DenseMultiVectorType = Kokkos::View<value_type **, Kokkos::LayoutLeft, host_device_type>;
+  using DenseVectorType = Kokkos::View<value_type *, Kokkos::LayoutLeft, host_device_type>;
+  int option(const mxArray** mx);
   int setup(const mxArray* mx);
   int factor(const mxArray* mx);
   mxArray* solve(const mxArray* mx);
-  int option(const mxArray** mx);
+  mxArray* diag();
 
+  bool verbose() { return _verbose; };
  private:
-  bool verbose;
-  int dofs_per_node;
+  bool _verbose;
+  int _dofs_per_node;
   CrsMatrixBaseTypeHost A;
   Tacho::Driver<value_type, host_device_type> solver;
-  int dofs_per_node;
 };
 
 }// end namespace

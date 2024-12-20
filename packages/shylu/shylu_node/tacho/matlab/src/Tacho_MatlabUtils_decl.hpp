@@ -39,11 +39,14 @@ template <typename ValueType, typename DeviceType>
 int loadMatrixFromMatlab(const mxArray* mxa, CrsMatrixBase<ValueType, DeviceType> &A);
 
 template <typename ValueType, typename DeviceType>
-int loadVectorsFromMatlab(const mxArray* mxa, Kokkos::View<ValueType **, Kokkos::LayoutLeft, DeviceType> &B);
+int loadMultiVectorsFromMatlab(const mxArray* mxa, Kokkos::View<ValueType **, Kokkos::LayoutLeft, DeviceType> &B);
 
 
 template <typename ValueType, typename DeviceType>
-mxArray* saveVectorsToMatlab(Kokkos::View<ValueType **, Kokkos::LayoutLeft, DeviceType> &X);
+mxArray* saveMultiVectorsToMatlab(Kokkos::View<ValueType **, Kokkos::LayoutLeft, DeviceType> &X);
+
+template <typename ValueType, typename DeviceType>
+mxArray* saveVectorToMatlab(Kokkos::View<ValueType *, Kokkos::LayoutLeft, DeviceType> &X);
 
 }
 

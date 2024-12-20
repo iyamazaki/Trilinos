@@ -61,7 +61,7 @@ int loadMatrixFromMatlab(const mxArray* mxa, CrsMatrixBase<ScalarType, DeviceTyp
   mwIndex *rowind = mxGetIr(mxa);
   mwIndex *colptr = mxGetJc(mxa);
   int nnz = colptr[n];
-  printf( " m=%d, n=%d\n",m,n );
+  //printf( " m=%d, n=%d\n",m,n );
   /*printf("A=[\n");
   for (int j=0; j<n; j++) {
     for (int k=colptr[j]; k<colptr[j+1]; k++) {
@@ -108,7 +108,7 @@ int loadMatrixFromMatlab(const mxArray* mxa, CrsMatrixBase<ScalarType, DeviceTyp
 }
 
 template <typename ValueType, typename DeviceType>
-int loadVectorsFromMatlab(const mxArray* mxa, Kokkos::View<ValueType **, Kokkos::LayoutLeft, DeviceType> &B) {
+int loadMultiVectorsFromMatlab(const mxArray* mxa, Kokkos::View<ValueType **, Kokkos::LayoutLeft, DeviceType> &B) {
   const size_t m = mxGetM(mxa);
   const size_t n = mxGetN(mxa);
 
@@ -128,7 +128,7 @@ int loadVectorsFromMatlab(const mxArray* mxa, Kokkos::View<ValueType **, Kokkos:
 /* ******************************* */
 
 template <typename ValueType, typename DeviceType>
-mxArray* saveVectorsToMatlab(Kokkos::View<ValueType **, Kokkos::LayoutLeft, DeviceType> &X) {
+mxArray* saveMultiVectorsToMatlab(Kokkos::View<ValueType **, Kokkos::LayoutLeft, DeviceType> &X) {
   mwSize m = X.extent(0);
   mwSize n = X.extent(1);
 
@@ -140,6 +140,20 @@ mxArray* saveVectorsToMatlab(Kokkos::View<ValueType **, Kokkos::LayoutLeft, Devi
     }
   }
   memcpy(mxGetPr(output), array, (m*n) * sizeof(double));
+  free(array);
+  return output;
+}
+
+template <typename ValueType, typename DeviceType>
+mxArray* saveVectorToMatlab(Kokkos::View<ValueType *, Kokkos::LayoutLeft, DeviceType> &X) {
+  mwSize m = X.extent(0);
+
+  mxArray* output = mxCreateDoubleMatrix(m, 1, mxREAL);
+  ValueType* array = (ValueType*) malloc(sizeof(ValueType) * m);
+  for (int i = 0; i < m; i++) {
+    array[i] = X(i);
+  }
+  memcpy(mxGetPr(output), array, m * sizeof(double));
   free(array);
   return output;
 }

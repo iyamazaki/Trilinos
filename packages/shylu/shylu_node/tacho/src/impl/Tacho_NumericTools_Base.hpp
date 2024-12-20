@@ -255,6 +255,10 @@ public:
     TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "The function should be overriden by derived classes");
   }
 
+  inline virtual void diag(const value_type_array &d) {
+    TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "The function should be overriden by derived classes");
+  }
+
   ///
   /// Utility on device
   ///

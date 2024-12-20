@@ -479,6 +479,13 @@ public:
     }
   }
 
+  inline void diagSkLDL(const value_type_array &d) {
+    /// recursive tree traversal
+    const ordinal_type member = 0, nroots = _stree_roots.extent(0);
+    for (ordinal_type i = 0; i < nroots; ++i)
+      SkLDL_Supernodes<Algo::Workflow::Serial>::get_diag_recursive_serial(member, _info, _diag.data(), d.data(), _stree_roots(i), true);
+  }
+
   ///
   /// LU
   ///
@@ -687,6 +694,19 @@ public:
     }
     case 5: {
       solveSkLDL(x, b, t, verbose);
+      break;
+    }
+    default: {
+      TACHO_TEST_FOR_EXCEPTION(false, std::logic_error, "The solution method is not supported");
+      break;
+    }
+    }
+  }
+
+  inline void diag(const value_type_array &d) override {
+    switch (this->getSolutionMethod()) {
+    case 5: {
+      diagSkLDL(d);
       break;
     }
     default: {
