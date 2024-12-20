@@ -115,11 +115,9 @@ int loadVectorsFromMatlab(const mxArray* mxa, Kokkos::View<ValueType **, Kokkos:
   int rv = 0;
   double* pr = mxGetPr(mxa);
   Kokkos::resize(B, m,n);
-  printf(" (%d,%d) -> (%d,%d)\n",m,n,B.extent(0),B.extent(1));
   for (int j = 0; j < n; j++) {
     for (int i = 0; i < m; i++) {
       B(i,j) = pr[i + j*m];
-      printf( " %e\n",B(i,j) );
     }
   }
   return rv;

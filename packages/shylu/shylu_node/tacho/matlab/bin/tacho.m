@@ -48,11 +48,11 @@ function varargout = tacho(varargin)
 if(strcmp(varargin{1},'setup')),
     % Setup mode = 0
     tachoMex(0, varargin{2:nargin});
+elseif(strcmp(varargin{1}, 'factor')),
+    % Factor mode = 1
+    tachoMex(1, varargin{2:nargin});
 elseif(strcmp(varargin{1}, 'solve')),
-    % Solve mode = 1
-    varargout{1}  = tachoMex(1, varargin{2:nargin});
-elseif(strcmp(varargin{1}, 'apply')),
-    % Apply mode = 2
+    % Solve mode = 2
     varargout{1} = tachoMex(2, varargin{2:nargin});
 elseif(strcmp(varargin{1}, 'cleanup')),
     % Cleanup mode = 3
@@ -63,9 +63,8 @@ elseif(strcmp(varargin{1}, 'option')),
 else
     fprintf('\nUsage:\n');
     fprintf('h = tachoMex(''setup'', A) to setup a problem\n');
-    fprintf('x = tachoMex(h, A, b[, paramName, paramValue, ...]) to solve the problem #h with the RHS vector b\n');
-    fprintf('x = tachoMex(h, b[, paramName, paramValue, ...]) to solve the problem #h with loaded matrix\n');
-    fprintf('x = tachoMex(''solve'', h, b) to solve the problem #h with the RHS vector b\n');
-    fprintf('tachoMex(''cleanup''[, id]) to free memory associated with all problems, or a specific one.\n');
+    fprintf('h = tachoMex(''factor'', A) to factor the matrix\n');
+    fprintf('x = tachoMex(''solve'', b) to solve the problem #h with the RHS vector b\n');
+    fprintf('tachoMex(''cleanup'') to free memory associated with all problems, or a specific one.\n');
 end
 end

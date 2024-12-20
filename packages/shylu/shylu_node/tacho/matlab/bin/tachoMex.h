@@ -30,8 +30,8 @@ namespace Tacho
 typedef enum
   {
     MODE_SETUP,   //0
-    MODE_SOLVE,   //1
-    MODE_APPLY,   //2
+    MODE_FACTOR,  //1
+    MODE_SOLVE,   //2
     MODE_CLEANUP, //3
     MODE_OPTION,  //4
     MODE_ERROR    //5
@@ -49,34 +49,14 @@ class TachoSystem
   using CrsMatrixBaseTypeHost = Tacho::CrsMatrixBase<value_type, host_device_type>;
   using DenseMultiVectorType = Kokkos::View<value_type **, Kokkos::LayoutLeft, host_device_type>;
   int setup(const mxArray* mx);
-  int option(const mxArray** mx);
+  int factor(const mxArray* mx);
   mxArray* solve(const mxArray* mx);
-  mxArray* apply(const mxArray* mx);
+  int option(const mxArray** mx);
 
-  /*Teuchos::RCP<CrsMatrixBaseTypeHost> GetMatrix()
-  {
-    return A;
-  }*/
-  /*Teuchos::RCP<TOperator> GetPrec()
-  {
-    return prec;
-  }*/
-  /*int NumMyRows()
-  {
-    if(A.is_null())
-      return 0;
-    else
-      return A->getGlobalNumRows();
-  }*/
-  /*int NumMyCols()
-  {
-    if(A.is_null())
-      return 0;
-    else
-      return A->getGlobalNumCols();
-  }*/
  private:
-  //Teuchos::RCP<CrsMatrixBaseTypeHost> A;
+  bool verbose;
+  int dofs_per_node;
+  CrsMatrixBaseTypeHost A;
   Tacho::Driver<value_type, host_device_type> solver;
 };
 
