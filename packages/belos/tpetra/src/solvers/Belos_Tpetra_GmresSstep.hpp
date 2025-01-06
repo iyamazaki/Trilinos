@@ -76,12 +76,20 @@ public:
 
     // Compute R := A^T * A, using a single BLAS call.
     // MV with "static" memory (e.g., Tpetra manages the static GPU memory pool)
-    MV R_mv = impl::makeStaticLocalMultiVector (A, ncols, ncols);
+    MV R_mv;
+    {
+      Teuchos::RCP< Teuchos::Time > dotTimer = Teuchos::TimeMonitor::getNewCounter ("CholQR::factor::alloc");
+      Teuchos::TimeMonitor DotTimer (*dotTimer);
+      R_mv = impl::makeStaticLocalMultiVector (A, ncols, ncols);
+    }
     //R_mv.putScalar (STS::zero ());
 
     // compute R := A^T * A
-    R_mv.multiply (Teuchos::CONJ_TRANS, Teuchos::NO_TRANS, one, A, A, zero);
-
+    {
+      Teuchos::RCP< Teuchos::Time > dotTimer = Teuchos::TimeMonitor::getNewCounter ("CholQR::factor::dots");
+      Teuchos::TimeMonitor DotTimer (*dotTimer);
+      R_mv.multiply (Teuchos::CONJ_TRANS, Teuchos::NO_TRANS, one, A, A, zero);
+    }
     /*if (computeCondNum) {
       const LO ione = 1;
 
@@ -112,7 +120,20 @@ public:
     // triangular.
     int info = 0;
     {
+      Teuchos::RCP< Teuchos::Time > cholTimer = Teuchos::TimeMonitor::getNewCounter ("CholQR::factor::potrf");
+      Teuchos::TimeMonitor CholTimer (*cholTimer);
+
       auto R_h = R_mv.getLocalViewHost (Tpetra::Access::ReadWrite);
+      /*{
+	printf("R=[\n");
+        for (size_t i=0; i<ncols; i++) {
+          for (size_t j=0; j<ncols; j++) {
+            printf("%e ", R_h(i, j));
+          }
+	  printf("\n");
+        }
+	printf("]\n");
+      }*/
       int ldr = int (R_h.extent (0));
       SC *Rdata = reinterpret_cast<SC*> (R_h.data ());
       lapack.POTRF ('U', ncols, Rdata, ldr, &info);
@@ -128,7 +149,17 @@ public:
           }
         }
       }
+      // Copy to the output R
+      for (size_t i=0; i<ncols; i++) {
+        for (size_t j=0; j<i; j++) {
+          R(i, j) = zero;
+        }
+        for (size_t j=i; j<ncols; j++) {
+          R(i, j) = R_h(i, j);
+        }
+      }
     }
+    #if 0
     // Copy to the output R
     Tpetra::deep_copy (R, R_mv);
     // TODO: replace with a routine to zero out lower-triangular
@@ -138,6 +169,7 @@ public:
         R(i, j) = zero;
       }
     }
+    #endif
 
     // Compute A := A * R^{-1}.  We do this in place in A, using
     // BLAS' TRSM with the R factor (form POTRF) stored in the upper
@@ -145,6 +177,9 @@ public:
 
     // Compute A_cur / R (Matlab notation for A_cur * R^{-1}) in place.
     {
+      Teuchos::RCP< Teuchos::Time > trsmTimer = Teuchos::TimeMonitor::getNewCounter ("CholQR::factor::trsm");
+      Teuchos::TimeMonitor TrsmTimer (*trsmTimer);
+
       auto A_d = A.getLocalViewDevice (Tpetra::Access::ReadWrite);
       auto R_d = R_mv.getLocalViewDevice (Tpetra::Access::ReadOnly);
 /*std::cout << "Q(A) = [" <<std::endl;
@@ -220,8 +255,10 @@ public:
     useRandomQR_ (false),
     useRandomCGS2_ (false),
     useTwoStage_ (false),
+    splitCgsPIP_ (false),
     useCholQR2_ (false),
-    cholqr_ (Teuchos::null)
+    cholqr_ (Teuchos::null),
+    lwork_s_ (0)
   {}
 
   GmresSstep (const Teuchos::RCP<const OP>& A) :
@@ -277,6 +314,9 @@ public:
     } else if ((useCholQR || useCholQR2) && cholqr_.is_null ()) {
       cholqr_ = Teuchos::rcp (new CholQR<SC, MV, OP> ());
     }
+
+    bool splitCgsPIP = params.get<bool> ("SplitCGS", splitCgsPIP_);
+    splitCgsPIP_ = splitCgsPIP;
   }
 
 private:
@@ -302,6 +342,9 @@ private:
     Teuchos::RCP< Teuchos::Time > spmvTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::Matrix-apply");
     Teuchos::RCP< Teuchos::Time > bortTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::BOrtho");
     Teuchos::RCP< Teuchos::Time > tsqrTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::TSQR");
+
+    Teuchos::RCP< Teuchos::Time > bigBortTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::BigBOrtho");
+    Teuchos::RCP< Teuchos::Time > bigCholTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::BigTSQR");
 
     // initialize output parameters
     SolverOutput<SC> output {};
@@ -519,11 +562,12 @@ private:
         }
         #endif
         int rank = 0;
-        bool reortho = false; // true = BCGS2 followed by CholQR, false = BCGS with CholQR2, then BCGS with CholQR
+        bool reortho = (useRandomCGS2_ && useTwoStage_); // true = BCGS2 followed by CholQR, false = BCGS with CholQR2, then BCGS with CholQR
         {
           // first BCGS
+          //printf( " > first BCGS\n" );
           Teuchos::TimeMonitor LocalTimer (*bortTimer);
-          rank = this->projectBelosBlockOrthoManager (outPtr, iter, step, Q, sketchDom, sketchSize, W, Qhat, G, G2, reortho);
+          rank = this->projectBelosBlockOrthoManager (outPtr, this->input_.orthoType, iter, step, Q, sketchDom, sketchSize, W, Qhat, G, G2, reortho, splitCgsPIP_);
           currentSketchSize += step;
         }
         #ifdef HAVE_TPETRA_DEBUG
@@ -539,26 +583,30 @@ private:
           Teuchos::TimeMonitor LocalTimer (*tsqrTimer);
           // first panel QR
           if (useRandomQR_ || useRandomCGS2_) {
-            if (!useRandomCGS2_) {
-#ifdef SKETCH_SSTEP_GMRES_DEBUG
-std::cout << " > calling RandQR" << std::endl;
-#endif
+            if (!useRandomCGS2_) 
+	    {
+              //printf( " randomQR\n" );
+              #ifdef SKETCH_SSTEP_GMRES_DEBUG
+              std::cout << " > calling RandQR" << std::endl;
+              #endif
               rank = randomQR (outPtr, iter, step, W, Q, Qhat, G);
             }
           } else {
-#ifdef SKETCH_SSTEP_GMRES_DEBUG
-MPI_Barrier(MPI_COMM_WORLD);
-if (outPtr != nullptr) {
-  *outPtr << " calling CholQR" << std::endl;
-}
-#endif
+            #ifdef SKETCH_SSTEP_GMRES_DEBUG
+            MPI_Barrier(MPI_COMM_WORLD);
+            if (outPtr != nullptr) {
+              *outPtr << " calling CholQR" << std::endl;
+            }
+            #endif
+            //printf( " First CholQR\n" );
             rank = recursiveCholQR (outPtr, iter, step, Q, G);
           }
-          if (useCholQR2_ && !useRandomCGS2_) {
+          if (useCholQR2_ && !useRandomCGS2_ && (useRandomQR_ || !useTwoStage_)) {
             // second panel QR
-#ifdef SKETCH_SSTEP_GMRES_DEBUG
-std::cout << " > calling CholQR2" << std::endl;
-#endif
+            #ifdef SKETCH_SSTEP_GMRES_DEBUG
+            std::cout << " > calling CholQR2" << std::endl;
+            #endif
+            //printf( " Second CholQR\n" );
             rank = recursiveCholQR (outPtr, iter, step, Q, G2);
             // merge R 
             dense_matrix_type Rfix (Teuchos::View, G2, step+1, step+1, iter, 0);
@@ -581,8 +629,9 @@ std::cout << " > calling CholQR2" << std::endl;
         if (!reortho && !useTwoStage_) {
           {
             // second BCGS
+            //printf( " > second BCGS\n" );
             Teuchos::TimeMonitor LocalTimer (*bortTimer);
-            rank = this->projectBelosBlockOrthoManager (outPtr, iter, step, Q, sketchDom, sketchSize, W, Qhat, G2, G, reortho);
+            rank = this->projectBelosBlockOrthoManager (outPtr, this->input_.orthoType, iter, step, Q, sketchDom, sketchSize, W, Qhat, G2, G, reortho, splitCgsPIP_);
             // accumulate coefficients
             dense_matrix_type R_old  (Teuchos::View, G,  iter, step+1, 0, 0);
             dense_matrix_type R_new  (Teuchos::View, G2, iter, step+1, 0, 0);
@@ -606,21 +655,24 @@ std::cout << " > calling CholQR2" << std::endl;
 
           if (this->input_.orthoType != "CGS-PIP2") {
             Teuchos::TimeMonitor LocalTimer (*tsqrTimer);
-            // second panel QR
-            if (useRandomQR_ || useRandomCGS2_) {
+            // second panel QR (should always be CholQR)
+            /*if (useRandomQR_ || useRandomCGS2_) {
               if (!useRandomCGS2_) {
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
 std::cout << " > calling RandQR" << std::endl;
 #endif
+                printf( " randomQR\n" );
                 rank = randomQR (outPtr, iter, step, W, Q, Qhat, G2);
               }
-            } else {
+            } else*/
+	    {
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
 MPI_Barrier(MPI_COMM_WORLD);
 if (outPtr != nullptr) {
   *outPtr << " calling CholQR" << std::endl;
 }
 #endif
+              printf( " Second CholQR\n" );
               rank = recursiveCholQR (outPtr, iter, step, Q, G2);
             }
             // merge R 
@@ -632,18 +684,18 @@ if (outPtr != nullptr) {
                        one, Rfix.values(), Rfix.stride(),
                             Rold.values(), Rold.stride());
           }
+        }
 /*{
-  dense_matrix_type Rold (Teuchos::View, G,  iter+step+1, step+1, 0, 0);
-  printf( " > R = [ \n" );
+  //dense_matrix_type Rold (Teuchos::View, G,  iter+step+1, step+1, 0, 0);
+  printf( " > G = [ \n" );
   for (int i = 0; i < iter+step+1; i++) {
-    for (int j = 0; j < step+1; j++) {
-      printf( "%e ",Rold(i,j) );
+    for (int j = 0; j < iter+step+1; j++) {
+      printf( "%e ",G(i,j) );
     }
     printf("\n");
   }
   printf( "];\n\n" );
 }*/
-        }
 
         // UPDATE HESSEMBURG MATRIX
         updateHessenburg (iter, step, output.ritzValues, H, G);
@@ -681,12 +733,27 @@ if (outPtr != nullptr) {
           }
           #endif
 
+          if (splitCgsPIP_) {
+            //printf( " * Big Chol (%d:%d), %dx%d\n",start_col,start_col+currentSketchSize, currentSketchSize+1,currentSketchSize+1);
+            Teuchos::TimeMonitor LocalTimer (*bigCholTimer);
+            rank = recursiveCholQR (outPtr, start_col, currentSketchSize, Q, G2);
+          }
+/*std::cout << "- Rold = [" <<std::endl;
+for (int i=0; i<start_col+currentSketchSize+1; i++) {
+  for (int j=0; j<currentSketchSize+1; j++) printf("%e ", G2(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;*/
           if (this->input_.orthoType == "CGS-PIP2") {
-            rank = this->projectBelosBlockOrthoManager (outPtr, start_col, currentSketchSize, Q, sketchDom, currentSketchSize, W, Qhat, G2, G3, reortho);
+            Teuchos::TimeMonitor LocalTimer (*bigBortTimer);
+            //printf( " > big BCGS\n" );
+            bool splitBigCGS = false; // no need to split
+            rank = this->projectBelosBlockOrthoManager (outPtr, "CGS2", start_col, currentSketchSize, Q, sketchDom, currentSketchSize, W, Qhat, G2, G3, reortho, splitBigCGS);
           } else {
             bool reOrtho_RandCGS = false;
+	    //printf( " start-col = %d\n",start_col );
             if (start_col > 0) {
-              Teuchos::RCP< Teuchos::Time > reorthTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::InterOrtho::ReOrtho");
+              Teuchos::RCP< Teuchos::Time > reorthTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::BigBReOrtho");
               Teuchos::TimeMonitor LocalTimer (*reorthTimer);
 
               // vectors to be orthogonalized against
@@ -711,29 +778,46 @@ if (outPtr != nullptr) {
                   }
                 }
               }
+              #ifdef HAVE_TPETRA_DEBUG
+              {
+                *outPtr << std::endl << " After inter big-panel ortho" << std::endl;
+                Teuchos::Range1D cols(start_col, start_col+currentSketchSize);
+                Teuchos::RCP<const MV> Qj = Q.subView(cols);
+                auto kappaQ = this->computeCondNum(*Qj);
+                *outPtr << " = condNum( " << start_col << ":" << start_col+currentSketchSize << " ) = " << kappaQ << std::endl;
+              }
+              #endif
             }
-            #ifdef HAVE_TPETRA_DEBUG
-            {
-              *outPtr << std::endl << " After inter big-panel ortho" << std::endl;
-              Teuchos::Range1D cols(start_col, start_col+currentSketchSize);
-              Teuchos::RCP<const MV> Qj = Q.subView(cols);
-              auto kappaQ = this->computeCondNum(*Qj);
-              *outPtr << " = condNum( " << start_col << ":" << start_col+currentSketchSize << " ) = " << kappaQ << std::endl;
-            }
-            #endif
+            // call CholQR (only if previous big panels)
+            if (splitCgsPIP_) {
+              if (start_col > 0) {
+                rank = recursiveCholQR (outPtr, start_col, currentSketchSize, Q, G3);
 
-            // call CholQR
-            rank = recursiveCholQR (outPtr, start_col, currentSketchSize, Q, G2);
-            if (reOrtho_RandCGS) {
-              rank = recursiveCholQR (outPtr, start_col, currentSketchSize, Q, G3);
+                dense_matrix_type Rfix (Teuchos::View, G3, currentSketchSize+1, currentSketchSize+1, start_col, 0);
+                dense_matrix_type Rold (Teuchos::View, G2, currentSketchSize+1, currentSketchSize+1, start_col, 0);
+                blas.TRMM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
+                           Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                           step+1, step+1,
+                           one, Rfix.values(), Rfix.stride(),
+                                Rold.values(), Rold.stride());
+	      }
+	    } else {
+              Teuchos::RCP< Teuchos::Time > reorthTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::BigBReTSQR");
+              Teuchos::TimeMonitor LocalTimer (*reorthTimer);
 
-              dense_matrix_type Rfix (Teuchos::View, G3, currentSketchSize+1, currentSketchSize+1, start_col, 0);
-              dense_matrix_type Rold (Teuchos::View, G2, currentSketchSize+1, currentSketchSize+1, start_col, 0);
-              blas.TRMM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
-                         Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
-                         step+1, step+1,
-                         one, Rfix.values(), Rfix.stride(),
-                              Rold.values(), Rold.stride());
+              rank = recursiveCholQR (outPtr, start_col, currentSketchSize, Q, G2);
+
+              if (reOrtho_RandCGS) {
+                rank = recursiveCholQR (outPtr, start_col, currentSketchSize, Q, G3);
+
+                dense_matrix_type Rfix (Teuchos::View, G3, currentSketchSize+1, currentSketchSize+1, start_col, 0);
+                dense_matrix_type Rold (Teuchos::View, G2, currentSketchSize+1, currentSketchSize+1, start_col, 0);
+                blas.TRMM (Teuchos::LEFT_SIDE, Teuchos::UPPER_TRI,
+                           Teuchos::NO_TRANS, Teuchos::NON_UNIT_DIAG,
+                           step+1, step+1,
+                           one, Rfix.values(), Rfix.stride(),
+                                Rold.values(), Rold.stride());
+              }
             }
           }
 
@@ -742,6 +826,12 @@ if (outPtr != nullptr) {
 std::cout << "- Rfix = [" <<std::endl;
 for (int i=0; i<start_col+currentSketchSize+1; i++) {
   for (int j=0; j<currentSketchSize+1; j++) printf("%e ", G2(i,j));
+  std::cout << std::endl;
+}
+std::cout << "];" << std::endl;
+std::cout << "- H = [" <<std::endl;
+for (int i=0; i<end_col+1; i++) {
+  for (int j=0; j<end_col; j++) printf("%e ", H(i,j));
   std::cout << std::endl;
 }
 std::cout << "];" << std::endl;
@@ -986,6 +1076,7 @@ std::cout << "];" << std::endl;
   // ! Apply the orthogonalization
   int
   projectBelosBlockOrthoManager(Teuchos::FancyOStream* outPtr,
+                                const std::string orthoType,
                                 const int n,
                                 const int s,
                                 MV& Q,
@@ -995,7 +1086,8 @@ std::cout << "];" << std::endl;
                                 dense_matrix_type &Qhat,
                                 dense_matrix_type &R,
                                 dense_matrix_type &R2,
-                                bool reortho)
+                                bool reortho,
+                                bool splitCgsPIP)
   {
     int rank = 0;
     Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::InterOrtho");
@@ -1004,110 +1096,152 @@ std::cout << "];" << std::endl;
     const SC one  = STS::one ();
     const SC zero = STS::zero ();
 
-    const int ni  = (useRandomCGS2_ ? n % sketchDom : n); // # of vectors in current big panel
-    const int i_0 = (useRandomCGS2_ ? n - ni : 0);        // starting offset of current big panel
-    //std::cout << " projectBelosBlockOrthoManager(n=" << n << " s=" << s << ": i_0=" << i_0 << " ni=" << ni << ")" << std::endl;
+    const int ni  = (splitCgsPIP || useRandomCGS2_ ? n % sketchDom : n); // # of vectors in current big panel    or # of vectors
+    const int i_0 = (splitCgsPIP || useRandomCGS2_ ? n - ni : 0);        // starting offset of current big panel or 0
+    //std::cout << " projectBelosBlockOrthoManager(n=0:" << n << ") s=" << s << ": i_0=" << i_0 << " ni=" << ni << ")" << std::endl;
 
     // vectors to be orthogonalized
     Teuchos::Range1D index(n, n+s);
     MV Qnew = *(Q.subViewNonConst (index));
 
     // vectors to be orthogonalized against
-    Teuchos::Range1D index_old (i_0, n-1);
+    Teuchos::Range1D index_old (i_0, i_0+ni-1);
     MV Qold = *(Q.subViewNonConst (index_old));
 
-
-    if (this->input_.orthoType == "CGS-PIP2") {
-
+    //std::cout << " > projectBelosBlockOrthoManager(" << orthoType << ")" << std::endl;
+    //printf( "   Qold(%d:%d), Qnew(%d:%d)\n",i_0,n-1, n,n+s );
+    if (splitCgsPIP && i_0 > 0) {
+      // previous big panels to be orthogonalized against
+      Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::InterOrtho::CGS-Prev");
+      Teuchos::Range1D index_old (0, i_0-1);
+      MV Qprev = *(Q.subViewNonConst (index_old));
+      dense_matrix_type R_prev (Teuchos::View, R, i_0, s+1, 0, 0);
+      //printf( " * splitCGS(%d:%d), %dx%d (%dx%d, %dx%d)\n",0,i_0-1, i_0,s+1,  Qprev.getLocalLength(),Qprev.getNumVectors(), R_prev.numRows(),R_prev.numCols() ); fflush(stdout);
+      {
+        Teuchos::RCP< Teuchos::Time > dotsTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::Inner Product");
+        Teuchos::TimeMonitor LocalTimer (*dotsTimer);
+        MVT::MvTransMv(one, Qprev, Qnew, R_prev);
+      }
+      {
+        Teuchos::RCP< Teuchos::Time > updateTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::Update");
+        Teuchos::TimeMonitor LocalTimer (*updateTimer);
+        MVT::MvTimesMatAddMv(-one, Qprev, R_prev, one, Qnew);
+      }
+      //printf("R_prev=[\n");
+      //for (int i=0; i<R_prev.numRows(); i++) {
+      //  printf("%d ",i );
+      //  for (int j=0; j<R_prev.numCols(); j++) printf("%e ",R_prev(i,j));
+      //  printf("\n");
+      //}
+      //printf("];\n");
+    }
+    if (orthoType == "CGS-PIP2") {
+      Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::InterOrtho::CGS-PIP2");
+      Teuchos::TimeMonitor LocalTimer (*factorTimer);
       // Big dot product
       {
-        Teuchos::RCP< Teuchos::Time > dotsTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2::Inner Product");
+        Teuchos::RCP< Teuchos::Time > dotsTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS-PIP::Inner Product");
         Teuchos::TimeMonitor LocalTimer (*dotsTimer);
 
         // vectors to be orthogonalized against + vector to be orthogonalized (0:n+s)
-        Teuchos::Range1D index_old (0, n+s);
+        Teuchos::Range1D index_old (i_0, i_0+ni+s);
         MV Qold_new = *(Q.subViewNonConst (index_old));
 
-        MV R_mv = makeStaticLocalMultiVector (Qold, n+s+1, s+1);
+        MV R_mv = impl::makeStaticLocalMultiVector (Qold, ni+s+1, s+1);
         R_mv.multiply (Teuchos::CONJ_TRANS, Teuchos::NO_TRANS, one, Qold_new, Qnew, zero);
 
         // copy to host
-        dense_matrix_type R_out (Teuchos::View, R, n+s+1, s+1, 0, 0);
+        dense_matrix_type R_out (Teuchos::View, R, ni+s+1, s+1, i_0, 0);
         Tpetra::deep_copy (R_out, R_mv);
+        //printf( " * (%d:%d), %dx%d (%dx%d, %dx%d)\n",0,i_0-1, i_0,s+1,  Qold_new.getLocalLength(),Qold_new.getNumVectors(), R_out.numRows(),R_out.numCols() ); fflush(stdout);
+        /*printf("R_out=[\n");
+        for (int i=0; i<R_out.numRows(); i++) {
+          printf("%d ",i_0+i );
+          for (int j=0; j<R_out.numCols(); j++) printf("%e ",R_out(i,j));
+          printf("\n");
+        }
+        printf("];\n");*/
       }
 
       // block-orthogonalize against previous
       if (n > 0) {
-        dense_matrix_type R_new (Teuchos::View, R, n, s+1, 0, 0);
-        Teuchos::RCP< Teuchos::Time > updateTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2::Update");
+        dense_matrix_type R_new (Teuchos::View, R, ni, s+1, i_0, 0);
+        Teuchos::RCP< Teuchos::Time > updateTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS-PIP::Update");
         Teuchos::TimeMonitor LocalTimer (*updateTimer);
         #if 0
         MVT::MvTransMv(one, Qold, Qnew, R_new);
         #endif
         MVT::MvTimesMatAddMv(-one, Qold, R_new, one, Qnew);
-
       }
 
       // orthogonalize within the block
       {
         dense_matrix_type R_new (Teuchos::View, R, s+1, s+1, n, 0);
-
-        if (n > 0) {
-          // G = R_new - R_pre^T * R_pre
-          dense_matrix_type R_pre (Teuchos::View, R, n, s+1, 0, 0);
-          Teuchos::BLAS<LO, SC> blas;
-          blas.GEMM(Teuchos::TRANS, Teuchos::NO_TRANS,
-                    s+1, s+1, n,
-                   -one, R_pre.values(), R_pre.stride(),
-                         R_pre.values(), R_pre.stride(),
-                    one, R_new.values(), R_new.stride());
-        }
-        #if 0
-        MVT::MvTransMv(one, Qnew, Qnew, R_new);
-        #endif
-
-        // Cholesky of Gram matrix
-        //printf( " G = [\n" );
-        //for (int i = 0; i < s+1; i++) {
-        //  for (int j = 0; j < s+1; j++) printf( " %e", R_new(i,j) );
-        //  printf( "\n" );
-        //}
-        //printf( " ]\n\n" );
-        int info = 0;
-        Teuchos::LAPACK<LO ,SC> lapack;
-        lapack.POTRF ('U', s+1, R_new.values(), R_new.stride(), &info);
-        //printf( " R = [\n" );
-        //for (int i = 0; i < s+1; i++) {
-        //  for (int j = 0; j < s+1; j++) printf( " %e", R_new(i,j) );
-        //  printf( "\n" );
-        //}
-        //printf( " ]\n\n" );
-        if (info > 0) {
-          *outPtr << "  >  POTRF( " << s+1 << " ) failed with info = " << info << std::endl;
-        }
-        for (int i = 0; i < s+1; i++) {
-          for (int j = 0; j < i; j++) {
-            R_new(i, j) = zero;
+        {
+          Teuchos::RCP< Teuchos::Time > cholTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS-PIP::potrf");
+          Teuchos::TimeMonitor CholTimer (*cholTimer);
+          if (ni > 0) {
+            // G = R_new - R_pre^T * R_pre
+            dense_matrix_type R_pre (Teuchos::View, R, ni, s+1, i_0, 0);
+            Teuchos::BLAS<LO, SC> blas;
+            blas.GEMM(Teuchos::TRANS, Teuchos::NO_TRANS,
+                      s+1, s+1, ni,
+                     -one, R_pre.values(), R_pre.stride(),
+                           R_pre.values(), R_pre.stride(),
+                      one, R_new.values(), R_new.stride());
           }
-        }
+          #if 0
+          MVT::MvTransMv(one, Qnew, Qnew, R_new);
+          #endif
+
+          // Cholesky of Gram matrix
+          //printf( " G = [\n" );
+          //for (int i = 0; i < s+1; i++) {
+          //  for (int j = 0; j < s+1; j++) printf( " %e", R_new(i,j) );
+          //  printf( "\n" );
+          //}
+          //printf( " ]\n\n" );
+          int info = 0;
+          Teuchos::LAPACK<LO ,SC> lapack;
+          lapack.POTRF ('U', s+1, R_new.values(), R_new.stride(), &info);
+          /*printf( " R = [\n" );
+          for (int i = 0; i < s+1; i++) {
+            for (int j = 0; j < s+1; j++) printf( " %e", R_new(i,j) );
+            printf( "\n" );
+          }
+          printf( " ]\n\n" );*/
+          if (info > 0) {
+            *outPtr << "  >  POTRF( " << s+1 << " ) failed with info = " << info << std::endl;
+          }
+          for (int i = 0; i < s+1; i++) {
+            for (int j = 0; j < i; j++) {
+              R_new(i, j) = zero;
+            }
+          }
+	}
 
         // Orthogonalize 
-        MV R_mv = makeStaticLocalMultiVector (Qold, s+1, s+1);
-        Tpetra::deep_copy (R_mv, R_new);
-        {
-          auto Q_d = Qnew.getLocalViewDevice (Tpetra::Access::ReadWrite);
-          auto R_d = R_mv.getLocalViewDevice (Tpetra::Access::ReadOnly);
-          KokkosBlas::trsm ("R", "U", "N", "N",
-                            one, R_d, Q_d);
-        }
-        rank = s+1;
+	{
+          Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS-PIP::Normalize");
+          Teuchos::TimeMonitor LocalTimer (*factorTimer);
+
+          MV R_mv = impl::makeStaticLocalMultiVector (Qold, s+1, s+1);
+          Tpetra::deep_copy (R_mv, R_new);
+          {
+            auto Q_d = Qnew.getLocalViewDevice (Tpetra::Access::ReadWrite);
+            auto R_d = R_mv.getLocalViewDevice (Tpetra::Access::ReadOnly);
+            KokkosBlas::trsm ("R", "U", "N", "N",
+                              one, R_d, Q_d);
+          }
+          rank = s+1;
+	}
       }
-    } else if (this->input_.orthoType == "CGS2") {
-      Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::InterOrtho::RandomCGS2");
+    } else if (orthoType == "CGS2") {
+      Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter (useRandomCGS2_ ? "GmresSstep::InterOrtho::RandomCGS2" : "GmresSstep::InterOrtho::CGS2");
       Teuchos::TimeMonitor LocalTimer (*factorTimer);
 
       // sketched version of vectors
-      MV O_mv = makeStaticLocalMultiVector (Qnew, sketchSize, s+1);
+      MV O_mv = impl::makeStaticLocalMultiVector (Qnew, sketchSize, s+1);
 
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
 {
@@ -1199,16 +1333,23 @@ std::cout << "];" << std::endl << std::endl;
           }
         } // end of randomCGS2
         else {
-          Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2");
-          Teuchos::TimeMonitor LocalTimer (*factorTimer);
-          dense_matrix_type R_new (Teuchos::View, R, n, s+1, 0, 0);
+          //Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS1");
+          //Teuchos::TimeMonitor LocalTimer (*factorTimer);
+          dense_matrix_type R_new (Teuchos::View, R, ni, s+1, i_0, 0);
           {
-            Teuchos::RCP< Teuchos::Time > dotsTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2::Inner Product");
+            Teuchos::RCP< Teuchos::Time > dotsTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::Inner Product");
             Teuchos::TimeMonitor LocalTimer (*dotsTimer);
             MVT::MvTransMv(one, Qold, Qnew, R_new);
           }
+          /*printf("R_new=[\n");
+          for (int i=0; i<R_new.numRows(); i++) {
+            printf("%d ",i_0+i );
+            for (int j=0; j<R_new.numCols(); j++) printf("%e ",R_new(i,j));
+            printf("\n");
+          }
+          printf("];\n");*/
           {
-            Teuchos::RCP< Teuchos::Time > updateTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2::Update");
+            Teuchos::RCP< Teuchos::Time > updateTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::Update");
             Teuchos::TimeMonitor LocalTimer (*updateTimer);
             MVT::MvTimesMatAddMv(-one, Qold, R_new, one, Qnew);
           }
@@ -1336,15 +1477,15 @@ std::cout << "];" << std::endl << std::endl;
         } // end of randomCGS2
         else {
           // reortho for CGS2
-          Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2");
-          Teuchos::TimeMonitor LocalTimer (*factorTimer);
+          //Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2");
+          //Teuchos::TimeMonitor LocalTimer (*factorTimer);
           {
-            Teuchos::RCP< Teuchos::Time > dotsTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2::Inner Product");
+            Teuchos::RCP< Teuchos::Time > dotsTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::Inner Product");
             Teuchos::TimeMonitor LocalTimer (*dotsTimer);
             MVT::MvTransMv(one, Qold, Qnew, R2_new);
           }
           {
-            Teuchos::RCP< Teuchos::Time > updateTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::CGS2::Update");
+            Teuchos::RCP< Teuchos::Time > updateTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::Update");
             Teuchos::TimeMonitor LocalTimer (*updateTimer);
             MVT::MvTimesMatAddMv(-one, Qold, R2_new, one, Qnew);
           }
@@ -1358,7 +1499,7 @@ std::cout << "];" << std::endl << std::endl;
         }
       }
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
-{
+/*{
   auto Q_h = Qnew.getLocalViewHost (Tpetra::Access::ReadOnly);
   std::cout << "- Q_cgs = [" <<std::endl;
   for (int i=0; i<Q_h.extent(0); i++) {
@@ -1366,7 +1507,7 @@ std::cout << "];" << std::endl << std::endl;
     std::cout << std::endl;
   }
 }
-std::cout << "];" << std::endl << std::endl;
+std::cout << "];" << std::endl << std::endl;*/
 std::cout << " current R = [" << std::endl;
 for (int i=0; i<n; i++) {
   for (int j=0; j<s+1; j++) printf("%.16e ", R(i,j));
@@ -1570,6 +1711,8 @@ protected:
                    MV& Q,
                    dense_matrix_type& R)
   {
+    Teuchos::RCP< Teuchos::Time > qrTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::recursiveCholQR");
+    Teuchos::TimeMonitor QrTimer (*qrTimer);
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
 if (outPtr != nullptr) {
   *outPtr << " * in recursiveCholQR(" << n << ":" << n+s << ")" << std::endl;
@@ -1619,7 +1762,7 @@ std::cout << " * in RandQR(n=" << n << ", s=" << s << ")" << std::endl;
     MV Qnew = * (Q.subView(index));
 
     // random sketch Qhat := W^T * Q
-    MV O_mv = makeStaticLocalMultiVector (Qnew, 2*(s+1), s+1);
+    MV O_mv = impl::makeStaticLocalMultiVector (Qnew, 2*(s+1), s+1);
     {
       Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("GmresSstep::RandomQR::Sketch");
       Teuchos::TimeMonitor LocalTimer (*factorTimer);
@@ -1651,7 +1794,7 @@ std::cout << " * in RandQR(n=" << n << ", s=" << s << ")" << std::endl;
 
     int lwork = -1;
     dense_vector_type tau (s+1, true);
-    {
+    if (lwork_s_ < s+1) {
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
 std::cout << std::endl << " In randomQR_ (n=" << n << ", s=" << s << ")" << std::endl;
 #endif
@@ -1672,13 +1815,15 @@ std::cout << std::endl << " In randomQR_ (n=" << n << ", s=" << s << ")" << std:
       int lwork_orgqr = Teuchos::as<LO> (STS::real (TEMP));
       lwork = (lwork_geqrf > lwork_orgqr ? lwork_geqrf : lwork_orgqr);
 
-      // allocate workspace and call QR
+      // allocate workspace
+      lwork_s_ = s+1;
+      WORK_.resize(lwork);
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
       std::cout << " lwork = " << lwork << std::endl << std::flush;
 #endif
     }
 
-    dense_vector_type WORK (lwork, true);
+    //dense_vector_type WORK (lwork, true);
     {
       auto Q_hat = O_mv.getLocalViewHost (Tpetra::Access::ReadWrite);
 #ifdef SKETCH_SSTEP_GMRES_DEBUG
@@ -1689,10 +1834,9 @@ for (int i=0; i<m; i++) {
 }
 std::cout << "];" << std::endl;
 #endif
-
       // compute QR
       lapack.GEQRF (m, s+1, Q_hat.data(), Q_hat.extent(0),
-                    tau.values (), WORK.values (), lwork, &info);
+                    tau.values(), WORK_.values(), WORK_.length(), &info);
       TEUCHOS_TEST_FOR_EXCEPTION(
         info != 0, std::runtime_error, "Belos::GmresSstep::randomQR:"
         " LAPACK's _GEQRF failed to compute QR factorization.");
@@ -1738,7 +1882,7 @@ std::cout << "];" << std::endl;
       dense_matrix_type q_hat (Teuchos::View, Qhat, m, s+1, 0, n);
       auto Q_hat = O_mv.getLocalViewHost (Tpetra::Access::ReadWrite);
       lapack.ORGQR (m, s+1, s+1, Q_hat.data(), Q_hat.extent(0),
-                    tau.values (), WORK.values (), lwork, &info);
+                    tau.values(), WORK_.values(), WORK_.length(), &info);
       TEUCHOS_TEST_FOR_EXCEPTION(
         info != 0, std::runtime_error, "Belos::GmresSstep::randomQR:"
         " LAPACK's _GEQRF failed to compute QR factorization.");
@@ -1816,8 +1960,13 @@ private:
   bool useRandomQR_;
   bool useRandomCGS2_;
   bool useTwoStage_;
+  bool splitCgsPIP_;
   bool useCholQR2_;
   Teuchos::RCP<CholQR<SC, MV, OP> > cholqr_;
+
+  // workspace for randomQR
+  int lwork_s_;
+  dense_vector_type WORK_;
 };
 
 
