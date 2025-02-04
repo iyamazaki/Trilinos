@@ -3,7 +3,7 @@ TRIBITS_INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
 TRIBITS_COPY_FILES_TO_BINARY_DIR(
         Tacho_UnitTest_SparseMatrixFile
-        SOURCE_FILES test_double.mtx test_dcomplex.mtx
+        SOURCE_FILES test_double.mtx test_dcomplex.mtx sherman3.mtx bcsstk15.mtx
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
         DEST_DIR ${CMAKE_CURRENT_BINARY_DIR}
 )
@@ -23,6 +23,16 @@ TRIBITS_ADD_LIBRARY(
   SOURCES googletest/src/gtest-all.cc
   TESTONLY
   NO_INSTALL_LIB_OR_HEADERS
+)
+
+TRIBITS_ADD_EXECUTABLE_AND_TEST(
+  Tacho_TestSolver.x
+  NOEXESUFFIX
+  NOEXEPREFIX
+  SOURCES Tacho_TestSolver.cpp
+  TESTONLYLIBS tacho-gtest
+  NUM_MPI_PROCS 1
+  FAIL_REGULAR_EXPRESSION "  FAILED  "
 )
 
 TRIBITS_ADD_EXECUTABLE_AND_TEST(
