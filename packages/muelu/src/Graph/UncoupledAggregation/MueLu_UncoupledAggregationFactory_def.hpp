@@ -1,48 +1,12 @@
 // @HEADER
-//
-// ***********************************************************************
-//
+// *****************************************************************************
 //        MueLu: A package for multigrid based preconditioning
-//                  Copyright 2012 Sandia Corporation
 //
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
-// the U.S. Government retains certain rights in this software.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact
-//                    Jonathan Hu       (jhu@sandia.gov)
-//                    Andrey Prokopenko (aprokop@sandia.gov)
-//                    Ray Tuminaro      (rstumin@sandia.gov)
-//
-// ***********************************************************************
-//
+// Copyright 2012 NTESS and the MueLu contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
 // @HEADER
+
 #ifndef MUELU_UNCOUPLEDAGGREGATIONFACTORY_DEF_HPP_
 #define MUELU_UNCOUPLEDAGGREGATIONFACTORY_DEF_HPP_
 
@@ -81,19 +45,21 @@ UncoupledAggregationFactory<LocalOrdinal, GlobalOrdinal, Node>::UncoupledAggrega
   : bDefinitionPhase_(true) {}
 
 template <class LocalOrdinal, class GlobalOrdinal, class Node>
+UncoupledAggregationFactory<LocalOrdinal, GlobalOrdinal, Node>::~UncoupledAggregationFactory() = default;
+
+template <class LocalOrdinal, class GlobalOrdinal, class Node>
 RCP<const ParameterList> UncoupledAggregationFactory<LocalOrdinal, GlobalOrdinal, Node>::GetValidParameterList() const {
   RCP<ParameterList> validParamList = rcp(new ParameterList());
 
   // Aggregation parameters (used in aggregation algorithms)
   // TODO introduce local member function for each aggregation algorithm such that each aggregation algorithm can define its own parameters
 
-  typedef Teuchos::StringToIntegralParameterEntryValidator<int> validatorType;
 #define SET_VALID_ENTRY(name) validParamList->setEntry(name, MasterList::getEntry(name))
   SET_VALID_ENTRY("aggregation: max agg size");
   SET_VALID_ENTRY("aggregation: min agg size");
   SET_VALID_ENTRY("aggregation: max selected neighbors");
   SET_VALID_ENTRY("aggregation: ordering");
-  validParamList->getEntry("aggregation: ordering").setValidator(rcp(new validatorType(Teuchos::tuple<std::string>("natural", "graph", "random"), "aggregation: ordering")));
+  validParamList->getEntry("aggregation: ordering").setValidator(rcp(new Teuchos::StringValidator(Teuchos::tuple<std::string>("natural", "graph", "random"))));
   SET_VALID_ENTRY("aggregation: deterministic");
   SET_VALID_ENTRY("aggregation: coloring algorithm");
   SET_VALID_ENTRY("aggregation: enable phase 1");
@@ -109,14 +75,14 @@ RCP<const ParameterList> UncoupledAggregationFactory<LocalOrdinal, GlobalOrdinal
   SET_VALID_ENTRY("aggregation: use interface aggregation");
   SET_VALID_ENTRY("aggregation: error on nodes with no on-rank neighbors");
   SET_VALID_ENTRY("aggregation: phase3 avoid singletons");
-  SET_VALID_ENTRY("aggregation: compute aggregate qualities");
   SET_VALID_ENTRY("aggregation: phase 1 algorithm");
+  SET_VALID_ENTRY("aggregation: backend");
+  validParamList->getEntry("aggregation: backend").setValidator(rcp(new Teuchos::StringValidator(Teuchos::tuple<std::string>("default", "host", "kokkos"))));
 #undef SET_VALID_ENTRY
 
   // general variables needed in AggregationFactory
   validParamList->set<RCP<const FactoryBase>>("Graph", null, "Generating factory of the graph");
   validParamList->set<RCP<const FactoryBase>>("DofsPerNode", null, "Generating factory for variable \'DofsPerNode\', usually the same as for \'Graph\'");
-  validParamList->set<RCP<const FactoryBase>>("AggregateQualities", null, "Generating factory for variable \'AggregateQualities\'");
 
   // special variables necessary for OnePtAggregationAlgorithm
   validParamList->set<std::string>("OnePt aggregate map name", "", "Name of input map for single node aggregates. (default='')");
@@ -165,10 +131,6 @@ void UncoupledAggregationFactory<LocalOrdinal, GlobalOrdinal, Node>::DeclareInpu
       Input(currentLevel, "nodeOnInterface");
     }
   }
-
-  if (pL.get<bool>("aggregation: compute aggregate qualities")) {
-    Input(currentLevel, "AggregateQualities");
-  }
 }
 
 template <class LocalOrdinal, class GlobalOrdinal, class Node>
@@ -215,24 +177,56 @@ void UncoupledAggregationFactory<LocalOrdinal, GlobalOrdinal, Node>::Build(Level
   RCP<Aggregates> aggregates;
   RCP<const Teuchos::Comm<int>> comm;
   LO numRows;
+
+  const std::string aggregationBackend = pL.get<std::string>("aggregation: backend");
+
+  // "Graph" can have type "LWGraph" or "LWGraph_kokkos".
+  // The aggregation phases can call either "BuildAggregatesNonKokkos" or "BuildAggregates".
+
+  // "aggregation: backend" can take values "default", "non-Kokkos" or "Kokkos".
+  // "default": run depending on the type of "Graph"
+  // "non-Kokkos": run the non-Kokkos aggregation, moving "Graph" to host if necessary
+  // "Kokkos": run the Kokkos aggregation, potentially move "Graph", moving "Graph" to device if necessary
+
   bool runOnHost;
   if (IsType<RCP<LWGraph>>(currentLevel, "Graph")) {
-    graph      = Get<RCP<LWGraph>>(currentLevel, "Graph");
-    aggregates = rcp(new Aggregates(*graph));
-    comm       = graph->GetComm();
-    numRows    = graph->GetNodeNumVertices();
-    runOnHost  = true;
+    if ((aggregationBackend == "default") || (aggregationBackend == "non-Kokkos")) {
+      graph      = Get<RCP<LWGraph>>(currentLevel, "Graph");
+      aggregates = rcp(new Aggregates(*graph));
+      comm       = graph->GetComm();
+      numRows    = graph->GetNodeNumVertices();
+      runOnHost  = true;
+    } else {
+      RCP<LWGraph> tmp_graph = Get<RCP<LWGraph>>(currentLevel, "Graph");
+      graph_kokkos           = tmp_graph->copyToDevice();
+      aggregates             = rcp(new Aggregates(*graph_kokkos));
+      comm                   = graph_kokkos->GetComm();
+      numRows                = graph_kokkos->GetNodeNumVertices();
+      runOnHost              = false;
+    }
+  } else if (IsType<RCP<LWGraph_kokkos>>(currentLevel, "Graph")) {
+    if ((aggregationBackend == "default") || (aggregationBackend == "Kokkos")) {
+      graph_kokkos = Get<RCP<LWGraph_kokkos>>(currentLevel, "Graph");
+      aggregates   = rcp(new Aggregates(*graph_kokkos));
+      comm         = graph_kokkos->GetComm();
+      numRows      = graph_kokkos->GetNodeNumVertices();
+      runOnHost    = false;
+    } else {
+      RCP<LWGraph_kokkos> tmp_graph_kokkos = Get<RCP<LWGraph_kokkos>>(currentLevel, "Graph");
+      graph                                = tmp_graph_kokkos->copyToHost();
+      aggregates                           = rcp(new Aggregates(*graph));
+      comm                                 = graph->GetComm();
+      numRows                              = graph->GetNodeNumVertices();
+      runOnHost                            = true;
+    }
   } else {
-    graph_kokkos = Get<RCP<LWGraph_kokkos>>(currentLevel, "Graph");
-    aggregates   = rcp(new Aggregates(*graph_kokkos));
-    comm         = graph_kokkos->GetComm();
-    numRows      = graph_kokkos->GetNodeNumVertices();
-    runOnHost    = false;
+    TEUCHOS_TEST_FOR_EXCEPTION(true, std::invalid_argument, "Graph has bad type.");
+  }
 
+  if (!runOnHost) {
     TEUCHOS_TEST_FOR_EXCEPTION(pL.get<bool>("aggregation: use interface aggregation"), std::invalid_argument, "Option: 'aggregation: use interface aggregation' is not supported in the Kokkos version of uncoupled aggregation");
-    // Sanity Checking: match ML behavior is not supported in UncoupledAggregation_Kokkos in Phase 1 or Phase 2b, but is in 2a
+    // Sanity Checking: match ML behavior is not supported in UncoupledAggregation_Kokkos in Phase 1 , but it is in 2a and 2b
     TEUCHOS_TEST_FOR_EXCEPTION(pL.get<bool>("aggregation: match ML phase1"), std::invalid_argument, "Option: 'aggregation: match ML phase1' is not supported in the Kokkos version of uncoupled aggregation");
-    TEUCHOS_TEST_FOR_EXCEPTION(pL.get<bool>("aggregation: match ML phase2b"), std::invalid_argument, "Option: 'aggregation: match ML phase2b' is not supported in the Kokkos version of uncoupled aggregation");
   }
 
   // Build
@@ -409,10 +403,6 @@ void UncoupledAggregationFactory<LocalOrdinal, GlobalOrdinal, Node>::Build(Level
   aggregates->ComputeAggregateSizes(true /*forceRecompute*/);
 
   Set(currentLevel, "Aggregates", aggregates);
-
-  if (pL.get<bool>("aggregation: compute aggregate qualities")) {
-    RCP<Xpetra::MultiVector<DefaultScalar, LO, GO, Node>> aggQualities = Get<RCP<Xpetra::MultiVector<DefaultScalar, LO, GO, Node>>>(currentLevel, "AggregateQualities");
-  }
 }
 
 template <class LocalOrdinal, class GlobalOrdinal, class Node>

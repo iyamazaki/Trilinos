@@ -1,48 +1,12 @@
 // @HEADER
-//
-// ***********************************************************************
-//
+// *****************************************************************************
 //        MueLu: A package for multigrid based preconditioning
-//                  Copyright 2012 Sandia Corporation
 //
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
-// the U.S. Government retains certain rights in this software.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact
-//                    Jonathan Hu       (jhu@sandia.gov)
-//                    Andrey Prokopenko (aprokop@sandia.gov)
-//                    Ray Tuminaro      (rstumin@sandia.gov)
-//
-// ***********************************************************************
-//
+// Copyright 2012 NTESS and the MueLu contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
 // @HEADER
+
 #include <Teuchos_UnitTestHarness.hpp>
 #include <Teuchos_ParameterList.hpp>
 #include <Teuchos_XMLParameterListHelpers.hpp>
@@ -118,7 +82,12 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(ParameterListInterpreter, BlockCrs, Scalar, Lo
       if (found == std::string::npos) continue;
 
       out << "Processing file: " << fileList[i] << std::endl;
-      ParameterListInterpreter mueluFactory("ParameterList/ParameterListInterpreter/" + fileList[i], *comm);
+
+      Teuchos::RCP<Teuchos::ParameterList> mueluList = rcp(new Teuchos::ParameterList());
+      Teuchos::updateParametersFromXmlFileAndBroadcast("ParameterList/ParameterListInterpreter/" + fileList[i], mueluList.ptr(), *comm);
+      mueluList->set("use kokkos refactor", false);
+
+      ParameterListInterpreter mueluFactory(*mueluList, comm);
 
       RCP<Hierarchy> H = mueluFactory.CreateHierarchy();
       H->GetLevel(0)->Set("A", A);
@@ -157,8 +126,8 @@ MT compare_matrices(RCP<Matrix> &Ap, RCP<Matrix> &Ab) {
   SC one    = Teuchos::ScalarTraits<SC>::one();
   SC zero   = Teuchos::ScalarTraits<SC>::zero();
 
-  RCP<const CRS> Ap_t  = MueLu::Utilities<SC, LO, GO, NO>::Op2TpetraCrs(Ap);
-  auto Ab_t            = MueLu::Utilities<SC, LO, GO, NO>::Op2TpetraBlockCrs(Ab);
+  RCP<const CRS> Ap_t  = toTpetra(Ap);
+  auto Ab_t            = toTpetraBlock(Ab);
   RCP<CRS> Ab_as_point = Tpetra::convertToCrsMatrix<SC, LO, GO, NO>(*Ab_t);
 
   RCP<CRS> diff = rcp(new CRS(Ap_t->getCrsGraph()));
@@ -185,7 +154,7 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(ParameterListInterpreter, PointCrs_vs_BlockCrs
     {
       using XCRS = Xpetra::TpetraBlockCrsMatrix<SC, LO, GO, NO>;
 
-      auto tA      = MueLu::Utilities<SC, LO, GO, NO>::Op2TpetraCrs(PointA);
+      auto tA      = toTpetra(PointA);
       auto bA      = Tpetra::convertToBlockCrsMatrix<SC, LO, GO, NO>(*tA, 1);
       RCP<XCRS> AA = rcp(new XCRS(bA));
       BlockA       = rcp(new CrsMatrixWrap(rcp_implicit_cast<CrsMatrix>(AA)));
@@ -204,14 +173,18 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(ParameterListInterpreter, PointCrs_vs_BlockCrs
 
       out << "Processing file: " << fileList[i] << std::endl;
 
+      Teuchos::RCP<Teuchos::ParameterList> mueluList = rcp(new Teuchos::ParameterList());
+      Teuchos::updateParametersFromXmlFileAndBroadcast("ParameterList/ParameterListInterpreter/" + fileList[i], mueluList.ptr(), *comm);
+      mueluList->set("use kokkos refactor", false);
+
       // Point Hierarchy
-      ParameterListInterpreter mueluFactory1("ParameterList/ParameterListInterpreter/" + fileList[i], *comm);
+      ParameterListInterpreter mueluFactory1(*mueluList, comm);
       RCP<Hierarchy> PointH = mueluFactory1.CreateHierarchy();
       PointH->GetLevel(0)->Set("A", PointA);
       mueluFactory1.SetupHierarchy(*PointH);
 
       // Block Hierachy
-      ParameterListInterpreter mueluFactory2("ParameterList/ParameterListInterpreter/" + fileList[i], *comm);
+      ParameterListInterpreter mueluFactory2(*mueluList, comm);
       RCP<Hierarchy> BlockH = mueluFactory2.CreateHierarchy();
       BlockH->GetLevel(0)->Set("A", BlockA);
       mueluFactory2.SetupHierarchy(*BlockH);

@@ -1,48 +1,12 @@
 // @HEADER
-//
-// ***********************************************************************
-//
+// *****************************************************************************
 //        MueLu: A package for multigrid based preconditioning
-//                  Copyright 2012 Sandia Corporation
 //
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
-// the U.S. Government retains certain rights in this software.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact
-//                    Jonathan Hu       (jhu@sandia.gov)
-//                    Andrey Prokopenko (aprokop@sandia.gov)
-//                    Ray Tuminaro      (rstumin@sandia.gov)
-//
-// ***********************************************************************
-//
+// Copyright 2012 NTESS and the MueLu contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
 // @HEADER
+
 #include <Teuchos_UnitTestHarness.hpp>
 #include <Teuchos_ScalarTraits.hpp>
 
@@ -74,8 +38,11 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, Constructor, Scala
   RCP<Factory> TentativePFact = rcp(new TentativePFactory());
   RCP<Factory> TentativeRFact = rcp(new TransPFactory());  // Use Ptent for coordinate projection
 
-  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>("Coordinates"));
-  mvtf->SetFactory("R", TentativeRFact);
+  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>());
+  Teuchos::ParameterList mvtfParams;
+  mvtfParams.set("Vector name", "Coordinates");
+  mvtf->SetParameterList(mvtfParams);
+  mvtf->SetFactory("Transfer factory", TentativeRFact);
 
   TEST_EQUALITY(mvtf != Teuchos::null, true);
 }  // Constructor test
@@ -92,8 +59,8 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, Build, Scalar, Loc
   out << "prolongator, and the vector is all ones.  So the norm of the resulting coarse grid vector should be" << std::endl;
   out << "equal to the number of fine degrees of freedom." << std::endl;
 
-  typedef typename Teuchos::ScalarTraits<SC>::magnitudeType magnitude_type;
-  typedef typename Xpetra::MultiVector<magnitude_type, LO, GO, NO> RealValuedMultiVector;
+  using magnitude_type        = typename Teuchos::ScalarTraits<SC>::magnitudeType;
+  using RealValuedMultiVector = typename Xpetra::MultiVector<magnitude_type, LO, GO, NO>;
 
   Level fineLevel, coarseLevel;
   TestHelpers::TestFactory<SC, LO, GO, NO>::createTwoLevelHierarchy(fineLevel, coarseLevel);
@@ -121,8 +88,11 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, Build, Scalar, Loc
   //    fineLevel.SetFactoryManager(M);
   coarseLevel.SetFactoryManager(M);
 
-  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>("onesVector"));
-  mvtf->SetFactory("R", RFact);
+  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>());
+  Teuchos::ParameterList mvtfParams;
+  mvtfParams.set("Vector name", "onesVector");
+  mvtf->SetParameterList(mvtfParams);
+  mvtf->SetFactory("Transfer factory", RFact);
 
   coarseLevel.Request("onesVector", mvtf.get());
   coarseLevel.Request("R", RFact.get());
@@ -135,6 +105,191 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, Build, Scalar, Loc
   coarseOnes->norm2(vn);
   TEST_FLOATING_EQUALITY(vn[0] * vn[0], (Teuchos::as<magnitude_type>(fineOnes->getGlobalLength())), 1e-12);
 }  // Build test
+
+//------------------------------------------------------------------------------------------
+
+TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, BuildP, Scalar, LocalOrdinal, GlobalOrdinal, Node) {
+#include <MueLu_UseShortNames.hpp>
+  MUELU_TESTING_SET_OSTREAM;
+  MUELU_TESTING_LIMIT_SCOPE(Scalar, GlobalOrdinal, Node);
+  out << "version: " << MueLu::Version() << std::endl;
+
+  out << "Tests the action of the transfer factory on a vector.  In this test, the transfer is the tentative" << std::endl;
+  out << "prolongator, and the vector is all ones.  So the norm of the resulting coarse grid vector should be" << std::endl;
+  out << "equal to the number of fine degrees of freedom." << std::endl;
+
+  using magnitude_type        = typename Teuchos::ScalarTraits<SC>::magnitudeType;
+  using RealValuedMultiVector = typename Xpetra::MultiVector<magnitude_type, LO, GO, NO>;
+
+  Level fineLevel;
+  Level coarseLevel;
+  TestHelpers::TestFactory<SC, LO, GO, NO>::createTwoLevelHierarchy(fineLevel, coarseLevel);
+  GO nx         = 199;
+  RCP<Matrix> A = TestHelpers::TestFactory<SC, LO, GO, NO>::Build1DPoisson(nx);
+  fineLevel.Set("A", A);
+
+  Teuchos::ParameterList galeriList;
+  galeriList.set("nx", nx);
+  RCP<RealValuedMultiVector> coordinates = Galeri::Xpetra::Utils::CreateCartesianCoordinates<SC, LO, GO, Map, RealValuedMultiVector>("1D", A->getRowMap(), galeriList);
+
+  RCP<MultiVector> fineOnes = MultiVectorFactory::Build(A->getRowMap(), 1);
+  fineOnes->putScalar(1.0);
+  fineLevel.Set("onesVector", fineOnes);
+  fineLevel.Set("Coordinates", coordinates);
+
+  RCP<TentativePFactory> TentativePFact = rcp(new TentativePFactory());
+
+  RCP<TransPFactory> RFact = rcp(new TransPFactory());
+
+  RCP<FactoryManager> M = rcp(new FactoryManager());
+  M->SetKokkosRefactor(false);
+  M->SetFactory("P", TentativePFact);
+  M->SetFactory("Ptent", TentativePFact);
+  M->SetFactory("R", RFact);
+  //    fineLevel.SetFactoryManager(M);
+  coarseLevel.SetFactoryManager(M);
+
+  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>());
+  Teuchos::ParameterList mvtfParams;
+  mvtfParams.set("Vector name", "onesVector");
+  mvtfParams.set("Transfer name", "P");
+  mvtf->SetParameterList(mvtfParams);
+  mvtf->SetFactory("Transfer factory", TentativePFact);
+
+  coarseLevel.Request("onesVector", mvtf.get());
+  coarseLevel.Request("P", TentativePFact.get());
+
+  mvtf->Build(fineLevel, coarseLevel);
+
+  RCP<MultiVector> coarseOnes = coarseLevel.Get<RCP<MultiVector> >("onesVector", mvtf.get());
+  Teuchos::Array<magnitude_type> vn(1);
+  coarseOnes->norm2(vn);
+  TEST_FLOATING_EQUALITY(vn[0] * vn[0], (Teuchos::as<magnitude_type>(fineOnes->getGlobalLength())), 1e-12);
+}  // BuildP test
+
+//------------------------------------------------------------------------------------------
+
+TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, BuildNormalize, Scalar, LocalOrdinal, GlobalOrdinal, Node) {
+#include <MueLu_UseShortNames.hpp>
+  MUELU_TESTING_SET_OSTREAM;
+  MUELU_TESTING_LIMIT_SCOPE(Scalar, GlobalOrdinal, Node);
+  out << "version: " << MueLu::Version() << std::endl;
+
+  out << "Tests the action of the transfer factory on a vector.  In this test, the transfer is the tentative" << std::endl;
+  out << "prolongator, and the vector is all ones.  So the norm of the resulting coarse grid vector should be" << std::endl;
+  out << "equal to the number of fine degrees of freedom." << std::endl;
+
+  using magnitude_type        = typename Teuchos::ScalarTraits<SC>::magnitudeType;
+  using RealValuedMultiVector = typename Xpetra::MultiVector<magnitude_type, LO, GO, NO>;
+
+  Level fineLevel;
+  Level coarseLevel;
+  TestHelpers::TestFactory<SC, LO, GO, NO>::createTwoLevelHierarchy(fineLevel, coarseLevel);
+  GO nx         = 199;
+  RCP<Matrix> A = TestHelpers::TestFactory<SC, LO, GO, NO>::Build1DPoisson(nx);
+  fineLevel.Set("A", A);
+
+  Teuchos::ParameterList galeriList;
+  galeriList.set("nx", nx);
+  RCP<RealValuedMultiVector> coordinates = Galeri::Xpetra::Utils::CreateCartesianCoordinates<SC, LO, GO, Map, RealValuedMultiVector>("1D", A->getRowMap(), galeriList);
+
+  RCP<MultiVector> fineOnes = MultiVectorFactory::Build(A->getRowMap(), 1);
+  fineOnes->putScalar(1.0);
+  fineLevel.Set("onesVector", fineOnes);
+  fineLevel.Set("Coordinates", coordinates);
+
+  RCP<TentativePFactory> TentativePFact = rcp(new TentativePFactory());
+
+  RCP<TransPFactory> RFact = rcp(new TransPFactory());
+
+  RCP<FactoryManager> M = rcp(new FactoryManager());
+  M->SetKokkosRefactor(false);
+  M->SetFactory("P", TentativePFact);
+  M->SetFactory("Ptent", TentativePFact);
+  M->SetFactory("R", RFact);
+  //    fineLevel.SetFactoryManager(M);
+  coarseLevel.SetFactoryManager(M);
+
+  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>());
+  Teuchos::ParameterList mvtfParams;
+  mvtfParams.set("Vector name", "onesVector");
+  mvtfParams.set("Transfer name", "P");
+  mvtfParams.set("Normalize", true);
+  mvtf->SetParameterList(mvtfParams);
+  mvtf->SetFactory("Transfer factory", TentativePFact);
+
+  coarseLevel.Request("onesVector", mvtf.get());
+  coarseLevel.Request("P", TentativePFact.get());
+
+  mvtf->Build(fineLevel, coarseLevel);
+
+  RCP<MultiVector> coarseOnes = coarseLevel.Get<RCP<MultiVector> >("onesVector", mvtf.get());
+
+  TEST_FLOATING_EQUALITY(coarseOnes->getVector(0)->meanValue(), fineOnes->getVector(0)->meanValue(), 1e-12);
+}  // BuildNormalize test
+
+//------------------------------------------------------------------------------------------
+
+TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, BuildAgg, Scalar, LocalOrdinal, GlobalOrdinal, Node) {
+#include <MueLu_UseShortNames.hpp>
+  MUELU_TESTING_SET_OSTREAM;
+  MUELU_TESTING_LIMIT_SCOPE(Scalar, GlobalOrdinal, Node);
+  out << "version: " << MueLu::Version() << std::endl;
+
+  out << "Tests the action of the transfer factory on a vector.  In this test, the transfer is the tentative" << std::endl;
+  out << "prolongator, and the vector is all ones.  So the norm of the resulting coarse grid vector should be" << std::endl;
+  out << "equal to the number of fine degrees of freedom." << std::endl;
+
+  using magnitude_type        = typename Teuchos::ScalarTraits<SC>::magnitudeType;
+  using RealValuedMultiVector = typename Xpetra::MultiVector<magnitude_type, LO, GO, NO>;
+
+  Level fineLevel;
+  Level coarseLevel;
+  TestHelpers::TestFactory<SC, LO, GO, NO>::createTwoLevelHierarchy(fineLevel, coarseLevel);
+  GO nx         = 199;
+  RCP<Matrix> A = TestHelpers::TestFactory<SC, LO, GO, NO>::Build1DPoisson(nx);
+  fineLevel.Set("A", A);
+
+  Teuchos::ParameterList galeriList;
+  galeriList.set("nx", nx);
+  RCP<RealValuedMultiVector> coordinates = Galeri::Xpetra::Utils::CreateCartesianCoordinates<SC, LO, GO, Map, RealValuedMultiVector>("1D", A->getRowMap(), galeriList);
+
+  RCP<MultiVector> fineOnes = MultiVectorFactory::Build(A->getRowMap(), 1);
+  fineOnes->putScalar(1.0);
+  fineLevel.Set("onesVector", fineOnes);
+  fineLevel.Set("Coordinates", coordinates);
+
+  RCP<TentativePFactory> TentativePFact = rcp(new TentativePFactory());
+
+  RCP<TransPFactory> RFact = rcp(new TransPFactory());
+
+  RCP<FactoryManager> Mf = rcp(new FactoryManager());
+  Mf->SetKokkosRefactor(false);
+  fineLevel.SetFactoryManager(Mf);
+  RCP<FactoryManager> Mc = rcp(new FactoryManager());
+  Mc->SetKokkosRefactor(false);
+  Mc->SetFactory("P", TentativePFact);
+  Mc->SetFactory("Ptent", TentativePFact);
+  Mc->SetFactory("R", RFact);
+  coarseLevel.SetFactoryManager(Mc);
+
+  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>());
+  Teuchos::ParameterList mvtfParams;
+  mvtfParams.set("Vector name", "onesVector");
+  mvtfParams.set("Transfer name", "Aggregates");
+  mvtfParams.set("Normalize", true);
+  mvtf->SetParameterList(mvtfParams);
+  mvtf->SetFactory("Transfer factory", fineLevel.GetFactoryManager()->GetFactory("Aggregates"));
+
+  coarseLevel.Request("onesVector", mvtf.get());
+  coarseLevel.Request("P", TentativePFact.get());
+
+  mvtf->Build(fineLevel, coarseLevel);
+
+  RCP<MultiVector> coarseOnes = coarseLevel.Get<RCP<MultiVector> >("onesVector", mvtf.get());
+
+  TEST_FLOATING_EQUALITY(coarseOnes->getVector(0)->meanValue(), fineOnes->getVector(0)->meanValue(), 1e-12);
+}  // BuildAgg test
 
 //------------------------------------------------------------------------------------------
 
@@ -152,8 +307,8 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, ThreeLevels, Scala
 
   out << "Tests usage on a three-level hierarchy." << std::endl;
 
-  typedef typename Teuchos::ScalarTraits<SC>::magnitudeType real_type;
-  typedef typename Xpetra::MultiVector<real_type, LO, GO, NO> RealValuedMultiVector;
+  using real_type             = typename Teuchos::ScalarTraits<SC>::magnitudeType;
+  using RealValuedMultiVector = typename Xpetra::MultiVector<real_type, LO, GO, NO>;
 
   GO nx         = 199;
   RCP<Matrix> A = TestHelpers::TestFactory<SC, LO, GO, NO>::Build1DPoisson(nx);
@@ -206,8 +361,11 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, ThreeLevels, Scala
   RCP<MultiVector> fineOnes = MultiVectorFactory::Build(A->getRowMap(), 1);
   fineOnes->putScalar(1.0);
   fineLevel->Set("onesVector", fineOnes);
-  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>("onesVector"));
-  mvtf->SetFactory("R", RFact);
+  RCP<MueLu::MultiVectorTransferFactory<SC, LO, GO, NO> > mvtf = rcp(new MueLu::MultiVectorTransferFactory<SC, LO, GO, NO>());
+  Teuchos::ParameterList mvtfParams;
+  mvtfParams.set("Vector name", "onesVector");
+  mvtf->SetParameterList(mvtfParams);
+  mvtf->SetFactory("Transfer factory", RFact);
   M.SetFactory("onesVector", mvtf);
   AcFact->AddTransferFactory(mvtf);
 
@@ -230,9 +388,12 @@ TEUCHOS_UNIT_TEST_TEMPLATE_4_DECL(MultiVectorTransferFactory, ThreeLevels, Scala
      */
 }  // ThreeLevels
 
-#define MUELU_ETI_GROUP(Scalar, LO, GO, Node)                                                         \
-  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(MultiVectorTransferFactory, Constructor, Scalar, LO, GO, Node) \
-  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(MultiVectorTransferFactory, Build, Scalar, LO, GO, Node)       \
+#define MUELU_ETI_GROUP(Scalar, LO, GO, Node)                                                            \
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(MultiVectorTransferFactory, Constructor, Scalar, LO, GO, Node)    \
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(MultiVectorTransferFactory, Build, Scalar, LO, GO, Node)          \
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(MultiVectorTransferFactory, BuildP, Scalar, LO, GO, Node)         \
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(MultiVectorTransferFactory, BuildNormalize, Scalar, LO, GO, Node) \
+  TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(MultiVectorTransferFactory, BuildAgg, Scalar, LO, GO, Node)       \
   TEUCHOS_UNIT_TEST_TEMPLATE_4_INSTANT(MultiVectorTransferFactory, ThreeLevels, Scalar, LO, GO, Node)
 
 #include <MueLu_ETI_4arg.hpp>

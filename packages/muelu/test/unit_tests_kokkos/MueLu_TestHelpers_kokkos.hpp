@@ -1,48 +1,12 @@
 // @HEADER
-//
-// ***********************************************************************
-//
+// *****************************************************************************
 //        MueLu: A package for multigrid based preconditioning
-//                  Copyright 2012 Sandia Corporation
 //
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
-// the U.S. Government retains certain rights in this software.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact
-//                    Jonathan Hu       (jhu@sandia.gov)
-//                    Andrey Prokopenko (aprokop@sandia.gov)
-//                    Ray Tuminaro      (rstumin@sandia.gov)
-//
-// ***********************************************************************
-//
+// Copyright 2012 NTESS and the MueLu contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
 // @HEADER
+
 #ifndef MUELU_TEST_HELPERS_KOKKOS_H
 #define MUELU_TEST_HELPERS_KOKKOS_H
 
@@ -183,6 +147,150 @@ class TestFactory {
     RCP<Matrix> Op = Pr->BuildMatrix();
 
     return Op;
+  }
+
+  static typename Matrix::local_matrix_type::HostMirror buildLocal2x2Host(Scalar a00, Scalar a01, Scalar a10, Scalar a11, const bool keepZeros) {
+    using local_matrix_type = typename Matrix::local_matrix_type::HostMirror;
+    using local_graph_type  = typename CrsGraph::local_graph_type::HostMirror;
+    using rowptr_type       = typename local_graph_type::row_map_type::non_const_type;
+    using entries_type      = typename local_graph_type::entries_type::non_const_type;
+    using values_type       = typename local_matrix_type::values_type::non_const_type;
+
+    using TST = Teuchos::ScalarTraits<Scalar>;
+    size_t nnz;
+    if (keepZeros)
+      nnz = 4;
+    else
+      nnz = (TST::magnitude(a00) > TST::eps()) + (TST::magnitude(a01) > TST::eps()) + (TST::magnitude(a10) > TST::eps()) + (TST::magnitude(a11) > TST::eps());
+
+    auto rowptr  = rowptr_type("rowptr", 3);
+    auto entries = entries_type("entries", nnz);
+    auto values  = values_type("entries", nnz);
+    {
+      auto rowptr_h  = Kokkos::create_mirror_view(rowptr);
+      auto entries_h = Kokkos::create_mirror_view(entries);
+      auto values_h  = Kokkos::create_mirror_view(values);
+
+      size_t k = 0;
+
+      rowptr_h(0) = k;
+      if (keepZeros || TST::magnitude(a00) > TST::eps()) {
+        entries_h(k) = 0;
+        values_h(k)  = a00;
+        ++k;
+      }
+      if (keepZeros || TST::magnitude(a01) > TST::eps()) {
+        entries_h(k) = 1;
+        values_h(k)  = a01;
+        ++k;
+      }
+
+      rowptr_h(1) = k;
+      if (keepZeros || TST::magnitude(a10) > TST::eps()) {
+        entries_h(k) = 0;
+        values_h(k)  = a10;
+        ++k;
+      }
+
+      if (keepZeros || TST::magnitude(a11) > TST::eps()) {
+        entries_h(k) = 1;
+        values_h(k)  = a11;
+        ++k;
+      }
+      rowptr_h(2) = k;
+
+      Kokkos::deep_copy(rowptr, rowptr_h);
+      Kokkos::deep_copy(entries, entries_h);
+      Kokkos::deep_copy(values, values_h);
+    }
+    auto lclA = local_matrix_type("A", 2, 2, nnz, values, rowptr, entries);
+    return lclA;
+  }
+
+  static std::string localMatToString(typename Matrix::local_matrix_type::HostMirror& mat) {
+    std::stringstream s;
+    typename Matrix::local_ordinal_type numCols = mat.numCols();
+    for (typename Matrix::local_ordinal_type row_id = 0; row_id < mat.numRows(); ++row_id) {
+      auto row = mat.row(row_id);
+      for (typename Matrix::local_ordinal_type col_id = 0; col_id < numCols; ++col_id) {
+        bool found = false;
+        for (typename Matrix::local_ordinal_type colPtr = 0; colPtr < row.length; ++colPtr) {
+          if (row.colidx(colPtr) == col_id) {
+            s << row.value(colPtr) << " ";
+            found = true;
+          }
+        }
+        if (not found)
+          s << 0.0 << " ";
+      }
+      s << "\n";
+    }
+    return s.str();
+  }
+
+  static typename Matrix::local_matrix_type buildLocal2x2(Scalar a00, Scalar a01, Scalar a10, Scalar a11) {
+    using local_matrix_type = typename Matrix::local_matrix_type;
+    using local_graph_type  = typename CrsGraph::local_graph_type;
+    using rowptr_type       = typename local_graph_type::row_map_type::non_const_type;
+    using entries_type      = typename local_graph_type::entries_type::non_const_type;
+    using values_type       = typename local_matrix_type::values_type::non_const_type;
+
+    using TST  = Teuchos::ScalarTraits<Scalar>;
+    size_t nnz = (TST::magnitude(a00) > TST::eps()) + (TST::magnitude(a01) > TST::eps()) + (TST::magnitude(a10) > TST::eps()) + (TST::magnitude(a11) > TST::eps());
+
+    auto rowptr  = rowptr_type("rowptr", 3);
+    auto entries = entries_type("entries", nnz);
+    auto values  = values_type("entries", nnz);
+    {
+      auto rowptr_h  = Kokkos::create_mirror_view(rowptr);
+      auto entries_h = Kokkos::create_mirror_view(entries);
+      auto values_h  = Kokkos::create_mirror_view(values);
+
+      size_t k = 0;
+
+      rowptr_h(0) = k;
+      if (TST::magnitude(a00) > TST::eps()) {
+        entries_h(k) = 0;
+        values_h(k)  = a00;
+        ++k;
+      }
+      if (TST::magnitude(a01) > TST::eps()) {
+        entries_h(k) = 1;
+        values_h(k)  = a01;
+        ++k;
+      }
+
+      rowptr_h(1) = k;
+      if (TST::magnitude(a10) > TST::eps()) {
+        entries_h(k) = 0;
+        values_h(k)  = a10;
+        ++k;
+      }
+
+      if (TST::magnitude(a11) > TST::eps()) {
+        entries_h(k) = 1;
+        values_h(k)  = a11;
+        ++k;
+      }
+      rowptr_h(2) = k;
+
+      Kokkos::deep_copy(rowptr, rowptr_h);
+      Kokkos::deep_copy(entries, entries_h);
+      Kokkos::deep_copy(values, values_h);
+    }
+    auto lclA = local_matrix_type("A", 2, 2, nnz, values, rowptr, entries);
+    return lclA;
+  }
+
+  static RCP<Matrix> build2x2(Xpetra::UnderlyingLib lib, Scalar a00, Scalar a01, Scalar a10, Scalar a11) {
+    auto lclA = buildLocal2x2(a00, a01, a10, a11);
+
+    RCP<const Teuchos::Comm<int> > comm = TestHelpers_kokkos::Parameters::getDefaultComm();
+    if (lib == Xpetra::NotSpecified)
+      lib = TestHelpers_kokkos::Parameters::getLib();
+    RCP<const Map> map = MapFactory::Build(lib, 2 * comm->getSize(), 0, comm);
+
+    return MatrixFactory::Build(lclA, map, map);
   }
 
   // Create a 1D Poisson matrix with the specified number of rows
@@ -566,7 +674,63 @@ class TestFactory {
       }
 #endif
 #endif
-};  // class TestFactory
+
+  // Create a matrix as specified by parameter list options
+  static RCP<Matrix> BuildBlockMatrixAsPoint(Teuchos::ParameterList& matrixList, Xpetra::UnderlyingLib lib) {
+    RCP<const Teuchos::Comm<int> > comm = TestHelpers_kokkos::Parameters::getDefaultComm();
+    GO GO_INVALID                       = Teuchos::OrdinalTraits<GO>::invalid();
+    RCP<Matrix> Op;
+
+    if (lib == Xpetra::NotSpecified)
+      lib = TestHelpers_kokkos::Parameters::getLib();
+
+    // Make the base graph
+    RCP<Matrix> old_matrix        = TestHelpers_kokkos::TestFactory<Scalar, LocalOrdinal, GlobalOrdinal, Node>::BuildMatrix(matrixList, lib);
+    RCP<const CrsGraph> old_graph = old_matrix->getCrsGraph();
+    RCP<const Map> old_rowmap     = old_graph->getRowMap();
+    RCP<const Map> old_colmap     = old_graph->getColMap();
+    int blocksize                 = 3;
+
+    // Block Map
+    LO orig_num_rows = (LO)old_graph->getRowMap()->getLocalNumElements();
+    Teuchos::Array<GlobalOrdinal> owned_rows(blocksize * orig_num_rows);
+    for (LO i = 0; i < orig_num_rows; i++) {
+      GO old_gid = old_rowmap->getGlobalElement(i);
+      for (int j = 0; j < blocksize; j++) {
+        owned_rows[i * blocksize + j] = old_gid * blocksize + j;
+      }
+    }
+    RCP<Map> new_map = Xpetra::MapFactory<LO, GO, NO>::Build(lib, GO_INVALID, owned_rows(), 0, comm);
+    if (new_map.is_null()) throw std::runtime_error("BuildBlockMatrixAsPoint: Map constructor failed");
+
+    // Block Graph / Matrix
+    RCP<CrsMatrix> new_matrix = Xpetra::CrsMatrixFactory<SC, LO, GO, NO>::Build(new_map, blocksize * old_graph->getLocalMaxNumRowEntries());
+    if (new_matrix.is_null()) throw std::runtime_error("BuildBlockMatrixAsPoint: Matrix constructor failed");
+    for (LO i = 0; i < orig_num_rows; i++) {
+      Teuchos::ArrayView<const LO> old_indices;
+      Teuchos::ArrayView<const SC> old_values;
+      Teuchos::Array<GO> new_indices(1);
+      Teuchos::Array<SC> new_values(1);
+      old_matrix->getLocalRowView(i, old_indices, old_values);
+      for (int ii = 0; ii < blocksize; ii++) {
+        GO GRID = new_map->getGlobalElement(i * blocksize + ii);
+        for (LO j = 0; j < (LO)old_indices.size(); j++) {
+          for (int jj = 0; jj < blocksize; jj++) {
+            new_indices[0] = old_colmap->getGlobalElement(old_indices[j]) * blocksize + jj;
+            new_values[0]  = old_values[j] * (SC)((ii == jj && i == old_indices[j]) ? blocksize * blocksize : 1);
+            new_matrix->insertGlobalValues(GRID, new_indices(), new_values);
+          }
+        }
+      }
+    }
+    new_matrix->fillComplete();
+    Op = rcp(new CrsMatrixWrap(new_matrix));
+    if (new_map.is_null()) throw std::runtime_error("BuildBlockMatrixAsPoint: CrsMatrixWrap constructor failed");
+    Op->SetFixedBlockSize(blocksize);
+
+    return Op;
+  }  // BuildBlockMatrixAsPoint()
+};   // class TestFactory
 
 // Helper class which has some Tpetra specific code inside
 // We put this into an extra helper class as we need partial specializations and

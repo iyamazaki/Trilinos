@@ -1,10 +1,11 @@
-// @HEADER
-// ****************************************************************************
-//                Tempus: Copyright (2017) Sandia Corporation
+//@HEADER
+// *****************************************************************************
+//          Tempus: Time Integration and Sensitivity Analysis Package
 //
-// Distributed under BSD 3-clause license (See accompanying file Copyright.txt)
-// ****************************************************************************
-// @HEADER
+// Copyright 2017 NTESS and the Tempus contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
+//@HEADER
 
 #ifndef Tempus_TimeEventRange_decl_hpp
 #define Tempus_TimeEventRange_decl_hpp
@@ -150,9 +151,9 @@ class TimeEventRange : virtual public TimeEventBase<Scalar> {
 
   /** \brief Set the number of time events.
    *
-   *  - If numEvents_ < 0, then reset numEvents from start_, stop_ and stride_.
-   *  - ElseIf start_ = stop_, numEvents = 1, and reset stride = 0.
-   *  - ElseIf numEvents_ < 2, numEvents = 2, and stride = stop_ - start_.
+   *  - If numEvents < 0, then reset numEvents_ from start_, stop_ and stride_.
+   *  - ElseIf start_ = stop_, numEvents_ = 1, and reset stride = 0.
+   *  - ElseIf numEvents < 2, numEvents_ = 2, and stride = stop_ - start_.
    *  - Else stride = (stop_ - start_)/(numEvents_-1).
    *
    *  If the resulting stride is less than twice the absolute tolerance,

@@ -1,43 +1,10 @@
 // @HEADER
-// ************************************************************************
-//
+// *****************************************************************************
 //                           Intrepid2 Package
-//                 Copyright (2007) Sandia Corporation
 //
-// Under terms of Contract DE-AC04-94AL85000, there is a non-exclusive
-// license for use of this work by or on behalf of the U.S. Government.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact Kyungjoo Kim  (kyukim@sandia.gov), or
-//                    Mauro Perego  (mperego@sandia.gov)
-//
-// ************************************************************************
+// Copyright 2007 NTESS and the Intrepid2 contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
 // @HEADER
 
 /** \file   Intrepid2_ProjectionTools.hpp
@@ -83,7 +50,11 @@
 #ifdef HAVE_INTREPID2_KOKKOSKERNELS
 #include "KokkosBatched_QR_Serial_Internal.hpp"
 #include "KokkosBatched_ApplyQ_Serial_Internal.hpp"
+#if KOKKOS_VERSION >= 40599
+#include "KokkosBatched_Trsv_Decl.hpp"
+#else
 #include "KokkosBatched_Trsv_Serial_Internal.hpp"
+#endif
 #include "KokkosBatched_Util.hpp"
 #endif
 
@@ -578,11 +549,15 @@ public:
               w.data());
 
           // R0^{-1} b -> b
+#if KOKKOS_VERSION >= 40599
+          KokkosBatched::SerialTrsv<KokkosBatched::Uplo::Upper, KokkosBatched::Trans::NoTranspose, KokkosBatched::Diag::NonUnit, KokkosBatched::Algo::Trsv::Unblocked>::invoke(1.0, A0, b);
+#else
           KokkosBatched::SerialTrsvInternalUpper<KokkosBatched::Algo::Trsv::Unblocked>::invoke(false,
               A0.extent(0),
               1.0,
               A0.data(), A0.stride_0(), A0.stride_1(),
               b.data(),  b.stride_0());
+#endif
 
           //scattering b into the basis coefficients
           for(ordinal_type i=0; i<n; ++i){
@@ -619,11 +594,15 @@ public:
               w.data());
 
           // R^{-1} b -> b
+#if KOKKOS_VERSION >= 40599
+          KokkosBatched::SerialTrsv<KokkosBatched::Uplo::Upper, KokkosBatched::Trans::NoTranspose, KokkosBatched::Diag::NonUnit, KokkosBatched::Algo::Trsv::Unblocked>::invoke(1.0, A, b);
+#else
           KokkosBatched::SerialTrsvInternalUpper<KokkosBatched::Algo::Trsv::Unblocked>::invoke(false,
               A.extent(0),
               1.0,
               A.data(), A.stride_0(), A.stride_1(),
               b.data(),  b.stride_0());
+#endif
 
           //scattering b into the basis coefficients
           for(ordinal_type i=0; i<n; ++i){

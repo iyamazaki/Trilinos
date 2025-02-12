@@ -46,6 +46,7 @@ Eval::Eval(VariableMap::Resolver & resolver, const std::string & expression, Var
     m_expression(expression),
     m_syntaxStatus(false),
     m_parseStatus(false),
+    m_fpErrorBehavior(FPErrorBehavior::Warn),
     m_headNode(nullptr),
     m_arrayOffsetType(arrayOffsetType),
     m_parsedEval(nullptr)
@@ -58,6 +59,7 @@ Eval::Eval(const std::string & expression, Variable::ArrayOffset arrayOffsetType
     m_expression(expression),
     m_syntaxStatus(false),
     m_parseStatus(false),
+    m_fpErrorBehavior(FPErrorBehavior::Warn),
     m_headNode(nullptr),
     m_arrayOffsetType(arrayOffsetType),
     m_parsedEval(nullptr)
@@ -212,10 +214,7 @@ bool
 Eval::undefinedFunction() const
 {
   /* Check for an undefined function in any allocated node */
-  for (const auto& node : m_nodes) {
-    if (node->m_data.function.undefinedFunction) return true;
-  }
-  return false;
+  return !m_undefinedFunctionSet.empty();
 }
 
 bool
@@ -369,6 +368,7 @@ Eval::initialize_function_map()
   m_functionMap["cycloidal_ramp"] = FunctionType::CYCLOIDAL_RAMP;
   m_functionMap["cos_ramp"] = FunctionType::COS_RAMP;
   m_functionMap["cosine_ramp"] = FunctionType::COS_RAMP;
+  m_functionMap["linear_ramp"] = FunctionType::LINEAR_RAMP;
   m_functionMap["haversine_pulse"] = FunctionType::HAVERSINE_PULSE;
   m_functionMap["point2d"] = FunctionType::POINT2D;
   m_functionMap["point3d"] = FunctionType::POINT3D;
@@ -379,12 +379,9 @@ Eval::initialize_function_map()
   m_functionMap["weibull_pdf"] = FunctionType::WEIBULL_PDF;
   m_functionMap["gamma_pdf"] = FunctionType::GAMMA_PDF;
 
-  m_functionMap["rand"] = FunctionType::RAND;
-  m_functionMap["srand"] = FunctionType::SRAND;
-  m_functionMap["random"] = FunctionType::RANDOM;
+
   m_functionMap["ts_random"] = FunctionType::TS_RANDOM;
   m_functionMap["ts_normal"] = FunctionType::TS_NORMAL;
-  m_functionMap["time"] = FunctionType::TIME;
 }
 
 Eval &

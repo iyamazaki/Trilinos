@@ -1,3 +1,12 @@
+// @HEADER
+// *****************************************************************************
+//        MueLu: A package for multigrid based preconditioning
+//
+// Copyright 2012 NTESS and the MueLu contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
+// @HEADER
+
 #ifndef MUELU_CREATE_TPETRA_PRECONDITIONER_HPP
 #define MUELU_CREATE_TPETRA_PRECONDITIONER_HPP
 
@@ -88,6 +97,16 @@ CreateTpetraPreconditioner(const Teuchos::RCP<Tpetra::Operator<Scalar, LocalOrdi
       coordinates = userList.get<RCP<Xpetra::MultiVector<typename Teuchos::ScalarTraits<Scalar>::coordinateType, LocalOrdinal, GlobalOrdinal, Node> > >("Coordinates");
     }
     userList.set<RCP<Xpetra::MultiVector<typename Teuchos::ScalarTraits<Scalar>::coordinateType, LO, GO, NO> > >("Coordinates", coordinates);
+  }
+
+  if (userList.isParameter("Material")) {
+    RCP<MultiVector> material = Teuchos::null;
+    try {
+      material = TpetraMultiVector_To_XpetraMultiVector<SC, LO, GO, NO>(userList.get<RCP<Tpetra::MultiVector<Scalar, LocalOrdinal, GlobalOrdinal, Node> > >("Material"));
+    } catch (Teuchos::Exceptions::InvalidParameterType&) {
+      material = userList.get<RCP<Xpetra::MultiVector<Scalar, LocalOrdinal, GlobalOrdinal, Node> > >("Material");
+    }
+    userList.set<RCP<MultiVector> >("Material", material);
   }
 
   if (userList.isParameter("Nullspace")) {

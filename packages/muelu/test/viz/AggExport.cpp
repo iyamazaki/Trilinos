@@ -1,48 +1,12 @@
 // @HEADER
-//
-// ***********************************************************************
-//
+// *****************************************************************************
 //        MueLu: A package for multigrid based preconditioning
-//                  Copyright 2012 Sandia Corporation
 //
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
-// the U.S. Government retains certain rights in this software.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact
-//                    Jonathan Hu       (jhu@sandia.gov)
-//                    Andrey Prokopenko (aprokop@sandia.gov)
-//                    Ray Tuminaro      (rstumin@sandia.gov)
-//
-// ***********************************************************************
-//
+// Copyright 2012 NTESS and the MueLu contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
 // @HEADER
+
 #include <cstdio>
 #include <unistd.h>
 #include <iostream>
@@ -290,14 +254,17 @@ int main_(Teuchos::CommandLineProcessor& clp, Xpetra::UnderlyingLib& lib, int ar
 
     std::string matrixType = galeriParameters.GetMatrixType();
     std::string aggVizType = paramList.get<std::string>("aggregation: output file: agg style");
+    std::string aggQuality = "";
+    if (paramList.isParameter("aggregation: output file: aggregate qualities"))
+      aggQuality = paramList.get<bool>("aggregation: output file: aggregate qualities") ? "-AggregateQuality" : "";
     aggVizType.erase(std::remove_if(aggVizType.begin(), aggVizType.end(), ::isspace), aggVizType.end());
     if (ndims == 2)
-      paramList.set<std::string>("aggregation: output filename", "MPI-Viz-Output-2D-Level%LEVELID-Proc%PROCID");
+      paramList.set<std::string>("aggregation: output filename", "Output/MPI-Viz-Output-2D-Level%LEVELID-Proc%PROCID");
     else if (ndims == 3) {
       if (comm->getSize() > 1)
-        paramList.set<std::string>("aggregation: output filename", "MPI-Viz-Output-" + matrixType + "-" + aggVizType + "-Level%LEVELID-Proc%PROCID");
+        paramList.set<std::string>("aggregation: output filename", "Output/MPI-Viz-Output-" + matrixType + "-" + aggVizType + aggQuality + "-Level%LEVELID-Proc%PROCID");
       else
-        paramList.set<std::string>("aggregation: output filename", "MPI-Viz-Output-" + matrixType + "-" + aggVizType + "-Level%LEVELID");
+        paramList.set<std::string>("aggregation: output filename", "Output/MPI-Viz-Output-" + matrixType + "-" + aggVizType + aggQuality + "-Level%LEVELID");
     }
 
     if (nullspace.is_null()) {
@@ -366,9 +333,9 @@ int main_(Teuchos::CommandLineProcessor& clp, Xpetra::UnderlyingLib& lib, int ar
     // =========================================================================
     std::string filenameToWrite;
     if (comm->getSize() > 1)
-      filenameToWrite = "MPI-Viz-Output-" + matrixType + "-" + aggVizType + "-Level0-Proc%PROCID";
+      filenameToWrite = "Output/MPI-Viz-Output-" + matrixType + "-" + aggVizType + aggQuality + "-Level0-Proc%PROCID";
     else
-      filenameToWrite = "MPI-Viz-Output-" + matrixType + "-" + aggVizType + "-Level0";
+      filenameToWrite = "Output/MPI-Viz-Output-" + matrixType + "-" + aggVizType + aggQuality + "-Level0";
     std::string outfileName = replaceAll(filenameToWrite, "%PROCID", MueLu::toString(comm->getRank()));
     aggMatch                = compare_to_gold_all_ranks(comm->getRank(), outfileName);
 

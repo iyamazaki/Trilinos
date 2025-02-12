@@ -1,48 +1,12 @@
 // @HEADER
-//
-// ***********************************************************************
-//
+// *****************************************************************************
 //        MueLu: A package for multigrid based preconditioning
-//                  Copyright 2012 Sandia Corporation
 //
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
-// the U.S. Government retains certain rights in this software.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact
-//                    Jonathan Hu       (jhu@sandia.gov)
-//                    Andrey Prokopenko (aprokop@sandia.gov)
-//                    Ray Tuminaro      (rstumin@sandia.gov)
-//
-// ***********************************************************************
-//
+// Copyright 2012 NTESS and the MueLu contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
 // @HEADER
+
 #ifndef MUELU_AMESOS2SMOOTHER_DEF_HPP
 #define MUELU_AMESOS2SMOOTHER_DEF_HPP
 
@@ -82,9 +46,7 @@ Projection<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
   {
     auto dots = tempMV->getHostLocalView(Xpetra::Access::ReadOnly);
     Kokkos::deep_copy(Q, dots);
-    int strides[2];
-    Q.stride(strides);
-    LDQ = strides[1];
+    LDQ = Q.stride(1);
   }
 
   Teuchos::LAPACK<LocalOrdinal, Scalar> lapack;
@@ -148,10 +110,10 @@ Amesos2Smoother<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Amesos2Smoother(cons
   // TODO: It would be great is Amesos2 provides directly this kind of logic for us
   if (type_ == "" || Amesos2::query(type_) == false) {
     std::string oldtype = type_;
-#if defined(HAVE_AMESOS2_SUPERLU)
-    type_ = "Superlu";
-#elif defined(HAVE_AMESOS2_KLU2)
+#if defined(HAVE_AMESOS2_KLU2)
     type_ = "Klu";
+#elif defined(HAVE_AMESOS2_SUPERLU)
+    type_ = "Superlu";
 #elif defined(HAVE_AMESOS2_SUPERLUDIST)
     type_ = "Superludist";
 #elif defined(HAVE_AMESOS2_BASKER)
@@ -314,7 +276,7 @@ void Amesos2Smoother<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Setup(Level& cu
     }
 
     RCP<Matrix> newA       = rcp(new CrsMatrixWrap(rowMap, colMap, 0));
-    RCP<CrsMatrix> newAcrs = rcp_dynamic_cast<CrsMatrixWrap>(newA)->getCrsMatrix();
+    RCP<CrsMatrix> newAcrs = toCrsMatrix(newA);
     newAcrs->setAllValues(newRowPointers, newColIndices, newValues);
     newAcrs->expertStaticFillComplete(A->getDomainMap(), A->getRangeMap(),
                                       importer, A->getCrsGraph()->getExporter());
@@ -325,7 +287,7 @@ void Amesos2Smoother<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Setup(Level& cu
     factorA = A;
   }
 
-  RCP<Tpetra_CrsMatrix> tA = Utilities::Op2NonConstTpetraCrs(factorA);
+  RCP<const Tpetra_CrsMatrix> tA = toTpetra(factorA);
 
   prec_ = Amesos2::create<Tpetra_CrsMatrix, Tpetra_MultiVector>(type_, tA);
   TEUCHOS_TEST_FOR_EXCEPTION(prec_ == Teuchos::null, Exceptions::RuntimeError, "Amesos2::create returns Teuchos::null");
@@ -333,7 +295,7 @@ void Amesos2Smoother<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Setup(Level& cu
   amesos2_params->setName("Amesos2");
   if ((rowMap->getGlobalNumElements() != as<size_t>((rowMap->getMaxAllGlobalIndex() - rowMap->getMinAllGlobalIndex()) + 1)) ||
       (!rowMap->isContiguous() && (rowMap->getComm()->getSize() == 1))) {
-    if (!(amesos2_params->sublist(prec_->name()).template isType<bool>("IsContiguous")))
+    if (((type_ != "Cusolver") && (type_ != "Tacho")) && !(amesos2_params->sublist(prec_->name()).template isType<bool>("IsContiguous")))
       amesos2_params->sublist(prec_->name()).set("IsContiguous", false, "Are GIDs Contiguous");
   }
   prec_->setParameters(amesos2_params);
@@ -349,8 +311,8 @@ void Amesos2Smoother<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Apply(MultiVect
 
   RCP<Tpetra_MultiVector> tX, tB;
   if (!useTransformation_) {
-    tX = Utilities::MV2NonConstTpetraMV2(X);
-    tB = Utilities::MV2NonConstTpetraMV2(const_cast<MultiVector&>(B));
+    tX = toTpetra(Teuchos::rcpFromRef(X));
+    tB = toTpetra(Teuchos::rcpFromRef(const_cast<MultiVector&>(B)));
   } else {
     // Copy data of the original vectors into the transformed ones
     size_t numVectors = X.getNumVectors();
@@ -366,8 +328,8 @@ void Amesos2Smoother<Scalar, LocalOrdinal, GlobalOrdinal, Node>::Apply(MultiVect
       B_data[i] = Bdata[i];
     }
 
-    tX = Utilities::MV2NonConstTpetraMV2(*X_);
-    tB = Utilities::MV2NonConstTpetraMV2(*B_);
+    tX = toTpetra(X_);
+    tB = toTpetra(B_);
   }
 
   prec_->setX(tX);

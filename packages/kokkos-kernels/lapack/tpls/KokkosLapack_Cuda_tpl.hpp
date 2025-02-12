@@ -16,26 +16,38 @@
 #ifndef KOKKOSLAPACK_CUDA_TPL_HPP_
 #define KOKKOSLAPACK_CUDA_TPL_HPP_
 
-#if defined(KOKKOSKERNELS_ENABLE_TPL_MAGMA)
-#include <KokkosLapack_magma.hpp>
+#if defined(KOKKOSKERNELS_ENABLE_TPL_CUSOLVER)
+#include "KokkosLapack_cusolver.hpp"
 
 namespace KokkosLapack {
 namespace Impl {
 
-MagmaSingleton::MagmaSingleton() {
-  magma_int_t stat = magma_init();
-  if (stat != MAGMA_SUCCESS) Kokkos::abort("MAGMA initialization failed\n");
-
-  Kokkos::push_finalize_hook([&]() { magma_finalize(); });
+CudaLapackSingleton::CudaLapackSingleton() {
+  cusolverStatus_t stat = cusolverDnCreate(&handle);
+  if (stat != CUSOLVER_STATUS_SUCCESS) Kokkos::abort("CUSOLVER initialization failed\n");
 }
 
-MagmaSingleton& MagmaSingleton::singleton() {
-  static MagmaSingleton s;
+CudaLapackSingleton& CudaLapackSingleton::singleton() {
+  std::unique_ptr<CudaLapackSingleton>& instance = get_instance();
+  if (!instance) {
+    instance = std::make_unique<CudaLapackSingleton>();
+    Kokkos::push_finalize_hook([&]() {
+      cusolverDnDestroy(instance->handle);
+      instance.reset();
+    });
+  }
+  return *instance;
+}
+
+bool CudaLapackSingleton::is_initialized() { return get_instance() != nullptr; }
+
+std::unique_ptr<CudaLapackSingleton>& CudaLapackSingleton::get_instance() {
+  static std::unique_ptr<CudaLapackSingleton> s;
   return s;
 }
 
 }  // namespace Impl
 }  // namespace KokkosLapack
-#endif  // defined(KOKKOSKERNELS_ENABLE_TPL_MAGMA)
+#endif  // defined (KOKKOSKERNELS_ENABLE_TPL_CUSOLVER)
 
 #endif  // KOKKOSLAPACK_CUDA_TPL_HPP_

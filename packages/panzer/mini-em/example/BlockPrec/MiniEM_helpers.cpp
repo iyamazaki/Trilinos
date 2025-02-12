@@ -1,3 +1,13 @@
+// @HEADER
+// *****************************************************************************
+//           Panzer: A partial differential equation assembly
+//       engine for strongly coupled complex multiphysics systems
+//
+// Copyright 2011 NTESS and the Panzer contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
+// @HEADER
+
 #include "MiniEM_helpers.hpp"
 
 namespace mini_em {
@@ -94,14 +104,14 @@ namespace mini_em {
   }
 
 
-  Teuchos::RCP<Teuchos::ParameterList> getSolverParameters(linearAlgebraType linAlgebra,
-                                                           physicsType physics,
-                                                           solverType solver,
-                                                           int dim,
-                                                           Teuchos::RCP<const Teuchos::MpiComm<int> > &comm,
-                                                           Teuchos::RCP<Teuchos::FancyOStream> &out,
-                                                           std::string &xml,
-                                                           int basis_order) {
+  Teuchos::RCP<Teuchos::ParameterList>
+  getSolverParameters(linearAlgebraType linAlgebra, physicsType physics,
+                      solverType solver, int dim,
+                      Teuchos::RCP<const Teuchos::MpiComm<int>> &comm,
+                      Teuchos::RCP<Teuchos::FancyOStream> &out,
+                      std::string &xml, int basis_order,
+                      const bool preferTPLs,
+                      const bool truncateMueLuHierarchy) {
     using Teuchos::RCP;
     using Teuchos::rcp;
 
@@ -161,6 +171,10 @@ namespace mini_em {
             if (dim == 2)
               updateParams("solverMueLu2D.xml", lin_solver_pl, comm, out);
           }
+          if (truncateMueLuHierarchy)
+            updateParams("solverMueLuTruncated.xml", lin_solver_pl, comm, out);
+          if (preferTPLs)
+            updateParams("solverMueLuTPL.xml", lin_solver_pl, comm, out);
           if (basis_order > 1) {
             RCP<Teuchos::ParameterList> lin_solver_pl_lo = lin_solver_pl;
             lin_solver_pl = rcp(new Teuchos::ParameterList("Linear Solver"));

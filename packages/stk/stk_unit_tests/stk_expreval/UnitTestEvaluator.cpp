@@ -36,16 +36,21 @@
 #include <gtest/gtest.h>
 #include <stk_ngp_test/ngp_test.hpp>
 #include <stk_expreval/Evaluator.hpp>
+#include <stk_util/util/FPExceptions.hpp>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <iomanip>
 #include <cmath>
 #include <memory>
+#include "stk_expreval/NgpNode.hpp"
+#include "stk_expreval/Node.hpp"
 
 namespace {
 
 using ViewInt1DHostType = Kokkos::View<int*, Kokkos::LayoutRight, Kokkos::HostSpace>;
+
+using FPErrorBehavior = stk::expreval::Eval::FPErrorBehavior;
 
 bool
 has_variable(const std::vector<std::string>& variableNames, const std::string& variableName)
@@ -87,6 +92,7 @@ double evaluate(const std::string & expression,
                 const stk::expreval::Variable::ArrayOffset arrayOffsetType = stk::expreval::Variable::ZERO_BASED_INDEX)
 {
   stk::expreval::Eval eval(expression, arrayOffsetType);
+  eval.set_fp_error_behavior(stk::expreval::Eval::FPErrorBehavior::Error);
   eval.parse();
 
   for (ScalarBinding & scalar : boundScalars) {
@@ -144,7 +150,7 @@ double device_evaluate(const std::string & expression,
 
   double result = 0.0;
   Kokkos::parallel_reduce(stk::ngp::DeviceRangePolicy(0, 1),
-    KOKKOS_LAMBDA (const int& i, double& localResult) {
+    KOKKOS_LAMBDA (const int& /*i*/, double& localResult) {
         stk::expreval::DeviceVariableMap<> deviceVariableMap(parsedEval);
         for (unsigned varIndex = 0; varIndex < numBoundVariables; ++varIndex) {
           deviceVariableMap.bind(variableIndicesDevice(varIndex), variableDeviceValues(varIndex, 0), variableSizesDevice(varIndex), 1);
@@ -565,6 +571,37 @@ TEST( UnitTestEvaluator, testEvaluateEmptyString)
     EXPECT_EQ(0.0, result);
 }
 
+TEST( UnitTestEvaluator, FunctionNameNullTerminated)
+{
+  stk::expreval::Eval eval("sin(0.5)");
+  eval.parse();
+  for (int i=0; i < eval.get_node_count(); ++i)
+  {
+    stk::expreval::Node* node = eval.get_node(i);
+    if (node->m_opcode == stk::expreval::OPCODE_FUNCTION)
+    {
+      EXPECT_EQ(std::strcmp(node->m_data.function.functionName, "sin"), 0);
+    }
+  }
+}
+
+#ifndef STK_ENABLE_GPU
+
+TEST(UnitTestEvaluator, CheckNGPNodeFPError_Ignore)
+{
+  FPErrorBehavior m_fpErrorBehavior = FPErrorBehavior::Ignore;
+  EXPECT_NO_THROW(checkNgpNodeFPError(NAN, "foo"));
+}
+
+TEST(UnitTestEvaluator, CheckNGPNodeFPError_Error)
+{
+  FPErrorBehavior m_fpErrorBehavior = FPErrorBehavior::Error;
+  EXPECT_ANY_THROW(checkNgpNodeFPError(NAN, "foo"));
+}
+
+#endif
+
+
 TEST(UnitTestEvaluator, test_copy_constructor)
 {
   double a = 1.0;
@@ -738,7 +775,7 @@ void evaluate_scalar_inputs_on_device(xType & x, yType & y, const std::string & 
 
   double result = 0.0;
   Kokkos::parallel_reduce(stk::ngp::DeviceRangePolicy(0, 1),
-    KOKKOS_LAMBDA (const int & i, double & localResult) {
+    KOKKOS_LAMBDA (const int & /*i*/, double & localResult) {
       stk::expreval::DeviceVariableMap<> deviceVariableMap(parsedEval);
       deviceVariableMap.bind(xIndex, const_cast<xType&>(xDeviceValues[0]));
       deviceVariableMap.bind(yIndex, const_cast<yType&>(yDeviceValues[0]));
@@ -884,7 +921,7 @@ TEST(UnitTestEvaluator, device_nonConstScalarIntAssignmentVariableBinding_modifi
 }
 
 // Can't properly test device-side abort
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL) && !defined(KOKKOS_ENABLE_OPENMP)
+#if !defined(STK_ENABLE_GPU) && !defined(KOKKOS_ENABLE_OPENMP)
 TEST(UnitTestEvaluator, device_constScalarDoubleAssignmentVariableBinding_throws)
 {
   const double x = 2.0;
@@ -1111,7 +1148,7 @@ TEST(UnitTestEvaluator, device_nonConstIntArrayAssignmentVariableBinding_modifie
 }
 
 // Can't properly test device-side abort
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL) && !defined(KOKKOS_ENABLE_OPENMP)
+#if !defined(STK_ENABLE_GPU) && !defined(KOKKOS_ENABLE_OPENMP)
 TEST(UnitTestEvaluator, device_constDoubleArrayAssignmentVariableBinding_throws)
 {
   const double x[3] {1.0, 2.0, 3.0};
@@ -1159,12 +1196,13 @@ TEST(UnitTestEvaluator, testFunctionSyntax)
   EXPECT_TRUE(isValidFunction("sin(1)"));
   EXPECT_TRUE(isValidFunction("SIN(1)"));
   EXPECT_TRUE(isValidFunction("rand()"));
-  EXPECT_TRUE(isValidFunction("srand()"));
+  EXPECT_TRUE(isValidFunction("srand(1)"));
   EXPECT_TRUE(isValidFunction("time()"));
   EXPECT_TRUE(isValidFunction("random()"));
   EXPECT_TRUE(isValidFunction("random(1)"));
   EXPECT_TRUE(isValidFunction("random(time())"));
   EXPECT_TRUE(isValidFunction("cosine_ramp(x,y)"));
+  EXPECT_TRUE(isValidFunction("linear_ramp(x,y,z)"));
   EXPECT_TRUE(isValidFunction("sign(x)"));
   EXPECT_TRUE(isValidFunction("weibull_pdf(x, alpha, beta)"));
   EXPECT_TRUE(isValidFunction("normal_pdf(x, alpha, beta)"));
@@ -1174,7 +1212,42 @@ TEST(UnitTestEvaluator, testFunctionSyntax)
   EXPECT_TRUE(isInvalidFunction("gamma(1)"));
 }
 
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL) && !defined(KOKKOS_ENABLE_OPENMP)
+class OneArgFunction : public stk::expreval::CFunctionBase
+{
+  public:
+    explicit OneArgFunction() :
+      CFunctionBase(1)
+    {}
+
+    double operator()(int argc, const double * argv) override
+    {
+      STK_ThrowRequire(argc == 1);
+      return argv[0];
+    }
+};
+
+TEST(UnitTestEvaluator, testFunctionArgumentCountCheck)
+{
+  stk::expreval::addFunction("my_function", new OneArgFunction());
+  EXPECT_TRUE(isValidFunction("my_function(1)"));
+  EXPECT_TRUE(isInvalidFunction("my_function(1, 2)"));
+}
+
+TEST(UnitTestEvaluator, testParsedEvalNoUserDefinedFunctions)
+{
+  stk::expreval::addFunction("my_function", new OneArgFunction());
+  stk::expreval::Eval eval("my_function(1)");
+  EXPECT_ANY_THROW(eval.get_parsed_eval());
+}
+
+TEST(UnitTestEvaluator, testParsedEvalNoRandom)
+{
+  stk::expreval::Eval eval("rand()");
+  EXPECT_ANY_THROW(eval.get_parsed_eval());
+}
+
+
+#if !defined(STK_ENABLE_GPU) && !defined(KOKKOS_ENABLE_SYCL) && !defined(KOKKOS_ENABLE_OPENMP)
 TEST(UnitTestEvaluator, deviceVariableMap_too_small)
 {
   stk::expreval::Eval eval("x+y+z");
@@ -1745,7 +1818,7 @@ TEST(UnitTestEvaluator, defaultVector)
 TEST(UnitTestEvaluator, Ngp_defaultVector)
 {
   EXPECT_DOUBLE_EQ(device_evaluate("x[0]",                       {}, {}),                     0);
-  #if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL) && !defined(KOKKOS_ENABLE_OPENMP)
+  #if !defined(STK_ENABLE_GPU) && !defined(KOKKOS_ENABLE_SYCL) && !defined(KOKKOS_ENABLE_OPENMP)
   EXPECT_ANY_THROW(device_evaluate("x[0]+x[1]+x[2]",             {}, {}));
   #endif
 }
@@ -1785,7 +1858,7 @@ TEST(UnitTestEvaluator, Ngp_bindVector)
                             {}, {{"a", {1, 2, 3}}, {"z", {0, 1, 2}}}),                   6);
   EXPECT_DOUBLE_EQ(device_evaluate("a[0]=(1) ? 2 : 3",         {},         {{"a", {0, 0, 0}}}), 2);
 
-  #if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL) && !defined(KOKKOS_ENABLE_OPENMP)
+  #if !defined(STK_ENABLE_GPU) && !defined(KOKKOS_ENABLE_SYCL) && !defined(KOKKOS_ENABLE_OPENMP)
   EXPECT_ANY_THROW(device_evaluate("a[0]+a[1]+a[3]",           {},         {{"a", {1, 2, 3}}}));
   EXPECT_ANY_THROW(device_evaluate("a[0]+a[1]+a[2]",           {},         {{"a", {1, 2, 3}}}, stk::expreval::Variable::ONE_BASED_INDEX));
   EXPECT_ANY_THROW(device_evaluate("a",                        {},         {{"a", {1, 2, 3}}}));
@@ -2188,6 +2261,9 @@ TEST(UnitTestEvaluator, testFunction_sqrt)
   EXPECT_DOUBLE_EQ(evaluate("sqrt(9)"),    3);
   EXPECT_DOUBLE_EQ(evaluate("sqrt(2)"),    std::sqrt(2));
   EXPECT_DOUBLE_EQ(evaluate("sqrt(1.21)"), 1.1);
+  if (stk::util::have_errno() || stk::util::have_errexcept()) {
+    EXPECT_ANY_THROW(evaluate("sqrt(-1)"));
+  }
 }
 
 TEST(UnitTestEvaluator, Ngp_testFunction_sqrt)
@@ -2198,6 +2274,36 @@ TEST(UnitTestEvaluator, Ngp_testFunction_sqrt)
   EXPECT_DOUBLE_EQ(device_evaluate("sqrt(9)"),    3);
   EXPECT_DOUBLE_EQ(device_evaluate("sqrt(2)"),    std::sqrt(2));
   EXPECT_DOUBLE_EQ(device_evaluate("sqrt(1.21)"), 1.1);
+  if (stk::util::have_errno() || stk::util::have_errexcept()) {
+    KOKKOS_IF_ON_HOST(
+      EXPECT_ANY_THROW(evaluate("sqrt(-1)"));
+    )
+  }
+}
+
+TEST(UnitTestEvaluator, IgnoreFloatingPointError)
+{
+  stk::expreval::Eval eval("sqrt(-1)");
+  eval.set_fp_error_behavior(stk::expreval::Eval::FPErrorBehavior::Ignore);
+  eval.parse();
+  EXPECT_NO_THROW(eval.evaluate());
+}
+
+TEST(UnitTestEvaluator, WarnFloatingPointError)
+{
+  stk::expreval::Eval eval("sqrt(-1)");
+  eval.set_fp_error_behavior(stk::expreval::Eval::FPErrorBehavior::Warn);
+  eval.parse();
+  EXPECT_NO_THROW(eval.evaluate());
+}
+
+TEST(UnitTestEvaluator, ThrowFloatingPointError)
+{
+  if (!stk::util::have_errno() && !stk::util::have_errexcept()) { GTEST_SKIP(); }
+  stk::expreval::Eval eval("sqrt(-1)");
+  eval.set_fp_error_behavior(stk::expreval::Eval::FPErrorBehavior::Error);
+  eval.parse();
+  EXPECT_ANY_THROW(eval.evaluate());
 }
 
 TEST(UnitTestEvaluator, testFunction_exp)
@@ -2562,7 +2668,7 @@ TEST(UnitTestEvaluator, testFunction_atanh)
   EXPECT_DOUBLE_EQ(evaluate("atanh(0)"),    0);
   EXPECT_DOUBLE_EQ(evaluate("atanh(0.1)"),  std::atanh(0.1));
   EXPECT_DOUBLE_EQ(evaluate("atanh(0.5)"),  std::atanh(0.5));
-  EXPECT_DOUBLE_EQ(evaluate("atanh(1)"),    std::atanh(1));
+  EXPECT_DOUBLE_EQ(evaluate("atanh(0.9)"),  std::atanh(0.9));
 }
 
 TEST(UnitTestEvaluator, Ngp_testFunction_atanh)
@@ -2571,7 +2677,7 @@ TEST(UnitTestEvaluator, Ngp_testFunction_atanh)
   EXPECT_DOUBLE_EQ(device_evaluate("atanh(0)"),    0);
   EXPECT_DOUBLE_EQ(device_evaluate("atanh(0.1)"),  std::atanh(0.1));
   EXPECT_DOUBLE_EQ(device_evaluate("atanh(0.5)"),  std::atanh(0.5));
-  EXPECT_DOUBLE_EQ(device_evaluate("atanh(1)"),    std::atanh(1));
+  EXPECT_DOUBLE_EQ(device_evaluate("atanh(0.9)"),  std::atanh(0.9));
 }
 
 TEST(UnitTestEvaluator, testFunction_erf)
@@ -2827,6 +2933,17 @@ TEST(UnitTestEvaluator, testFunction_cosine_ramp3)
   EXPECT_DOUBLE_EQ(evaluate("cosine_ramp(1.5, 0, 1)"),  1);
 }
 
+TEST(UnitTestEvaluator, testFunction_linear_ramp3)
+{
+  EXPECT_DOUBLE_EQ(evaluate("linear_ramp(-0.5, 0, 1)"), 0);
+  EXPECT_DOUBLE_EQ(evaluate("linear_ramp(0, 0, 1)"),    0);
+  EXPECT_DOUBLE_EQ(evaluate("linear_ramp(1/4, 0, 1)"),  0.25);
+  EXPECT_DOUBLE_EQ(evaluate("linear_ramp(0.5, 0, 1)"),  0.5);
+  EXPECT_DOUBLE_EQ(evaluate("linear_ramp(3/4, 0, 1)"),  0.75);
+  EXPECT_DOUBLE_EQ(evaluate("linear_ramp(1, 0, 1)"),    1);
+  EXPECT_DOUBLE_EQ(evaluate("linear_ramp(1.5, 0, 1)"),  1);
+}
+
 TEST(UnitTestEvaluator, Ngp_testFunction_cosine_ramp3)
 {
   EXPECT_DOUBLE_EQ(device_evaluate("cosine_ramp(-0.5, 0, 1)"), 0);
@@ -2836,6 +2953,17 @@ TEST(UnitTestEvaluator, Ngp_testFunction_cosine_ramp3)
   EXPECT_DOUBLE_EQ(device_evaluate("cosine_ramp(2/3, 0, 1)"),  0.75);
   EXPECT_DOUBLE_EQ(device_evaluate("cosine_ramp(1, 0, 1)"),    1);
   EXPECT_DOUBLE_EQ(device_evaluate("cosine_ramp(1.5, 0, 1)"),  1);
+}
+
+TEST(UnitTestEvaluator, Ngp_testFunction_linear_ramp3)
+{
+  EXPECT_DOUBLE_EQ(device_evaluate("linear_ramp(-0.5, 0, 1)"), 0);
+  EXPECT_DOUBLE_EQ(device_evaluate("linear_ramp(0, 0, 1)"),    0);
+  EXPECT_DOUBLE_EQ(device_evaluate("linear_ramp(1/4, 0, 1)"),  0.25);
+  EXPECT_DOUBLE_EQ(device_evaluate("linear_ramp(0.5, 0, 1)"),  0.5);
+  EXPECT_DOUBLE_EQ(device_evaluate("linear_ramp(3/4, 0, 1)"),  0.75);
+  EXPECT_DOUBLE_EQ(device_evaluate("linear_ramp(1, 0, 1)"),    1);
+  EXPECT_DOUBLE_EQ(device_evaluate("linear_ramp(1.5, 0, 1)"),  1);
 }
 
 TEST(UnitTestEvaluator, testFunction_cosine_ramp2)
@@ -3198,22 +3326,6 @@ TEST(UnitTestEvaluator, testFunction_rand)
   testRandom("rand()");
 }
 
-void Ngp_testRandom(const char * expression)
-{
-  const int NUM_SAMPLES = 10000;
-  std::vector<double> results(NUM_SAMPLES);
-  for (int i = 0; i < NUM_SAMPLES; ++i) {
-    results[i] = device_evaluate(expression);
-  }
-  checkUniformDist(results);
-}
-
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
-TEST(UnitTestEvaluator, Ngp_testFunction_rand)
-{
-  Ngp_testRandom("rand()");
-}
-#endif
 
 TEST(UnitTestEvaluator, testFunction_srand_repeatability)
 {
@@ -3229,33 +3341,10 @@ TEST(UnitTestEvaluator, testFunction_srand_repeatability)
   }
 }
 
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
-TEST(UnitTestEvaluator, Ngp_testFunction_srand_repeatability)
-{
-  std::vector<double> result(10);
-  device_evaluate("srand(123.)");
-  for (unsigned i = 0; i < result.size(); ++i) {
-    result[i] = device_evaluate("rand()");
-  }
-
-  device_evaluate("srand(123.)");
-  for (unsigned i = 0; i < result.size(); ++i) {
-    EXPECT_DOUBLE_EQ(device_evaluate("rand()"), result[i]);
-  }
-}
-#endif
-
 TEST(UnitTestEvaluator, testFunction_random)
 {
   testRandom("random()");
 }
-
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
-TEST(UnitTestEvaluator, Ngp_testFunction_random)
-{
-  Ngp_testRandom("random()");
-}
-#endif
 
 TEST(UnitTestEvaluator, testFunction_random1_repeatability)
 {
@@ -3270,22 +3359,6 @@ TEST(UnitTestEvaluator, testFunction_random1_repeatability)
     EXPECT_DOUBLE_EQ(evaluate("random()"), result[i]);
   }
 }
-
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
-TEST(UnitTestEvaluator, Ngp_testFunction_random1_repeatability)
-{
-  std::vector<double> result(10);
-  device_evaluate("random(123.)");
-  for (unsigned i = 0; i < result.size(); ++i) {
-    result[i] = device_evaluate("random()");
-  }
-
-  device_evaluate("random(123.)");
-  for (unsigned i = 0; i < result.size(); ++i) {
-    EXPECT_DOUBLE_EQ(device_evaluate("random()"), result[i]);
-  }
-}
-#endif
 
 TEST(UnitTestEvaluator, testFunction_ts_random_distribution)
 {
@@ -3436,11 +3509,5 @@ TEST(UnitTestEvaluator, testFunction_time)
   EXPECT_NEAR(evaluate("time()"), std::time(nullptr), 1.1);
 }
 
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
-TEST(UnitTestEvaluator, Ngp_testFunction_time)
-{
-  EXPECT_NEAR(device_evaluate("time()"), std::time(nullptr), 1.1);
-}
-#endif
 
 } // namespace <unnamed>

@@ -1,48 +1,12 @@
 // @HEADER
-//
-// ***********************************************************************
-//
+// *****************************************************************************
 //        MueLu: A package for multigrid based preconditioning
-//                  Copyright 2012 Sandia Corporation
 //
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
-// the U.S. Government retains certain rights in this software.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact
-//                    Jonathan Hu       (jhu@sandia.gov)
-//                    Andrey Prokopenko (aprokop@sandia.gov)
-//                    Ray Tuminaro      (rstumin@sandia.gov)
-//
-// ***********************************************************************
-//
+// Copyright 2012 NTESS and the MueLu contributors.
+// SPDX-License-Identifier: BSD-3-Clause
+// *****************************************************************************
 // @HEADER
+
 #ifndef MUELU_HIERARCHYUTILS_DEF_HPP
 #define MUELU_HIERARCHYUTILS_DEF_HPP
 
@@ -221,6 +185,9 @@ void HierarchyUtils<Scalar, LocalOrdinal, GlobalOrdinal, Node>::AddNonSerializab
           level->Set(name, vec, NoFactory::get());
           // M->SetFactory(name, NoFactory::getRCP()); // TAW: generally it is a bad idea to overwrite the factory manager data here
           //  One should do this only in very special cases
+        } else if (name == "Material") {
+          level->AddKeepFlag(name, NoFactory::get(), MueLu::UserData);
+          level->Set(name, Teuchos::getValue<RCP<MultiVector>>(levelListEntry->second), NoFactory::get());
         } else if (name == "Coordinates")  // Scalar of Coordinates MV is always double
         {
           RCP<realvaluedmultivector_type> vec;
@@ -326,7 +293,8 @@ void HierarchyUtils<Scalar, LocalOrdinal, GlobalOrdinal, Node>::AddNonSerializab
                                        name != "invMk_1_invBeta" && name != "invMk_2_invAlpha" &&
                                        name != "M1" && name != "Ms" && name != "M0inv" &&
                                        name != "NodeMatrix" &&
-                                       name != "Nullspace" && name != "Coordinates" && name != "pcoarsen: element to node map" &&
+                                       name != "Nullspace" && name != "Coordinates" && name != "Material" &&
+                                       name != "pcoarsen: element to node map" &&
                                        name != "Node Comm" && name != "DualNodeID2PrimalNodeID" && name != "Primal interface DOF map" &&
                                        name != "dropMap1" && name != "dropMap2" &&
                                        name != "output stream" &&
@@ -349,6 +317,9 @@ void HierarchyUtils<Scalar, LocalOrdinal, GlobalOrdinal, Node>::AddNonSerializab
           level->Set(name, Teuchos::getValue<RCP<MultiVector>>(userListEntry->second), NoFactory::get());
           // M->SetFactory(name, NoFactory::getRCP()); // TAW: generally it is a bad idea to overwrite the factory manager data here
           //  One should do this only in very special cases
+        } else if (name == "Material") {
+          level->AddKeepFlag(name, NoFactory::get(), MueLu::UserData);
+          level->Set(name, Teuchos::getValue<RCP<MultiVector>>(userListEntry->second), NoFactory::get());
         } else if (name == "Coordinates") {  // Scalar of Coordinates MV is always double
           level->AddKeepFlag(name, NoFactory::get(), MueLu::UserData);
           level->Set(name, Teuchos::getValue<RCP<realvaluedmultivector_type>>(userListEntry->second), NoFactory::get());
