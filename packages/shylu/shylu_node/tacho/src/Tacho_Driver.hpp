@@ -87,6 +87,9 @@ private:
   // ** ordering options
   ordinal_type _order_connected_graph_separately;
 
+  // ** Serial or OpenMP backend on Host
+  bool _use_serial_factory;
+
   // ** problem
   ordinal_type _m;
   size_type _nnz;
@@ -186,6 +189,7 @@ public:
   void setMatrixType(const int symmetric, // 0 - unsymmetric, 1 - structure sym, 2 - symmetric
                      const bool is_positive_definite);
   void setSolutionMethod(const int method); /// 1 - cholesky, 2 - LDL, 3 - LU
+  void useSerialFactory(const bool use_serial_factory);
 
   ///
   /// Graph options

@@ -19,6 +19,7 @@ using ordinal_type = Tacho::ordinal_type;
 
 template <typename value_type> int driver(int argc, char *argv[]) {
   int nthreads = 1;
+  bool openmp = false;
   bool verbose = false;
   bool sanitize = false;
   bool duplicate = false;
@@ -44,6 +45,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   Tacho::CommandLineParser opts("This example program measure the Tacho on Kokkos::OpenMP");
 
   opts.set_option<int>("kokkos-threads", "Number of threads", &nthreads);
+  opts.set_option<bool>("openmp", "Use OpeMP on Host", &openmp);
   opts.set_option<bool>("verbose", "Flag for verbose printing", &verbose);
   opts.set_option<bool>("sanitize", "Flag to sanitize input matrix (remove zeros)", &sanitize);
   opts.set_option<bool>("duplicate", "Flag to duplicate input graph in the solver", &duplicate);
@@ -177,6 +179,9 @@ template <typename value_type> int driver(int argc, char *argv[]) {
     solver.setSolutionMethod(method);
     solver.setLevelSetOptionAlgorithmVariant(variant);
     solver.setLevelSetOptionNumStreams(nstreams);
+
+    /// Serial or OpenMP backend on Host
+    solver.useSerialFactory(!openmp);
 
     /// graph options
     solver.setOrderConnectedGraphSeparately();

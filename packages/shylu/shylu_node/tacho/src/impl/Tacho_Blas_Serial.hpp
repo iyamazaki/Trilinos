@@ -67,7 +67,6 @@ template <typename T> struct BlasSerial {
                                          const T *B, int ldb,
                           const T beta,  /* */ T *C, int ldc) {
 
-    typedef ArithTraits<T> arith_traits;
     const T one(1), zero(0);
 
     if (alpha == zero) {
