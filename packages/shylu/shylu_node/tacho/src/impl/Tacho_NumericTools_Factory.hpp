@@ -51,7 +51,6 @@ template <typename ValueType, typename DeviceType> class NumericToolsFactory;
   ordinal_type_array _stree_children;                                                                                  \
   ordinal_type_array_host _stree_level;                                                                                \
   ordinal_type_array_host _stree_roots;                                                                                \
-  bool _use_serial_factory;                                                                                            \
   ordinal_type _verbose
 
 #define TACHO_NUMERIC_TOOLS_FACTORY_SET_BASE_MEMBER                                                                    \
@@ -74,7 +73,6 @@ template <typename ValueType, typename DeviceType> class NumericToolsFactory;
     _stree_children = stree_children;                                                                                  \
     _stree_level = stree_level;                                                                                        \
     _stree_roots = stree_roots;                                                                                        \
-    _use_serial_factory = use_serial_factory;                                                                          \
     _verbose = verbose;                                                                                                \
   } while (false)
 
@@ -132,10 +130,7 @@ public:
 
   TACHO_NUMERIC_TOOLS_FACTORY_BASE_USING;
   TACHO_NUMERIC_TOOLS_FACTORY_BASE_MEMBER;
-  #define TACHO_LEVELSET_ON_HOST
-  #if defined TACHO_LEVELSET_ON_HOST
   TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_MEMBER;
-  #endif
 
   void setBaseMember(const ordinal_type method,
                      // input matrix A
@@ -149,7 +144,6 @@ public:
                      const ordinal_type_array &blk_colidx, const ordinal_type_array &stree_parent,
                      const size_type_array &stree_ptr, const ordinal_type_array &stree_children,
                      const ordinal_type_array_host &stree_level, const ordinal_type_array_host &stree_roots,
-                     const bool use_serial_factory,
                      const ordinal_type verbose) {
     TACHO_NUMERIC_TOOLS_FACTORY_SET_BASE_MEMBER;
   }
@@ -157,41 +151,37 @@ public:
   void setLevelSetMember(const ordinal_type variant, const ordinal_type device_level_cut,
                          const ordinal_type device_factor_thres, const ordinal_type device_solve_thres,
                          const ordinal_type nstreams) {
-    #if defined TACHO_LEVELSET_ON_HOST
     TACHO_NUMERIC_TOOLS_FACTORY_SET_LEVELSET_MEMBER;
-    #endif
   }
 
   void createObject(numeric_tools_base_type *&object) {
-    #if defined TACHO_LEVELSET_ON_HOST
-    if (!_use_serial_factory) {
-      KOKKOS_IF_ON_HOST((
-      switch (_variant) {
-      case 0: {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var0_type);
-        break;
-      }
-      case 1: {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var1_type);
-        break;
-      }
-      case 2: {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var2_type);
-        break;
-      }
-      case 3: {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var3_type);
-        break;
-      }
-      default: {
-        TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "Invalid variant input");
-      }
-      }))
-    } else
-    #endif
-    {
-      KOKKOS_IF_ON_HOST((TACHO_NUMERIC_TOOLS_FACTORY_SERIAL_BODY;))
+    KOKKOS_IF_ON_HOST((
+    switch (_variant) {
+    case -1: {
+      // sequential code
+      TACHO_NUMERIC_TOOLS_FACTORY_SERIAL_BODY;
+      break;
     }
+    case 0: {
+      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var0_type);
+      break;
+    }
+    case 1: {
+      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var1_type);
+      break;
+    }
+    case 2: {
+      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var2_type);
+      break;
+    }
+    case 3: {
+      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var3_type);
+      break;
+    }
+    default: {
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "Invalid variant input");
+    }
+    }))
   }
 };
 #endif
@@ -210,9 +200,7 @@ public:
 
   TACHO_NUMERIC_TOOLS_FACTORY_BASE_USING;
   TACHO_NUMERIC_TOOLS_FACTORY_BASE_MEMBER;
-  #if defined TACHO_LEVELSET_ON_HOST
   TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_MEMBER;
-  #endif
 
   void setBaseMember(const ordinal_type method,
                      // input matrix A
@@ -226,7 +214,6 @@ public:
                      const ordinal_type_array &blk_colidx, const ordinal_type_array &stree_parent,
                      const size_type_array &stree_ptr, const ordinal_type_array &stree_children,
                      const ordinal_type_array_host &stree_level, const ordinal_type_array_host &stree_roots,
-                     const bool use_serial_factory,
                      const ordinal_type verbose) {
     TACHO_NUMERIC_TOOLS_FACTORY_SET_BASE_MEMBER;
   }
@@ -234,41 +221,37 @@ public:
   void setLevelSetMember(const ordinal_type variant, const ordinal_type device_level_cut,
                          const ordinal_type device_factor_thres, const ordinal_type device_solve_thres,
                          const ordinal_type nstreams) {
-    #if defined TACHO_LEVELSET_ON_HOST
     TACHO_NUMERIC_TOOLS_FACTORY_SET_LEVELSET_MEMBER;
-    #endif
   }
 
   void createObject(numeric_tools_base_type *&object) {
-    #if defined TACHO_LEVELSET_ON_HOST
-    if (!_use_serial_factory) {
-      KOKKOS_IF_ON_HOST((
-      switch (_variant) {
-      case 0: {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var0_type);
-        break;
-      }
-      case 1: {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var1_type);
-        break;
-      }
-      case 2: {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var2_type);
-        break;
-      }
-      case 3: {
-        TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var3_type);
-        break;
-      }
-      default: {
-        TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "Invalid variant input");
-      }
-      }))
-    } else
-    #endif
-    {
-      KOKKOS_IF_ON_HOST((TACHO_NUMERIC_TOOLS_FACTORY_SERIAL_BODY;))
+    KOKKOS_IF_ON_HOST((
+    switch (_variant) {
+    case -1: {
+      // sequential code
+      TACHO_NUMERIC_TOOLS_FACTORY_SERIAL_BODY;
+      break;
     }
+    case 0: {
+      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var0_type);
+      break;
+    }
+    case 1: {
+      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var1_type);
+      break;
+    }
+    case 2: {
+      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var2_type);
+      break;
+    }
+    case 3: {
+      TACHO_NUMERIC_TOOLS_FACTORY_LEVELSET_BODY(numeric_tools_levelset_var3_type);
+      break;
+    }
+    default: {
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "Invalid variant input");
+    }
+    }))
   }
 };
 #endif
@@ -301,7 +284,6 @@ public:
                      const ordinal_type_array &blk_colidx, const ordinal_type_array &stree_parent,
                      const size_type_array &stree_ptr, const ordinal_type_array &stree_children,
                      const ordinal_type_array_host &stree_level, const ordinal_type_array_host &stree_roots,
-                     const bool use_serial_factory,
                      const ordinal_type verbose) {
     TACHO_NUMERIC_TOOLS_FACTORY_SET_BASE_MEMBER;
   }

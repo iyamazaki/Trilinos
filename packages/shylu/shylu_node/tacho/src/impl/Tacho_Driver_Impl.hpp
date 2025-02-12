@@ -22,12 +22,18 @@ namespace Tacho {
 
 template <typename VT, typename DT>
 Driver<VT, DT>::Driver()
-    : _method(1), _order_connected_graph_separately(1), _use_serial_factory(true),
+    : _method(1), _order_connected_graph_separately(1),
       _m(0), _nnz(0), _ap(), _h_ap(), _aj(), _h_aj(), _perm(),
       _h_perm(), _peri(), _h_peri(), _m_graph(0), _nnz_graph(0), _h_ap_graph(), _h_aj_graph(), _h_perm_graph(),
       _h_peri_graph(), _nnz_u(0), _nsupernodes(0), _N(nullptr), _verbose(0), _small_problem_thres(1024), _serial_thres_size(-1),
       _mb(-1), _nb(-1), _front_update_mode(-1), _levelset(0), _device_level_cut(0), _device_factor_thres(128),
-      _device_solve_thres(128), _variant(2), _nstreams(16), _pivot_tol(0.0), _max_num_superblocks(-1) {}
+      _device_solve_thres(128),
+      #if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
+      _variant(2),
+      #else
+      _variant(-1), // sequential by default
+      #endif
+      _nstreams(16), _pivot_tol(0.0), _max_num_superblocks(-1) {}
 
 ///
 /// duplicate the object
@@ -99,11 +105,6 @@ void Driver<VT, DT>::setSolutionMethod(const int method) { // 1 - Chol, 2 - LDL,
 }
 
 template <typename VT, typename DT>
-void Driver<VT, DT>::useSerialFactory(const bool use_serial_factory) {
-  _use_serial_factory = use_serial_factory;
-}
-
-template <typename VT, typename DT>
 void Driver<VT, DT>::setOrderConnectedGraphSeparately(const ordinal_type order_connected_graph_separately) {
   _order_connected_graph_separately = order_connected_graph_separately;
 }
@@ -148,9 +149,15 @@ void Driver<VT, DT>::setLevelSetOptionDeviceFunctionThreshold(const ordinal_type
 }
 
 template <typename VT, typename DT> void Driver<VT, DT>::setLevelSetOptionAlgorithmVariant(const ordinal_type variant) {
+  #if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
   if (variant > 3 || variant < 0) {
    TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "levelset algorithm variants range from 0 to 3");
   }
+  #else
+  if (variant > 3 || variant < -1) {
+   TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "levelset algorithm variants range from -1 to 3 (-1 for serial)");
+  }
+  #endif
   _variant = variant;
 }
 
@@ -357,7 +364,7 @@ template <typename VT, typename DT> int Driver<VT, DT>::initialize() {
     factory.setBaseMember(_method, _m, _ap, _aj, _perm, _peri, _nsupernodes, _supernodes, _gid_super_panel_ptr,
                           _gid_super_panel_colidx, _sid_super_panel_ptr, _sid_super_panel_colidx,
                           _blk_super_panel_colidx, _stree_parent, _stree_ptr, _stree_children, _stree_level, _stree_roots,
-                          _use_serial_factory, _verbose);
+                          _verbose);
 
     factory.setLevelSetMember(_variant, _device_level_cut, _device_factor_thres, _device_solve_thres, _nstreams);
 
