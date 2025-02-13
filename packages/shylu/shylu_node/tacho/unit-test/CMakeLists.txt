@@ -3,7 +3,7 @@ TRIBITS_INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
 
 TRIBITS_COPY_FILES_TO_BINARY_DIR(
         Tacho_UnitTest_SparseMatrixFile
-        SOURCE_FILES test_double.mtx test_dcomplex.mtx sherman3.mtx bcsstk15.mtx
+        SOURCE_FILES test_double.mtx test_dcomplex.mtx
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
         DEST_DIR ${CMAKE_CURRENT_BINARY_DIR}
 )

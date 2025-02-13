@@ -16,9 +16,60 @@
 #include "Tacho_Driver.hpp"
 #include "Tacho_MatrixMarket.hpp"
 
-using ordinal_type = Tacho::ordinal_type;
 
-template <typename value_type> int driver(std::string file, std::string method_name, int variant, int nrhs) {
+/// matrix generator
+template <typename CrsMatrixBaseTypeHost>
+int generate2dLaplace(int nx, CrsMatrixBaseTypeHost &A) {
+  // generate Laplace matrix on 5pt stencile
+  int n = nx*nx;
+  int nnz = n + 4*nx*(nx-1);
+
+  using value_type = typename CrsMatrixBaseTypeHost::value_type;
+  typename CrsMatrixBaseTypeHost::size_type_array    ap("ap", n+1);
+  typename CrsMatrixBaseTypeHost::ordinal_type_array aj("aj", nnz);
+  typename CrsMatrixBaseTypeHost::value_type_array   ax("ax", nnz);
+
+  nnz = 0;
+  ap(0) = 0;
+  for (int i=0; i<nx; i++) {
+    for (int j=0; j<nx; j++) {
+      int k = i*nx + j;
+      if (i > 0) {
+        aj(nnz) = k-nx;
+        ax(nnz) = value_type(1.0);
+        nnz ++;
+      }
+      if (j > 0) {
+        aj(nnz) = k-1;
+        ax(nnz) = value_type(1.0);
+        nnz ++;
+      }
+      aj(nnz) = k;
+      ax(nnz) = value_type(4.0);
+      nnz++;
+      if (j < nx-1) {
+        aj(nnz) = k+1;
+        ax(nnz) = value_type(1.0);
+        nnz ++;
+      }
+      if (i < nx-1) {
+        aj(nnz) = k+nx;
+        ax(nnz) = value_type(1.0);
+        nnz ++;
+      }
+      ap(k+1) = nnz;
+    }
+  }
+  A.clear();
+  A.setExternalMatrix(n, n, nnz, ap, aj, ax);
+  return nnz;
+}
+
+
+// main test driver
+template <typename value_type>
+int driver(std::string file, std::string method_name, int variant, int nrhs) {
+  int nx = 10;
   int method = 1; // 1 - Chol, 2 - LDL, 3 - SymLU
   if (method_name == "chol")
     method = 1;
@@ -53,7 +104,8 @@ template <typename value_type> int driver(std::string file, std::string method_n
 
     /// read a spd matrix of matrix market format
     CrsMatrixBaseTypeHost A;
-    {
+    if (file != "") {
+      std::cout << " Read matrix from " << file << std::endl;
       std::ifstream in;
       in.open(file);
       if (!in.good()) {
@@ -62,15 +114,15 @@ template <typename value_type> int driver(std::string file, std::string method_n
       }
       bool sanitize = false;
       Tacho::MatrixMarket<value_type>::read(file, A, sanitize, verbose);
+    } else {
+      std::cout << " Generate 2D Laplace matrix(nx = " << nx << ")" << std::endl;
+      generate2dLaplace(nx, A);
     }
 
-    /// read graph file if available
-    using size_type_array_host = typename CrsMatrixBaseTypeHost::size_type_array;
-    using ordinal_type_array_host = typename CrsMatrixBaseTypeHost::ordinal_type_array;
-
+    /// create tacho solver
     Tacho::Driver<value_type, device_type> solver;
 
-    /// common options
+    /// set common options
     solver.setVerbose(verbose);
     solver.setSolutionMethod(method);
     solver.setLevelSetOptionAlgorithmVariant(variant);
@@ -83,7 +135,7 @@ template <typename value_type> int driver(std::string file, std::string method_n
     if(r_val == 0) {
       r_val = solver.initialize();
     }
-    /// create numeric tools and levelset tools
+    /// do numerical factorization
     if(r_val == 0) {
       r_val = solver.factorize(values_on_device);
     }
@@ -116,9 +168,11 @@ template <typename value_type> int driver(std::string file, std::string method_n
   return r_val;
 }
 
+
+// tests
 TEST( Solver, Chol ) {
   // Chol
-  std::string file = "bcsstk15.mtx";
+  std::string file = "";
   // > single RHS
   EXPECT_EQ(driver<double>(file, "chol", 0, 1), 0);
   EXPECT_EQ(driver<double>(file, "chol", 1, 1), 0);
@@ -133,7 +187,7 @@ TEST( Solver, Chol ) {
 
 TEST( Solver, LU ) {
   // LU
-  std::string file = "sherman3.mtx";
+  std::string file = "";
   // > single RHS
   EXPECT_EQ(driver<double>(file, "lu", 0, 1), 0);
   EXPECT_EQ(driver<double>(file, "lu", 1, 1), 0);
@@ -148,7 +202,7 @@ TEST( Solver, LU ) {
 
 TEST( Solver, LDL ) {
   // LDL
-  std::string file = "bcsstk15.mtx";
+  std::string file = "";
   // > single RHS
   EXPECT_EQ(driver<double>(file, "ldl", 0, 1), 0);
   EXPECT_EQ(driver<double>(file, "ldl", 1, 1), 0);
@@ -167,7 +221,7 @@ int main(int argc, char *argv[]) {
      ::testing::InitGoogleTest(&argc, argv);
      info = RUN_ALL_TESTS();
   }
-  Kokkos::finalize();
+  //Kokkos::finalize();
   return info;
 }
 
