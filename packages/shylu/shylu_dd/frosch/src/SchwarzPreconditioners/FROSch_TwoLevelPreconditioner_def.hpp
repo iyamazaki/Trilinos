@@ -90,7 +90,11 @@ namespace FROSch {
                                                         GOVecPtr dirichletBoundaryDofs)
     {
       int ret = 0;
+      #if FROSCH_DEBUG_OUT
       MPI_Barrier(MPI_COMM_WORLD);
+      printf( " ~~~ TwoLevelPreconditioner::initialize ~~~\n" );
+      MPI_Barrier(MPI_COMM_WORLD);
+      #endif
       {
         FROSCH_TIMER_START_LEVELID(initializeTime,"TwoLevelPreconditioner::initialize");
         ////////////
@@ -190,20 +194,38 @@ namespace FROSch {
             FROSCH_ASSERT(false,"CoarseOperator Type unkown.");
         }
       }
+      #if FROSCH_DEBUG_OUT
+      MPI_Barrier(MPI_COMM_WORLD);
+      printf( " ~~~ TwoLevelPreconditioner::initialize done ~~~\n" );
+      MPI_Barrier(MPI_COMM_WORLD);
+      #endif
       return ret;
     }
 
     template <class SC,class LO,class GO,class NO>
     int TwoLevelPreconditioner<SC,LO,GO,NO>::compute()
     {
+      #if FROSCH_DEBUG_OUT
       MPI_Barrier(MPI_COMM_WORLD);
+      printf( " *** TwoLevelPreconditioner::compute ***\n" );
+      #endif
+      int ret = 0;
       {
         FROSCH_TIMER_START_LEVELID(computeTime,"TwoLevelPreconditioner::compute");
-        int ret = 0;
         if (0>this->OverlappingOperator_->compute()) ret -= 1;
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " --> TwoLevelPreconditioner:: OverlappingOperator::compute done\n" );
+        #endif
         if (0>CoarseOperator_->compute()) ret -= 10;
-        return ret;
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " --> TwoLevelPreconditioner:: CoarseOperator::compute done\n" );
+        #endif
       }
+      #if FROSCH_DEBUG_OUT
+      printf( " *** TwoLevelPreconditioner::compute done ***\n" );
+      MPI_Barrier(MPI_COMM_WORLD);
+      #endif
+      return ret;
     }
 
     template <class SC,class LO,class GO,class NO>

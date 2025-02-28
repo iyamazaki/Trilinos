@@ -193,23 +193,38 @@ namespace FROSch {
     {
         FROSCH_DETAILTIMER_START_LEVELID(computeOverlappingOperatorTime,"OverlappingOperator::computeOverlappingOperator");
 
+        #if FROSCH_DEBUG_OUT
+        int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+        printf( " computeOverlappingOperator (%d)\n",myRank ); fflush(stdout);
+        #endif
         updateLocalOverlappingMatrices();
         bool reuseSymbolicFactorization = this->ParameterList_->get("Reuse: Symbolic Factorization",true);
         if (!reuseSymbolicFactorization || SubdomainSolver_.is_null()) {
             // initializeSubdomainSolver is called during symbolic only if reuseSymbolicFactorization=true
             // so if reuseSymbolicFactorization=false, we always call initializeSubdomainSolver 
             if (this->IsComputed_ && this->Verbose_) cout << "FROSch::OverlappingOperator : Recomputing the Symbolic Factorization" << endl;
-	    //printf( " initializeSubdomainSolver\n" ); fflush(stdout);
+            #if FROSCH_DEBUG_OUT
+            MPI_Barrier(MPI_COMM_WORLD); printf( " > initializeSubdomainSolver (%d)\n",myRank ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            #endif
             initializeSubdomainSolver(this->OverlappingMatrix_);
         } else if (this->IsComputed_) {
             // if !IsComputed, then this is the first timing calling "compute" after initializeSubdomainSolver is called in symbolic phase
             // so no need to do anything
-	    //printf( " updateMatrix\n" ); fflush(stdout);
+            #if FROSCH_DEBUG_OUT
+            MPI_Barrier(MPI_COMM_WORLD); printf( " > updateMatrix (%d)\n",myRank ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD); 
+            #endif
             SubdomainSolver_->updateMatrix(this->OverlappingMatrix_,true);
         }
         this->IsComputed_ = true;
-	//printf( " calling SubdomainSolver_->compute\n" ); fflush(stdout);
-        return SubdomainSolver_->compute();
+        #if FROSCH_DEBUG_OUT
+        printf( " calling SubdomainSolver_->compute\n" ); fflush(stdout);
+        #endif
+        int rval = SubdomainSolver_->compute();
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " calling SubdomainSolver_->compute done (%d)\n",myRank ); fflush(stdout);
+        printf( " computeOverlappingOperator done (%d)\n",myRank ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
+        return rval;
     }
 }
 

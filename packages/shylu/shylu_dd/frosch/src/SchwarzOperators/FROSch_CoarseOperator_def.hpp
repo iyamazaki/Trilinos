@@ -243,6 +243,9 @@ namespace FROSch {
             // Communicate coarse matrix
             FROSCH_DETAILTIMER_START_LEVELID(communicateCoarseMatrixTime,"communicate coarse matrix");
             if (!DistributionList_->get("Type","linear").compare("linear")) {
+                #if FROSCH_DEBUG_OUT
+                printf( " setUpCoarseOperator :: Linear..\n" ); fflush(stdout);
+                #endif
                 XMatrixPtr tmpCoarseMatrix = MatrixFactory<SC,LO,GO,NO>::Build(GatheringMaps_[0]);
                 {
 #ifdef FROSCH_COARSEOPERATOR_DETAIL_TIMERS
@@ -265,10 +268,16 @@ namespace FROSch {
                 k0 = tmpCoarseMatrix;
 
             } else if (!DistributionList_->get("Type","linear").compare("ZoltanDual")) {
+                #if FROSCH_DEBUG_OUT
+                printf( " setUpCoarseOperator :: ZoltanDual..\n" ); fflush(stdout);
+                //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); k0->describe(*fancy,VERB_EXTREME); }
+                //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); GatheringMaps_[0]->describe(*fancy,VERB_EXTREME); }
+                #endif
                 //ZoltanDual
                 CoarseSolveExporters_[0] = Xpetra::ExportFactory<LO,GO,NO>::Build(k0->getMap(),GatheringMaps_[0]);
                 XMatrixPtr tmpCoarseMatrix = Xpetra::MatrixFactory<SC,LO,GO,NO>::Build(GatheringMaps_[0],k0->getGlobalMaxNumRowEntries());
                 tmpCoarseMatrix->doExport(*k0,*CoarseSolveExporters_[0],Xpetra::INSERT);
+                //printf( " setUpCoarseOperator :: ZoltanDual (exported)..\n" ); fflush(stdout);
 
                 for (UN j=1; j<GatheringMaps_.size(); j++) {
                     tmpCoarseMatrix->fillComplete();
@@ -277,11 +286,17 @@ namespace FROSch {
                     tmpCoarseMatrix = Xpetra::MatrixFactory<SC,LO,GO,NO>::Build(GatheringMaps_[j],k0->getGlobalMaxNumRowEntries());
                     tmpCoarseMatrix->doExport(*k0,*CoarseSolveExporters_[j],Xpetra::INSERT);
                 }
+                #if FROSCH_DEBUG_OUT
+                printf( " setUpCoarseOperator :: ZoltanDual (exported all)..\n" ); fflush(stdout);
+                #endif
 
                 tmpCoarseMatrix->fillComplete();
                 k0 = tmpCoarseMatrix;
 
             } else if (!DistributionList_->get("Type","linear").compare("Zoltan2")) {
+                #if FROSCH_DEBUG_OUT
+                printf( " setUpCoarseOperator :: Zoltan2..\n" ); fflush(stdout);
+                #endif
 #ifdef HAVE_SHYLU_DDFROSCH_ZOLTAN2
                 GatheringMaps_[0] = rcp_const_cast<XMap> (BuildUniqueMap(k0->getRowMap()));
                 CoarseSolveExporters_[0] = ExportFactory<LO,GO,NO>::Build(CoarseSpace_->getBasisMapUnique(),GatheringMaps_[0]);
@@ -316,6 +331,9 @@ namespace FROSch {
                 FROSCH_ASSERT(false,"Distribution Type unknown!");
             }
             FROSCH_DETAILTIMER_STOP(communicateCoarseMatrixTime);
+            #if FROSCH_DEBUG_OUT
+            printf( " setUpCoarseOperator :: check 1..\n" ); fflush(stdout);
+            #endif
 
             //------------------------------------------------------------------------------------------------------------------------
             // Matrix to the new communicator
@@ -538,6 +556,9 @@ namespace FROSch {
                 }
                 CoarseSolver_->compute();
             }
+            #if FROSCH_DEBUG_OUT
+            printf( " setUpCoarseOperator :: CHECK..\n" ); fflush(stdout);
+            #endif
         } else {
             FROSCH_WARNING("FROSch::CoarseOperator",this->Verbose_,"No coarse basis has been set up. Neglecting CoarseOperator.");
         }
@@ -547,18 +568,39 @@ namespace FROSch {
     template<class SC,class LO,class GO,class NO>
     typename CoarseOperator<SC,LO,GO,NO>::XMatrixPtr CoarseOperator<SC,LO,GO,NO>::buildCoarseMatrix()
     {
+        #if FROSCH_DEBUG_OUT
+        int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank); printf( " buildCoarseMatrix ..\n" ); fflush(stdout);
+        #endif
+        //{ if (myRank == 0) printf( " >> K_ <<\n" ); RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); this->K_->describe(*fancy,VERB_EXTREME); }
+        //{ if (myRank == 0) printf( " >> Phi_ <<\n" ); RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); Phi_->describe(*fancy,VERB_EXTREME); }
         FROSCH_DETAILTIMER_START_LEVELID(buildCoarseMatrixTime,"CoarseOperator::buildCoarseMatrix");
         XMatrixPtr k0;
-        RCP<ParameterList> mmParams(new ParameterList);
-        mmParams->set("compute global constants: temporaries", false);
         if (this->ParameterList_->get("Use Triple MatrixMultiply",false)) {
             k0 = MatrixFactory<SC,LO,GO,NO>::Build(CoarseSpace_->getBasisMapUnique(),as<LO>(0));
             TripleMatrixMultiply<SC,LO,GO,NO>::MultiplyRAP(*Phi_,true,*this->K_,false,*Phi_,false,*k0);
         } else {
             RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); //Phi_->describe(*fancy,VERB_EXTREME);
-            XMatrixPtr tmp = MatrixMatrix<SC,LO,GO,NO>::Multiply(*this->K_,false,*Phi_,false,*fancy,true,true,"",mmParams);
-            k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true,*tmp,false,*fancy,true,true,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
+
+            bool call_FillComplete_on_result = true;
+            bool doOptimizeStorage           = true;
+            RCP<ParameterList> mmParams;
+            bool computeGlobal = this->ParameterList_->get("Compute Global Constants",true);
+            printf( " !! buildCoarseMatrix %s computing Global constraints (was set to be false for Albany runs on Perlmutter) !!\n",(computeGlobal ? "with" : "without") );
+            if (!computeGlobal) {
+                mmParams = rcp(new ParameterList());
+                mmParams->set("compute global constants: temporaries", false);
+                //call_FillComplete_on_result = false;
+                //doOptimizeStorage = false;
+            }
+            XMatrixPtr tmp = MatrixMatrix<SC,LO,GO,NO>::Multiply(*this->K_,false,*Phi_,false,*fancy,
+                                                                 call_FillComplete_on_result,doOptimizeStorage,"",mmParams);
+            k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true,*tmp,false,*fancy,
+                                                     call_FillComplete_on_result,doOptimizeStorage,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
         }
+	#if FROSCH_DEBUG_OUT
+        fflush(stdout); MPI_Barrier(MPI_COMM_WORLD); printf( " buildCoarseMatrix done ..\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        { RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); k0->describe(*fancy,VERB_EXTREME); }
+        #endif
         return k0;
     }
 

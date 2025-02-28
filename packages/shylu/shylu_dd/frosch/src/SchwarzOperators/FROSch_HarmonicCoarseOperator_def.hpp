@@ -32,6 +32,10 @@ namespace FROSch {
     typename HarmonicCoarseOperator<SC,LO,GO,NO>::ConstXMapPtr HarmonicCoarseOperator<SC,LO,GO,NO>::computeCoarseSpace(CoarseSpacePtr coarseSpace)
     {
         FROSCH_DETAILTIMER_START_LEVELID(computeCoarseSpaceTime,"HarmonicCoarseOperator::computeCoarseSpace");
+        #if FROSCH_DEBUG_OUT
+        int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+        printf( " ~~ HarmonicCoarseOperator::computeCoarseSpace (%d) ~~\n",myRank); fflush(stdout);
+        #endif
 
         // Build local saddle point problem
         ConstXMapPtr repeatedMap;
@@ -68,6 +72,9 @@ namespace FROSch {
             repeatedMap = AssembleSubdomainMap(NumberOfBlocks_,DofsMaps_,DofsPerNode_);
             repeatedMatrix = ExtractLocalSubdomainMatrix(this->K_.getConst(),repeatedMap.getConst());
         }
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " ~~ done 1 (%d) ~~\n",myRank); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
 
         // Remove coupling blocks
         if (this->ParameterList_->get("Extensions: Remove Coupling",false)) {
@@ -77,6 +84,9 @@ namespace FROSch {
             TwoDArray<int> couplingIDsToRemove = this->ParameterList_->get("Extensions: Coupling IDs to Remove",TwoDArray<int>(0,0,0));
             repeatedMatrix = removeCouplingBetweenDofs(repeatedMatrix,repeatedMap,couplingIDsToRemove);
         }
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " ~~ done 2 (%d) ~~\n",myRank); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
 
         // Extract submatrices
         GOVec indicesGammaDofsAll(0);
@@ -92,6 +102,9 @@ namespace FROSch {
             }
             tmp += GammaDofs_[i].size()+IDofs_[i].size();
         }
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " ~~ done 3 (%d) ~~\n",myRank); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
 
         XMatrixPtr kII;
         XMatrixPtr kIGamma;
@@ -99,13 +112,21 @@ namespace FROSch {
         XMatrixPtr kGammaGamma;
 
         BuildSubmatrices(repeatedMatrix.getConst(),indicesIDofsAll(),kII,kIGamma,kGammaI,kGammaGamma);
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " ~~ done 4 (%d) ~~\n",myRank); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
 
         //Detect linear dependencies
         if (!this->ParameterList_->get("Skip DetectLinearDependencies",false)) {
             LOVecPtr linearDependentVectors = detectLinearDependencies(indicesGammaDofsAll(),this->K_->getRowMap(),this->K_->getRangeMap(),repeatedMap,this->ParameterList_->get("Phi: Dropping Threshold",1.e-8),this->ParameterList_->get("Phi: Orthogonalization Threshold",1.e-12));
-            // cout << this->MpiComm_->getRank() << " " << linearDependentVectors.size() << endl;
+            #if FROSCH_DEBUG_OUT
+            MPI_Barrier(MPI_COMM_WORLD); cout << this->MpiComm_->getRank() << " " << linearDependentVectors.size() << endl;
+            #endif
             AssembledInterfaceCoarseSpace_->zeroOutBasisVectors(linearDependentVectors());
         }
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " ~~ done 5 (%d) ~~\n",myRank); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
 
         // Build the saddle point harmonic extensions
         XMultiVectorPtr localCoarseSpaceBasis;
@@ -117,6 +138,9 @@ namespace FROSch {
             FROSCH_NOTIFICATION("FROSch::HarmonicCoarseOperator",this->Verbose_,"The Coarse Space is empty. No extensions are computed.");
         }
 
+        #if FROSCH_DEBUG_OUT
+        printf( "~~ HarmonicCoarseOperator::computeCoarseSpace done ~~\n"); fflush(stdout);
+        #endif
         return repeatedMap;
     }
 
@@ -622,6 +646,9 @@ namespace FROSch {
                 fillCompleteParams->set("No Nonlocal Changes", true);
                 phiGamma->fillComplete(basisMapUnique,rangeMap,fillCompleteParams);
             }
+            #if FROSCH_DEBUG_OUT
+            MPI_Barrier(MPI_COMM_WORLD); printf( " check 1\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            #endif
 
             //Compute Phi^T * Phi
             XMatrixPtr phiTPhi;
@@ -632,6 +659,9 @@ namespace FROSch {
               RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout));
               phiTPhi = MatrixMatrix<SC,LO,GO,NO>::Multiply(*phiGamma,true,*phiGamma,false,*fancy); //phiGamma->describe(*fancy,VERB_EXTREME); phiTPhi->describe(*fancy,VERB_EXTREME); //AssembledInterfaceCoarseSpace_->getBasisMap()->describe(*fancy,VERB_EXTREME);
             }
+            #if FROSCH_DEBUG_OUT
+            MPI_Barrier(MPI_COMM_WORLD); printf( " check 2\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            #endif
 
             // Extract local part of the matrix
             ConstXMatrixPtr repeatedPhiTPhi;
@@ -645,6 +675,9 @@ namespace FROSch {
             // repeatedPhiTPhi = MatrixFactory<SC,LO,GO,NO>::Build(AssembledInterfaceCoarseSpace_->getBasisMap());
             // XExportPtr exporter = ExportFactory<LO,GO,NO>::Build(rowMap,repeatedMap);
             // repeatedPhiTPhi->doExport(*phiTPhi,*exporter,INSERT);
+            #if FROSCH_DEBUG_OUT
+            MPI_Barrier(MPI_COMM_WORLD); printf( " check 3\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            #endif
 
             UN numRows = repeatedPhiTPhi->getRowMap()->getLocalNumElements();
             TSerialDenseMatrixPtr denseRepeatedPhiTPhi(new SerialDenseMatrix<LO,SC>(numRows,repeatedPhiTPhi->getColMap()->getLocalNumElements()));
@@ -660,6 +693,9 @@ namespace FROSch {
                 }
               }
             }
+            #if FROSCH_DEBUG_OUT
+            MPI_Barrier(MPI_COMM_WORLD); printf( " check 4\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            #endif
             // if (this->MpiComm_->getRank()==3) {
             //     for (LO i=0; i<denseRepeatedPhiTPhi->numRows(); i++) {
             //         for (LO j=0; j<denseRepeatedPhiTPhi->numCols(); j++) {
@@ -675,6 +711,9 @@ namespace FROSch {
             qRSolver->factor();
             qRSolver->formQ();
             qRSolver->formR();
+            #if FROSCH_DEBUG_OUT
+            MPI_Barrier(MPI_COMM_WORLD); printf( " check 5\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            #endif
 
             //Find rows of R approx. zero
             TSerialDenseMatrixPtr r = qRSolver->getR();
@@ -697,6 +736,9 @@ namespace FROSch {
             }
             linearDependentVectors.resize(tmp);
         }
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " >>> CHECK <<<\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
 
         FROSCH_DETAILTIMER_START_LEVELID(printStatisticsTime,"print statistics");
         // Statistics on linear dependencies
@@ -1226,9 +1268,11 @@ namespace FROSch {
                                                        this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
                                                        this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
                                                        this->columnsRecv, tpetraNewMat, replaceVals);
+                  #if FROSCH_DEBUG_OUT
                   //MPI_Barrier(MPI_COMM_WORLD); 
                   printf( " HarmonicCoarseOperator::extractLocalSubdomainMatrix_Symbolic::doImport done\n" );
                   //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix === \n\n"; tpetraNewMat->describe(*fancy,VERB_EXTREME); }
+                  #endif
               } else
               {
                  // importSquareMatrix_impor calls fillComplete (not anymore, keep it nonLocal to replace in importSquareMatrix_import for Compute)
@@ -1247,9 +1291,11 @@ namespace FROSch {
             // fill in column indexes
             ExtractLocalSubdomainMatrix_Symbolic(this->coarseSubdomainMatrix_, // input
                                                  this->coarseLocalSubdomainMatrix_); // output
+             #if FROSCH_DEBUG_OUT
             //MPI_Barrier(MPI_COMM_WORLD); 
             if(repeatedMap->getComm()->getRank()==0) printf( " FROSch_HarmonicCoarseOperator::ExtractLocalSubdomainMatrix_Symbolic (done)\n" ); fflush(stdout); 
             //MPI_Barrier(MPI_COMM_WORLD);
+            #endif
 
             // turn flag on
             this->coarseExtractLocalSubdomainMatrix_Symbolic_Done_ = true;
@@ -1280,7 +1326,7 @@ namespace FROSch {
             BuildSubmatrices(repeatedMatrix.getConst(),indicesIDofsAll(),kII,kIGamma,kGammaI,kGammaGamma);
 
             // warmup SpMVa
-            #if 1
+            #if defined(KOKKOS_ENABLE_CUDA)
             (void)KokkosKernels::Impl::CusparseSingleton::singleton();
             #else
             XMultiVectorPtr mVtmp = MultiVectorFactory<SC,LO,GO,NO>::Build(kII->getRowMap(),1/*AssembledInterfaceCoarseSpace_->getBasisMap()->getLocalNumElements()*/);

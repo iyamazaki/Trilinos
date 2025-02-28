@@ -11,7 +11,7 @@
 #define _FROSCH_ALGEBRAICOVERLAPPINGOPERATOR_DEF_HPP
 
 #include <FROSch_AlgebraicOverlappingOperator_decl.hpp>
-
+//#define FROSCH_DEBUG_OUT
 
 namespace FROSch {
 
@@ -84,7 +84,13 @@ namespace FROSch {
         bool reuseSymbolicFactorization = this->ParameterList_->get("Reuse: Symbolic Factorization",true);
         if (this->ExtractLocalSubdomainMatrix_Symbolic_Done_ && reuseSymbolicFactorization) {
             // if reuseSymbolicFactorization=false, we call initializeSubdomainSolver is called during compute
+            #if FROSCH_DEBUG_OUT
+            printf( " initializeSubdomainSolver\n" ); fflush(stdout);
+            #endif
             this->initializeSubdomainSolver(this->localSubdomainMatrix_);
+            #if FROSCH_DEBUG_OUT
+            printf( " initializeSubdomainSolver done\n" ); fflush(stdout);
+            #endif
         }
 
         this->IsInitialized_ = true;
@@ -97,7 +103,13 @@ namespace FROSch {
     {
         FROSCH_TIMER_START_LEVELID(computeTime,"AlgebraicOverlappingOperator::compute");
         FROSCH_ASSERT(this->IsInitialized_,"ERROR: AlgebraicOverlappingOperator has to be initialized before calling compute()");
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " == AlgebraicOverlappingOperator::compute ==\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
         this->computeOverlappingOperator();
+        #if FROSCH_DEBUG_OUT
+        MPI_Barrier(MPI_COMM_WORLD); printf( " == AlgebraicOverlappingOperator::compute done ==\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        #endif
         return 0; // RETURN VALUE!!!
     }
 
@@ -265,6 +277,9 @@ namespace FROSch {
 #define USE_CUSTOM_IMPORT
 #ifdef  USE_CUSTOM_IMPORT
             {
+                #if FROSCH_DEBUG_OUT
+                printf(" calling AlgebraicOverlappingOperator::updateLocalOverlappingMatrices\n" );
+                #endif
                 ExtractLocalSubdomainMatrix_Compute(this->numTerms, this->locCount,
                                                     this->sourceSize,this->targetSize,
                                                     this->rowCount,
@@ -278,6 +293,9 @@ namespace FROSch {
                                                     this->K_,
                                                     this->subdomainMatrix_,
                                                     this->localSubdomainMatrix_);
+                #if FROSCH_DEBUG_OUT
+                printf(" calling AlgebraicOverlappingOperator::updateLocalOverlappingMatrices done\n" );
+                #endif
             }
 #else
             {
@@ -300,7 +318,13 @@ namespace FROSch {
     int AlgebraicOverlappingOperator<SC,LO,GO,NO>::updateLocalOverlappingMatrices_Symbolic()
     {
         FROSCH_DETAILTIMER_START_LEVELID(updateLocalOverlappingMatrices_SymbolicTime, "AlgebraicOverlappingOperator::updateLocalOverlappingMatrices_Symbolic");
+        #if FROSCH_DEBUG_OUT
+        printf( " updateLocalOverlappingMatrices_Symbolic\n" ); fflush(stdout);
+        #endif
         this->extractLocalSubdomainMatrix_Symbolic();
+        #if FROSCH_DEBUG_OUT
+        printf( " updateLocalOverlappingMatrices_Symbolic done\n" ); fflush(stdout);
+        #endif
         return 0;
     }
 
@@ -366,7 +390,7 @@ namespace FROSch {
                                                  this->localSubdomainMatrix_);   // output
             //MPI_Barrier(MPI_COMM_WORLD);
             if (this->subdomainMatrix_->getRowMap()->getComm()->getRank() == 0) printf( " FROSch_AlgebraicOverlappingOperator::ExtractLocalSubdomainMatrix_Symbolic (done)\n" ); fflush(stdout); 
-            MPI_Barrier(MPI_COMM_WORLD);
+            //MPI_Barrier(MPI_COMM_WORLD);
             // turn flag on
             this->ExtractLocalSubdomainMatrix_Symbolic_Done_ = true;
         }

@@ -157,16 +157,16 @@ namespace FROSch {
                                              RCP<      Matrix<SC,LO,GO,NO> > localSubdomainMatrix)
     {
         FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_compute, "ExtractLocalSubdomainMatrix_Compute(Custom)");
-        const SC zero = ScalarTraits<SC>::zero();
         auto subdomainRowMap = subdomainMatrix->getRowMap();
 
 	if (subdomainRowMap->getComm()->getRank() == 0) {
           printf( " %d: ExtractLocalSubdomainMatrix_Compute(Custom, %s, %d,%d)\n",subdomainRowMap->getComm()->getRank(),(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global"),subdomainMatrix->getLocalNumRows(),localSubdomainMatrix->getLocalNumRows() );
 	}
         //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); subdomainMatrix->fillComplete(); if(subdomainRowMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix (Before) === \n\n"; subdomainMatrix->describe(*fancy,VERB_EXTREME); }
+        //const SC zero = ScalarTraits<SC>::zero();
         //subdomainMatrix->setAllToScalar(zero);
         {
-            //MPI_Barrier(MPI_COMM_WORLD); printf( " Start Import\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+            //MPI_Barrier(MPI_COMM_WORLD); if (subdomainRowMap->getComm()->getRank() == 0) printf( " Start Import\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
             #if 1
             bool extract_local = false;
             const CrsMatrixWrap<SC,LO,GO,NO>& crsSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*localSubdomainMatrix);
@@ -200,8 +200,8 @@ namespace FROSch {
 
               }
             }
+            //MPI_Barrier(MPI_COMM_WORLD); if (subdomainRowMap->getComm()->getRank() == 0) printf( " Done Import\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
             if (extract_local) {
-                //MPI_Barrier(MPI_COMM_WORLD); printf( " Done Import\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
                 //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); subdomainMatrix->fillComplete(); if(subdomainRowMap->getComm()->getRank()==2) std::cout << "\n === SubMatrix === \n\n"; subdomainMatrix->describe(*fancy,VERB_EXTREME); }
                 //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); if(subdomainRowMap->getComm()->getRank()==2){std::cout << "\n === LocMatrix === \n\n"; localSubdomainMatrix->describe(*fancy,VERB_EXTREME);} }
                 //MPI_Barrier(MPI_COMM_WORLD);
@@ -300,7 +300,7 @@ namespace FROSch {
             }
             MPI_Barrier(MPI_COMM_WORLD);
         }*/
-        //MPI_Barrier(MPI_COMM_WORLD);
+        //printf( " Barrier (%d) ..\n",subdomainRowMap->getComm()->getRank() ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 	if (subdomainRowMap->getComm()->getRank() == 0) {
           printf( " ExtractLocalSubdomainMatrix_Compute(Custom, %s) done\n",(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global") ); fflush(stdout);
 	}

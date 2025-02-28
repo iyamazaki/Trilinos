@@ -509,7 +509,7 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
             valuesVec.resize(0);
             const GO globalRow = ownedRowGIDs[i];
             const LO localRowSource = inputRowMap->getLocalElement(globalRow);
-            const LO localRowTarget = outputRowMap->getLocalElement(globalRow);
+            //const LO localRowTarget = outputRowMap->getLocalElement(globalRow);
             //if (inputColMap->getComm()->getRank() == 2) printf( " localRow : %d -> %d,%d\n",globalRow,localRowSource,localRowTarget);
             inputMatrix->getLocalRowView(localRowSource, indices, values);
             const int sz = indices.size();

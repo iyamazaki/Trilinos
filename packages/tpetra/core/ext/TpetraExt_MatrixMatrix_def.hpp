@@ -95,6 +95,7 @@ void Multiply(
   Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply-1");
   Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
 
+  //printf( " MM:Multiply 1\n" );
 #ifdef HAVE_TPETRA_MMM_TIMINGS
   std::string prefix_mmm = std::string("TpetraExt ") + label + std::string(": ");
   using Teuchos::TimeMonitor;
@@ -161,6 +162,7 @@ void Multiply(
     Bprime = rcpFromRef(B);
   }
 }
+  //MPI_Barrier(MPI_COMM_WORLD); printf( " MM:Multiply 2\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 
   // Check size compatibility
   global_size_t numACols = A.getDomainMap()->getGlobalNumElements();
@@ -203,6 +205,7 @@ void Multiply(
   RCP<const map_type> targetMap_A = Aprime->getRowMap();
   RCP<const map_type> targetMap_B = Bprime->getRowMap();
 
+  //MPI_Barrier(MPI_COMM_WORLD); printf( " MM:Multiply 3\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 {
   Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::import");
   Teuchos::TimeMonitor LocTimer(*locTimer_);
@@ -236,6 +239,7 @@ void Multiply(
 }
 
   // Call the appropriate method to perform the actual multiplication.
+  //MPI_Barrier(MPI_COMM_WORLD); printf( " MM:Multiply 4\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 {
   if (use_optimized_ATB) {
     Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::compute-1");
@@ -263,6 +267,7 @@ void Multiply(
     MMdetails::mult_A_B(Aview, Bview, crsmat, label,params);
   }
 }
+  //MPI_Barrier(MPI_COMM_WORLD); printf( " MM:Multiply 5\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 
 #ifdef HAVE_TPETRA_MMM_TIMINGS
   TimeMonitor MM4(*TimeMonitor::getNewTimer(prefix_mmm + std::string("MMM All FillComplete")));
@@ -276,6 +281,7 @@ void Multiply(
     // in which case the domain-map of A will be used.
     C.fillComplete(Bprime->getDomainMap(), Aprime->getRangeMap());
   }
+  //MPI_Barrier(MPI_COMM_WORLD); printf( " MM:Multiply 6\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 }
 
 //
@@ -1859,9 +1865,12 @@ void mult_A_B_newmatrix(
 {
 Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_A_B_newmatrix::compute");
 Teuchos::TimeMonitor LocTimer(*locTimer_);
-  if (true)
+  #if defined(KOKKOS_ENABLE_CUDA)
+  if (true) {
+    printf( " !! calling MM::Multiply on Host !!\n" );
     KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,lo_view_t>::mult_A_B_newmatrix_kernel_wrapper_host(Aview,Bview,targetMapToOrigRow,targetMapToImportRow,Bcol2Ccol,Icol2Ccol,C,Cimport,label,params);
-  else
+  } else
+  #endif
     KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,lo_view_t>::mult_A_B_newmatrix_kernel_wrapper(Aview,Bview,targetMapToOrigRow,targetMapToImportRow,Bcol2Ccol,Icol2Ccol,C,Cimport,label,params);
 }
 
@@ -2295,7 +2304,6 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,LocalOrdinalViewType>
                                                                                                Teuchos::RCP<const Import<LocalOrdinal,GlobalOrdinal,Node> > Cimport,
                                                                                                const std::string& label,
                                                                                                const Teuchos::RCP<Teuchos::ParameterList>& params) {
-#if 0
 #if 1//def HAVE_TPETRA_MMM_TIMINGS
   std::string prefix_mmm = std::string("TpetraExt ") + label + std::string(": ");
   using Teuchos::TimeMonitor;
@@ -2499,7 +2507,6 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,LocalOrdinalViewType>
   MM2 = Teuchos::null;
 #endif
 
-#endif
 }
 #endif
 
