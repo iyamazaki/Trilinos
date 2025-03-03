@@ -788,12 +788,14 @@ FILE *fp = nullptr;
     _nrhs = 1;
     Kokkos::resize(_buf, max(_bufsize_factorize, _bufsize_solve));
     track_alloc(_buf.span() * sizeof(value_type));
+#ifdef TACHO_DEBUG
 #ifdef TACHO_USE_BARRIER
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
     printf( " done alloc buf (%d,%d)\n",_bufsize_factorize,_bufsize_solve ); fflush(stdout);
 #ifdef TACHO_USE_BARRIER
     MPI_Barrier(MPI_COMM_WORLD);
+#endif
 #endif
     // pre-allocate work
     _worksize = 0;
@@ -831,12 +833,14 @@ FILE *fp = nullptr;
     // create streams
     createStream(nstreams, verbose);
     stat.t_init = timer.seconds();
+#ifdef TACHO_DEBUG
 #ifdef TACHO_USE_BARRIER
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
     printf( " done alloc work (%dx%d, %d)\n",_info.max_supernode_size,_info.max_num_cols,worksize ); fflush(stdout);
 #ifdef TACHO_USE_BARRIER
     MPI_Barrier(MPI_COMM_WORLD);
+#endif
 #endif
 
     if (verbose) {
@@ -1696,17 +1700,17 @@ FILE *fp = nullptr;
                 functor.setRange(p, p+1);              // just this supernode
                 functor.setBufferOffset(p-pbeg);       // offsett for buffer
                 functor.setParallelDeviceUpdate(true); // enable update
-        //Kokkos::fence(); tic.reset();
+                //Kokkos::fence(); tic.reset();
                 Kokkos::parallel_for("update factor", policy_update, functor);
-        //Kokkos::fence(); device_time = timer.seconds(); update_time += tic.seconds();
-        //printf( " (%d x %d) : %e / %e (%d,%d)\n",m,n,update_time,device_time,team_size,vector_size );
+                //Kokkos::fence(); device_time = timer.seconds(); update_time += tic.seconds();
+                //printf( " (%d x %d) : %e / %e (%d,%d)\n",m,n,update_time,device_time,team_size,vector_size );
               }
             }
           }
         }
       }
     }
-    printf("\n");
+    //printf("\n");
     functor.setBufferOffset(0);
     functor.setRange(pbeg, pend);
     functor.setParallelDeviceUpdate(_parallel_device_update);

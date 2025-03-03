@@ -1867,7 +1867,8 @@ Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("
 Teuchos::TimeMonitor LocTimer(*locTimer_);
   #if defined(KOKKOS_ENABLE_CUDA)
   if (true) {
-    printf( " !! calling MM::Multiply on Host !!\n" );
+    int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    if (myRank == 0) printf( " !! calling MM::Multiply on Host !!\n" );
     KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,lo_view_t>::mult_A_B_newmatrix_kernel_wrapper_host(Aview,Bview,targetMapToOrigRow,targetMapToImportRow,Bcol2Ccol,Icol2Ccol,C,Cimport,label,params);
   } else
   #endif

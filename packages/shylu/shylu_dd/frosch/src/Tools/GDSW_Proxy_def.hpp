@@ -404,7 +404,6 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
 
 #if defined(REPLACE_LOCAL_MATRIX_ON_DEVICE)
             using execution_space = typename tMap::local_map_type::execution_space;
-
             using local_map_device_type = typename tCrsMatrix::map_type::local_map_type;
             using local_ptrs_device_type = typename tCrsMatrix::row_ptrs_device_view_type;
             using local_inds_device_type = typename tCrsMatrix::local_inds_device_view_type;
@@ -415,8 +414,8 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
             {
                 auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (replaceLocalVals owned)");
                 Teuchos::TimeMonitor CaseTimer( *caseTimer );
-                TpetraFunctor<local_map_device_type, local_ptrs_device_const, local_inds_device_const, local_vals_device_const,
-                                                     local_ptrs_device_type, local_inds_device_type, local_vals_device_type>
+                TpetraFunctor_insert_with_map<local_map_device_type, local_ptrs_device_const, local_inds_device_const, local_vals_device_const,
+                                                                     local_ptrs_device_type,  local_inds_device_type,  local_vals_device_type>
                         tpetra_functor(localInputRowMap, localInputColMap, localOutputRowMap,
                                        localInputPtrs_dev, localInputInds_dev, localInputVals_dev,
                                        localOutputPtrs_dev, localOutputInds_dev, localOutputVals_dev);
@@ -479,23 +478,61 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
         // ----------------------------------- //
         // insert ** RECEIVED ** contributions //
         // ----------------------------------- //
-        size_t countTerms = 0;
-        for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
-            const LO localRow = localRowsRecv[j];
-            indicesVec.resize(rowCount[localRow]);
-            valuesVec.resize(rowCount[localRow]);
-            for (size_t k=0; k<rowCount[localRow]; k++) {
-                indicesVec[k] = columnsRecv[countTerms];
-                valuesVec[k] = valuesRecv[countTerms++];
+        int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+        if (false) {
+            auto localOutputPtrs_h = outputMatrix->getLocalRowPtrsHost();
+            auto localOutputInds_h = outputMatrix->getLocalIndicesHost();
+            auto localOutputVals_h = outputMatrix->getLocalValuesHost(Tpetra::Access::OverwriteAll);
+	    // NOTE: 
+	    // 1) create a map from valuesRecv to localOutputVals
+	    // 2) copy valuesRecv to GPU
+	    // 3) just copy valuesRecv to localOutputVals with the map
+            size_t countTerms = 0;
+            for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
+                const LO localRow = localRowsRecv[j];
+		//printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
+                for (size_t i=0; i<rowCount[localRow]; i++) {
+                    for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
+                        if (localOutputInds_h(k) == columnsRecv[countTerms]) {
+                            localOutputVals_h(k) = valuesRecv[countTerms];
+                            countTerms++;
+			    break;
+                        }
+                    }
+                }
+                /*if (myRank == 0) {
+                    printf("[\n");
+                    for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
+                        printf( " %d %d\n",localRow,localOutputInds_h(k) );
+                    }
+                    printf("[\n");
+                    for (size_t k=0; k<rowCount[localRow]; k++) {
+                        printf( " %d %d %e\n",localRow,columnsRecv[countTerms],valuesRecv[countTerms] );
+                        countTerms++;
+                    }
+                    printf("]\n");
+                }*/
             }
-            {
-                auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (replaceLocalVals received)");
-                Teuchos::TimeMonitor CaseTimer( *caseTimer );
+        } else
+        {
+            auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (replaceLocalVals received)");
+            Teuchos::TimeMonitor CaseTimer( *caseTimer );
+            size_t countTerms = 0;
+            for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
+                const LO localRow = localRowsRecv[j];
+                indicesVec.resize(rowCount[localRow]);
+                valuesVec.resize(rowCount[localRow]);
+                for (size_t k=0; k<rowCount[localRow]; k++) {
+                    indicesVec[k] = columnsRecv[countTerms];
+                    valuesVec[k] = valuesRecv[countTerms++];
+                }
                 outputMatrix->replaceLocalValues(localRow, 
                                                  Teuchos::ArrayView<const LO>(indicesVec),
                                                  Teuchos::ArrayView<const SC>(valuesVec));
             }
         }
+	//if (myRank == 1)
+	//{ printf( " >> outputMatrix <<\n" ); RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(std::cout)); outputMatrix->describe(*fancy,VERB_EXTREME); }
     } else {
         // First time inserting column indices (and numberical values), (from symbolic)
         auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (insert)");

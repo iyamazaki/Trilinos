@@ -585,7 +585,9 @@ namespace FROSch {
             bool doOptimizeStorage           = true;
             RCP<ParameterList> mmParams;
             bool computeGlobal = this->ParameterList_->get("Compute Global Constants",true);
-            printf( " !! buildCoarseMatrix %s computing Global constraints (was set to be false for Albany runs on Perlmutter) !!\n",(computeGlobal ? "with" : "without") );
+            if (this->MpiComm_->getRank() == 0) {
+              printf( " !! buildCoarseMatrix %s computing Global constraints (was set to be false for Albany runs on Perlmutter) !!\n",(computeGlobal ? "with" : "without") );
+            }
             if (!computeGlobal) {
                 mmParams = rcp(new ParameterList());
                 mmParams->set("compute global constants: temporaries", false);

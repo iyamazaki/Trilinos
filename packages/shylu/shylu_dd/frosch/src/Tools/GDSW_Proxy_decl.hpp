@@ -43,35 +43,35 @@ public:
     ~TpetraFunctions() = default;
 
     template<class local_map_device_type,
-	    class local_ptrs_device_const, class local_inds_device_const, class local_vals_device_const,
-	    class local_ptrs_device_type,  class local_inds_device_type,  class local_vals_device_type>
-    struct TpetraFunctor
+            class local_ptrs_device_const, class local_inds_device_const, class local_vals_device_const,
+            class local_ptrs_device_type,  class local_inds_device_type,  class local_vals_device_type>
+    struct TpetraFunctor_insert_with_map
     {
-        TpetraFunctor()
+        TpetraFunctor_insert_with_map()
         {}
 
-        TpetraFunctor(local_map_device_type inputRowMap,
-		      local_map_device_type inputColMap,
-		      local_map_device_type outputRowMap,
-                      local_ptrs_device_const     localInputPtrs,
-                      local_inds_device_const     localInputInds,
-                      local_vals_device_const     localInputVals,
-                      local_ptrs_device_const    localOutputPtrs,
-                      local_inds_device_const    localOutputInds) :
+        TpetraFunctor_insert_with_map(local_map_device_type inputRowMap,
+                                      local_map_device_type inputColMap,
+                                      local_map_device_type outputRowMap,
+                                      local_ptrs_device_const     localInputPtrs,
+                                      local_inds_device_const     localInputInds,
+                                      local_vals_device_const     localInputVals,
+                                      local_ptrs_device_const    localOutputPtrs,
+                                      local_inds_device_const    localOutputInds) :
         inputRowMap_ (inputRowMap),
         inputColMap_ (inputColMap),
         outputRowMap_ (outputRowMap)
-	{}
+        {}
 
-        TpetraFunctor(local_map_device_type inputRowMap,
-		      local_map_device_type inputColMap,
-		      local_map_device_type outputRowMap,
-                      local_ptrs_device_const     localInputPtrs,
-                      local_inds_device_const     localInputInds,
-                      local_vals_device_const     localInputVals,
-                      local_ptrs_device_const    localOutputPtrs,
-                      local_inds_device_const    localOutputInds,
-                      local_vals_device_type     localOutputVals) :
+        TpetraFunctor_insert_with_map(local_map_device_type inputRowMap,
+                                      local_map_device_type inputColMap,
+                                      local_map_device_type outputRowMap,
+                                      local_ptrs_device_const     localInputPtrs,
+                                      local_inds_device_const     localInputInds,
+                                      local_vals_device_const     localInputVals,
+                                      local_ptrs_device_const    localOutputPtrs,
+                                      local_inds_device_const    localOutputInds,
+                                      local_vals_device_type     localOutputVals) :
         inputRowMap_ (inputRowMap),
         inputColMap_ (inputColMap),
         outputRowMap_ (outputRowMap),
@@ -86,7 +86,7 @@ public:
         KOKKOS_INLINE_FUNCTION
         void operator()(const int i) const {
             //LO ILO = Teuchos::OrdinalTraits<LO>::invalid();
-	    GO globalIndex_i = inputRowMap_.getGlobalElement(i);
+            GO globalIndex_i = inputRowMap_.getGlobalElement(i);
             LO localRowTarget = outputRowMap_.getLocalElement(globalIndex_i);
             for (size_t j=localInputPtrs_(i); j<localInputPtrs_(i+1); j++) {
                 LO colIndex_In = localInputInds_(j);
@@ -112,11 +112,11 @@ public:
                 localOutputVals_dev[k] = localInputVals_dev[j];
             }
         }
-	int localIndex_j;
+        int localIndex_j;
         int j;*/
-	local_map_device_type inputRowMap_;
-	local_map_device_type inputColMap_;
-	local_map_device_type outputRowMap_;
+        local_map_device_type inputRowMap_;
+        local_map_device_type inputColMap_;
+        local_map_device_type outputRowMap_;
 
         local_ptrs_device_const localInputPtrs_;
         local_inds_device_const localInputInds_;
@@ -125,6 +125,13 @@ public:
         local_ptrs_device_type localOutputPtrs_;
         local_inds_device_type localOutputInds_;
         local_vals_device_type localOutputVals_;
+    };
+
+    template<class local_map_device_type,
+            class local_ptrs_device_const, class local_inds_device_const, class local_vals_device_const,
+            class local_ptrs_device_type,  class local_inds_device_type,  class local_vals_device_type>
+    struct TpetraFunctor_insert
+    {
     };
 
   // --------------------------------------------------------------------------- //
