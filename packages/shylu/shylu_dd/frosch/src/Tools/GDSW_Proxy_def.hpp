@@ -250,9 +250,6 @@ communicateMatrixData_build(RCP<const tCrsMatrix> inputMatrix,
                                  Kokkos::View<LO*, Kokkos::HostSpace>(columnsRecv.data(), columnsRecv.size()),
                                  Teuchos::ArrayView<const size_t>(targetSize));
     
-    using KSX = typename Kokkos::ArithTraits<SC>::val_type;
-    KSX* valuesRecv_K = reinterpret_cast<KSX*>(valuesRecv.data());
-    const size_t sizeRecv = valuesRecv.size();
     RCP<const tMap> rowMap1to1 = inputMatrix->getRowMap();
     const size_t numRows = rowMap->getLocalNumElements();
     rowCount.resize(numRows);
@@ -479,7 +476,7 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
         // insert ** RECEIVED ** contributions //
         // ----------------------------------- //
         int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-        if (false) {
+        if (true) {
             auto localOutputPtrs_h = outputMatrix->getLocalRowPtrsHost();
             auto localOutputInds_h = outputMatrix->getLocalIndicesHost();
             auto localOutputVals_h = outputMatrix->getLocalValuesHost(Tpetra::Access::OverwriteAll);
