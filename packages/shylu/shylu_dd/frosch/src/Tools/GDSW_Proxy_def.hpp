@@ -12,7 +12,7 @@
 #include "GDSW_Proxy_decl.hpp"
 #include "Kokkos_ArithTraits.hpp"
 #include "Tpetra_Details_PackTraits.hpp"
-
+#include "MatrixMarket_Tpetra.hpp"
 
 namespace FROSch {
 
@@ -479,40 +479,57 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
         // insert ** RECEIVED ** contributions //
         // ----------------------------------- //
         int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-        if (false) {
+        if (true) {
+            auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (replaceLocalVals_localView received)");
+            Teuchos::TimeMonitor CaseTimer( *caseTimer );
+
             auto localOutputPtrs_h = outputMatrix->getLocalRowPtrsHost();
             auto localOutputInds_h = outputMatrix->getLocalIndicesHost();
             auto localOutputVals_h = outputMatrix->getLocalValuesHost(Tpetra::Access::OverwriteAll);
-	    // NOTE: 
-	    // 1) create a map from valuesRecv to localOutputVals
-	    // 2) copy valuesRecv to GPU
-	    // 3) just copy valuesRecv to localOutputVals with the map
-            size_t countTerms = 0;
+            // NOTE:
+            // 1) create a map from valuesRecv to localOutputVals
+            // 2) copy valuesRecv to GPU
+            // 3) just copy valuesRecv to localOutputVals with the map
+            size_t countTerms = valuesRecv.size();
+            using local_ptrs_device_type = typename tCrsMatrix::crs_graph_type::offset_device_view_type;
+	    local_ptrs_device_type mapRecvToLocal("mapRecvToLocal",countTerms);
+	    auto mapRecvToLocal_h = Kokkos::create_mirror_view(mapRecvToLocal);
+            countTerms = 0;
             for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
                 const LO localRow = localRowsRecv[j];
-		//printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
+                //printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
+                for (size_t i=0; i<rowCount[localRow]; i++) {
+                    for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
+                        if (localOutputInds_h(k) == columnsRecv[countTerms]) {
+                            mapRecvToLocal_h(countTerms) = k;
+                            countTerms++;
+                            break;
+                        }
+                    }
+		}
+	    }
+	    //Kokkos::deep_copy(mapRecvToLocal, mapRecvToLocal_h);
+#if 1
+            countTerms = valuesRecv.size();
+            for (size_t i=0; i<countTerms; i++) {
+                localOutputVals_h(mapRecvToLocal_h(i)) = valuesRecv[i];
+	    }
+#else
+            countTerms = 0;
+            for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
+                const LO localRow = localRowsRecv[j];
+                //printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
                 for (size_t i=0; i<rowCount[localRow]; i++) {
                     for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
                         if (localOutputInds_h(k) == columnsRecv[countTerms]) {
                             localOutputVals_h(k) = valuesRecv[countTerms];
                             countTerms++;
-			    break;
+                            break;
                         }
                     }
                 }
-                /*if (myRank == 0) {
-                    printf("[\n");
-                    for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
-                        printf( " %d %d\n",localRow,localOutputInds_h(k) );
-                    }
-                    printf("[\n");
-                    for (size_t k=0; k<rowCount[localRow]; k++) {
-                        printf( " %d %d %e\n",localRow,columnsRecv[countTerms],valuesRecv[countTerms] );
-                        countTerms++;
-                    }
-                    printf("]\n");
-                }*/
             }
+#endif
         } else
         {
             auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (replaceLocalVals received)");
@@ -531,8 +548,17 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
                                                  Teuchos::ArrayView<const SC>(valuesVec));
             }
         }
-	//if (myRank == 1)
-	//{ printf( " >> outputMatrix <<\n" ); RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(std::cout)); outputMatrix->describe(*fancy,VERB_EXTREME); }
+        //if (myRank == 1)
+        //{ printf( " >> outputMatrix <<\n" ); RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(std::cout)); outputMatrix->describe(*fancy,VERB_EXTREME); }
+        /*{
+            printf( " >> outputMatrix(%d) <<\n",myRank );
+            typedef Tpetra::MatrixMarket::Writer<tCrsMatrix> writer_type;
+            char filename[200];
+            sprintf(filename,"A%d.dat",myRank);
+            writer_type::writeSparseFile (filename, outputMatrix);
+            printf( " >> outputMatrix(%d) done <<\n",myRank );
+            MPI_Barrier(MPI_COMM_WORLD); exit(0);
+        }*/
     } else {
         // First time inserting column indices (and numberical values), (from symbolic)
         auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (insert)");

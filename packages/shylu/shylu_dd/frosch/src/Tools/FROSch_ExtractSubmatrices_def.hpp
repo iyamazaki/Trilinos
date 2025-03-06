@@ -71,7 +71,7 @@ namespace FROSch {
              //&& !subdomainMatrix->isGloballyIndexed()
            ) {
 	    if (subdomainMap->getComm()->getRank() == 0) {
-              printf( " Extract-locally(%d with %d)\n",subdomainMap->getComm()->getRank(),subdomainMap->getLocalNumElements() );
+              printf( " Extract-locally(%d with %d)\n",subdomainMap->getComm()->getRank(),int(subdomainMap->getLocalNumElements()) );
 	    }
             for (unsigned i=0; i<subdomainMap->getLocalNumElements(); i++) {
                 ArrayView<const LO> indices;
@@ -97,7 +97,7 @@ namespace FROSch {
             }
         } else {
 	    if (subdomainMap->getComm()->getRank() == 0) {
-              printf( " Extract-Globally(%d with %d)\n",subdomainMap->getComm()->getRank(),subdomainMap->getLocalNumElements() );
+              printf( " Extract-Globally(%d with %d)\n",subdomainMap->getComm()->getRank(),int(subdomainMap->getLocalNumElements()) );
 	    }
             for (unsigned i=0; i<subdomainMap->getLocalNumElements(); i++) {
                 ArrayView<const GO> indices;
@@ -160,7 +160,7 @@ namespace FROSch {
         auto subdomainRowMap = subdomainMatrix->getRowMap();
 
 	if (subdomainRowMap->getComm()->getRank() == 0) {
-          printf( " %d: ExtractLocalSubdomainMatrix_Compute(Custom, %s, %d,%d)\n",subdomainRowMap->getComm()->getRank(),(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global"),subdomainMatrix->getLocalNumRows(),localSubdomainMatrix->getLocalNumRows() );
+          printf( " %d: ExtractLocalSubdomainMatrix_Compute(Custom, %s, %d,%d)\n",subdomainRowMap->getComm()->getRank(),(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global"),int(subdomainMatrix->getLocalNumRows()),int(localSubdomainMatrix->getLocalNumRows()) );
 	}
         //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); subdomainMatrix->fillComplete(); if(subdomainRowMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix (Before) === \n\n"; subdomainMatrix->describe(*fancy,VERB_EXTREME); }
         //const SC zero = ScalarTraits<SC>::zero();
