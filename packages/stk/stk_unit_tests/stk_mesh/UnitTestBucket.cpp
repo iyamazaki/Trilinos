@@ -125,7 +125,7 @@ TEST(UnitTestingOfBucket, testBucket)
     std::stringstream  out1_str;
     out1_str << (*b1);
     bool equal = (gold1 == out1_str.str());
-    ASSERT_TRUE(equal);
+    ASSERT_TRUE(equal)<<"expected str="<<gold1<<", but actual="<<out1_str.str();
   }
 
   // Second, update state of bucket until circular cue is filled
@@ -133,7 +133,7 @@ TEST(UnitTestingOfBucket, testBucket)
     /* Need to set some data in state, rotate look for it, rotate 3 more times
        and look for it again */
     for ( size_t i = 0 ; i != 10 ; ++i )
-      bulk.update_field_data_states ();
+      bulk.update_field_data_states();
   }
 
   // next, check has_superset (...) and membership functions
@@ -281,7 +281,7 @@ TEST_F(BucketHex, testing_valid_permutation_on_various_ranks)
 
     bulk.modification_begin();
 
-    entities[stk::topology::CONSTRAINT_RANK] = bulk.declare_constraint(id);
+    entities[stk::topology::CONSTRAINT_RANK] = bulk.declare_entity(stk::topology::CONSTRAINT_RANK, id, meta.universal_part());
 
     enum node { FIRST_NODE=0, SECOND_NODE=1, THIRD_NODE=2, FOURTH_NODE=3};
 

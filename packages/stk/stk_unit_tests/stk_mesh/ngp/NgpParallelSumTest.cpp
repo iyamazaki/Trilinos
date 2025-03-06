@@ -595,7 +595,7 @@ NGP_TEST_F(NgpCommunicateFieldData, simpleVersion_takesBulkData_noSyncToDeviceAf
   check_field_on_device<double>(ngpMesh, deviceUserField, deviceGoldValues);
 }
 
-NGP_TEST_F(NgpParallelSum, DISABLED_DeviceMPIVersion)
+NGP_TEST_F(NgpParallelSum, DeviceMPIVersion)
 {
   if (!stk::have_device_aware_mpi()) { GTEST_SKIP(); }
 
@@ -614,7 +614,7 @@ NGP_TEST_F(NgpParallelSum, DISABLED_DeviceMPIVersion)
   stk::mesh::NgpField<double> & deviceUserField = stk::mesh::get_updated_ngp_field<double>(userField);
   stk::mesh::NgpField<double> & deviceGoldValues = stk::mesh::get_updated_ngp_field<double>(goldValues);
 
-  stk::mesh::parallel_sum_device_mpi<double>(ngpMesh, std::vector<stk::mesh::NgpField<double>*>{&deviceUserField});
+  stk::mesh::parallel_sum(ngpMesh, std::vector<stk::mesh::NgpField<double>*>{&deviceUserField});
 
   check_field_on_device<double>(ngpMesh, deviceUserField, deviceGoldValues);
 }
@@ -674,7 +674,7 @@ NGP_TEST_F(NgpParallelSum, Performance)
     }
     else {
       const double startTime = stk::wall_time();
-      stk::mesh::parallel_sum_device_mpi<double>(ngpMesh, std::vector<stk::mesh::NgpField<double>*>{&deviceUserField});
+      stk::mesh::parallel_sum(ngpMesh, std::vector<stk::mesh::NgpField<double>*>{&deviceUserField});
       const double stopTime = stk::wall_time();
       const double localTime = stopTime - startTime;
       double globalTime = 0;

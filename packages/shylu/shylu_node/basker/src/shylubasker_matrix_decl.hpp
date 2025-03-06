@@ -96,6 +96,9 @@ namespace BaskerNS
     int fill();
 
     BASKER_INLINE
+    void init_ptr();
+
+    BASKER_INLINE
     void init_inc_lvl();
 
 
@@ -143,6 +146,7 @@ namespace BaskerNS
     Int mnnz; //malloc nnz
     
     INT_1DARRAY   col_ptr;
+    INT_1DARRAY   dig_ptr;
     INT_1DARRAY   col_idx; // NOTE: auxiliary for find_2D_convert
     INT_1DARRAY   row_idx;
     ENTRY_1DARRAY val;

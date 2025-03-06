@@ -49,8 +49,8 @@ using map_type = Tpetra::Map<>;
 using LO = map_type::local_ordinal_type;
 using GO = map_type::global_ordinal_type;
 using Scalar = double;
-using MAT = Tpetra::CrsMatrix<Scalar>;
-using MV = Tpetra::MultiVector<Scalar>;
+using MAT = Tpetra::CrsMatrix<Scalar,LO,GO>;
+using MV = Tpetra::MultiVector<Scalar,LO,GO>;
 using reader_type = Tpetra::MatrixMarket::Reader<MAT>;
 
 
@@ -80,13 +80,6 @@ int main(int argc, char *argv[]) {
   using Teuchos::rcp;
   using Teuchos::tuple;
   using std::endl;
-
-  typedef double Scalar;
-  typedef Tpetra::Map<>::local_ordinal_type LO;
-  typedef Tpetra::Map<>::global_ordinal_type GO;
-
-  typedef Tpetra::CrsMatrix<Scalar,LO,GO> MAT;
-  typedef Tpetra::MultiVector<Scalar,LO,GO> MV;
 
   Tpetra::ScopeGuard tpetraScope(&argc,&argv);
   {
@@ -160,8 +153,10 @@ int main(int argc, char *argv[]) {
          "does not result in the same Map.");
     }
 
-    if ( myRank == 0 && verbose ) {
-      *fos << "\nrowMap->describe output:" << endl;
+    if ( verbose ) {
+      if ( myRank == 0 ) {
+        *fos << "\nrowMap->describe output:" << endl;
+      }
       rowMap->describe(*fos, Teuchos::VERB_EXTREME);
     }
 
@@ -186,16 +181,20 @@ int main(int argc, char *argv[]) {
       A = readCrsMatrixFromFile (mtx_name, fos, rowMap, domainMap, rangeMap, convert_mtx_to_zero_base, num_header_lines);
     }
 
-    if ( myRank == 0 && verbose ) {
-      *fos << "A->describe" << endl;
+    if ( verbose ) {
+      if ( myRank == 0 ) {
+        *fos << "A->describe" << endl;
+      }
       A->describe(*fos, Teuchos::VERB_EXTREME);
     }
 
 
     RCP<MV> RHS;
     RHS = Tpetra::MatrixMarket::Reader<MAT>::readDenseFile (rhs_name, comm, rangeMap);
-    if ( myRank == 0 && verbose ) {
-      *fos << "RHS->describe" << endl;
+    if ( verbose ) {
+      if ( myRank == 0 ) {
+        *fos << "RHS->describe" << endl;
+      }
       RHS->describe(*fos, Teuchos::VERB_EXTREME);
     }
 
@@ -410,6 +409,8 @@ readCrsMatrixFromFile (const std::string& matrixFilename,
     for (typename Teuchos::Array<GO>::size_type i=0; i<gblRowInds.size(); i++) {
       A->insertGlobalValues (gblRowInds[i], gblColInds(i,1), vals(i,1));
     }
+  } else {
+    A = Teuchos::rcp(new MAT(rowMap, 0));
   }
 
   A->fillComplete (domainMap, rangeMap);

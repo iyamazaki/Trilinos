@@ -222,6 +222,7 @@ namespace ROL {
   // Types of optimization problem
   enum EProblem {
     TYPE_U = 0,
+    TYPE_P,
     TYPE_B,
     TYPE_E,
     TYPE_EB,
@@ -278,7 +279,9 @@ namespace ROL {
                                (s == STEP_TRUSTREGION) ||
                                (s == STEP_BUNDLE) );
         break;
-
+      case TYPE_P:    comp = ( (s == STEP_LINESEARCH) ||
+                               (s == STEP_TRUSTREGION));
+        break; 
       case TYPE_B:    comp = ( (s == STEP_LINESEARCH)  ||
                                (s == STEP_TRUSTREGION) ||
                                (s == STEP_MOREAUYOSIDAPENALTY) ||
@@ -307,6 +310,7 @@ namespace ROL {
     std::string retString;
     switch(p) {
       case TYPE_U:     retString = "Type-U";             break;
+      case TYPE_P:     retString = "Type-P";             break;
       case TYPE_E:     retString = "Type-E";             break;
       case TYPE_B:     retString = "Type-B";             break;
       case TYPE_EB:    retString = "Type-EB";            break;
@@ -524,7 +528,7 @@ namespace ROL {
       \arg    DANIEL             \f$ \frac{g_{k+1}^\top \nabla^2 f(x_k) d_k}{d_k^\top \nabla^2 f(x_k) d_k} \f$
       \arg    POLAK_RIBIERE      \f$ \frac{g_{k+1}^\top y_k}{\|g_k\|^2} \f$
       \arg    FLETCHER_CONJDESC  \f$ -\frac{\|g_{k+1}\|^2}{d_k^\top g_k} \f$
-      \arg    LIU_STOREY         \f$ -\frac{g_k^\top y_{k-1} }{d_{k-1}^\top g_{k-1} \f$
+      \arg    LIU_STOREY         \f$ -\frac{g_k^\top y_{k-1} }{d_{k-1}^\top g_{k-1}} \f$
       \arg    DAI_YUAN           \f$ \frac{\|g_{k+1}\|^2}{d_k^\top y_k} \f$
       \arg    HAGER_ZHANG        \f$ \frac{g_{k+1}^\top y_k}{d_k^\top y_k} - 2 \frac{\|y_k\|^2}{d_k^\top y_k} \frac{g_{k+1}^\top d_k}{d_k^\top y_k} \f$
       \arg    OREN_LUENBERGER    \f$ \frac{g_{k+1}^\top y_k}{d_k^\top y_k} - \frac{\|y_k\|^2}{d_k^\top y_k} \frac{g_{k+1}^\top d_k}{d_k^\top y_k} \f$ 

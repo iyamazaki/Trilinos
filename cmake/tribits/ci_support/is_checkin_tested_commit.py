@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # @HEADER
 # *****************************************************************************
@@ -94,7 +94,7 @@ else:
   gitRef = "HEAD"
 
 #
-# B) Deterimine if the commit was tested and pushed with checkin-test.py
+# B) Determine if the commit was tested and pushed with checkin-test.py
 # script.
 #
 

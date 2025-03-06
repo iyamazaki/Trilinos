@@ -137,15 +137,27 @@ struct topology
   STK_INLINE_FUNCTION
   bool has_homogeneous_faces() const;
 
+  /// does this topology use edge and face ranked topologies for sides
+  STK_INLINE_FUNCTION
+  bool has_mixed_rank_sides() const;
+
   /// is this topology a shell topology (i.e. an element with only two sides)
   STK_INLINE_FUNCTION
   bool is_shell() const;
 
+#ifndef STK_HIDE_DEPRECATED_CODE // Delete after Feb 2025
+  STK_DEPRECATED
   STK_INLINE_FUNCTION
   bool is_shell_side_ordinal(unsigned ord) const;
 
+  STK_DEPRECATED
   STK_INLINE_FUNCTION
   bool is_shell_with_face_sides() const;
+
+  STK_DEPRECATED_MSG("Please use side_topology() instead")
+  STK_INLINE_FUNCTION
+  topology shell_side_topology(unsigned shell_side_ordinal = 0) const;
+#endif
 
   /// what is the rank of this topology
   STK_INLINE_FUNCTION
@@ -153,7 +165,7 @@ struct topology
 
   /// what is the side rank of this topology
   STK_INLINE_FUNCTION
-  rank_t side_rank() const;
+  rank_t side_rank(unsigned ord = 0) const;
 
   /// what is the topological dimension of this topology
   STK_INLINE_FUNCTION
@@ -205,9 +217,6 @@ struct topology
   /// what is the topology of the given face
   STK_INLINE_FUNCTION
   topology face_topology(unsigned face_ordinal) const;
-
-  STK_INLINE_FUNCTION
-  topology shell_side_topology(unsigned shell_side_ordinal = 0) const;
 
   /// fill the output ordinals with the ordinals that make up the given edge
   template <typename OrdinalOutputIterator>

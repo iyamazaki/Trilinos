@@ -1,4 +1,4 @@
-// Copyright(C) 1999-2024 National Technology & Engineering Solutions
+// Copyright(C) 1999-2025 National Technology & Engineering Solutions
 // of Sandia, LLC (NTESS).  Under the terms of Contract DE-NA0003525 with
 // NTESS, the U.S. Government retains certain rights in this software.
 //
@@ -65,11 +65,9 @@ namespace {
     size_t max_face = std::string("Face Count").length();
     for (auto &eb : ebs) {
       const std::string &name = eb->name();
-      if (name.length() > max_name) {
-        max_name = name.length();
-      }
-      size_t face_width = Ioss::Utils::number_width(boundary_faces[name].size());
-      max_face          = face_width > max_face ? face_width : max_face;
+      max_name                = std::max(max_name, name.length());
+      size_t face_width       = Ioss::Utils::number_width(boundary_faces[name].size());
+      max_face                = std::max(max_face, face_width);
     }
     max_name += 4; // Padding
     max_face += 4;
@@ -146,7 +144,7 @@ int main(int argc, char *argv[])
 
   codename = Ioss::FileInfo(argv[0]).basename();
 
-  Skinner::Interface interFace;
+  Skinner::Interface interFace(version);
   bool               success = interFace.parse_options(argc, argv);
   if (!success) {
     return EXIT_FAILURE;
@@ -325,12 +323,9 @@ namespace {
       auto               face_topo = eb->topology()->face_type(0);
       std::string        topo      = "shell";
       if (face_topo == nullptr) {
-        std::ostringstream errmsg;
-        fmt::print(errmsg,
-                   "ERROR: Block '{}' with topology '{}' does not have"
-                   " a unique face topology.\nThis is not supported at this time.\n",
-                   name, eb->topology()->name());
-        IOSS_ERROR(errmsg);
+        IOSS_ERROR(fmt::format("ERROR: Block '{}' with topology '{}' does not have"
+                               " a unique face topology.\nThis is not supported at this time.\n",
+                               name, eb->topology()->name()));
       }
       if (face_topo->name() == "tri3") {
         topo = "trishell";

@@ -101,9 +101,9 @@ TEST(stk_topology, shell_tri_3)
 
   EXPECT_EQ(t.side_topology(0), stk::topology::TRI_3);
   EXPECT_EQ(t.side_topology(1), stk::topology::TRI_3);
-  EXPECT_EQ(t.side_topology(2), stk::topology::SHELL_SIDE_BEAM_2);
-  EXPECT_EQ(t.side_topology(3), stk::topology::SHELL_SIDE_BEAM_2);
-  EXPECT_EQ(t.side_topology(4), stk::topology::SHELL_SIDE_BEAM_2);
+  EXPECT_EQ(t.side_topology(2), stk::topology::LINE_2);
+  EXPECT_EQ(t.side_topology(3), stk::topology::LINE_2);
+  EXPECT_EQ(t.side_topology(4), stk::topology::LINE_2);
 
   check_edge_node_ordinals(t, get_gold_edge_node_ordinals_shell_tri3());
   check_edge_nodes(t, get_gold_edge_node_ordinals_shell_tri3());
@@ -155,9 +155,9 @@ void check_shell_tri_3_on_device()
   
     NGP_EXPECT_EQ(t.side_topology(0), stk::topology::TRI_3);
     NGP_EXPECT_EQ(t.side_topology(1), stk::topology::TRI_3);
-    NGP_EXPECT_EQ(t.side_topology(2), stk::topology::SHELL_SIDE_BEAM_2);
-    NGP_EXPECT_EQ(t.side_topology(3), stk::topology::SHELL_SIDE_BEAM_2);
-    NGP_EXPECT_EQ(t.side_topology(4), stk::topology::SHELL_SIDE_BEAM_2);
+    NGP_EXPECT_EQ(t.side_topology(2), stk::topology::LINE_2);
+    NGP_EXPECT_EQ(t.side_topology(3), stk::topology::LINE_2);
+    NGP_EXPECT_EQ(t.side_topology(4), stk::topology::LINE_2);
 
     check_edge_node_ordinals_ngp<numNodes>(t, goldEdgeNodeOrdinals);
     check_edge_nodes_ngp<numNodes>(t, goldEdgeNodeOrdinals);
@@ -235,9 +235,9 @@ TEST(stk_topology, shell_tri_4)
 
   EXPECT_EQ(t.side_topology(0), stk::topology::TRI_4);
   EXPECT_EQ(t.side_topology(1), stk::topology::TRI_4);
-  EXPECT_EQ(t.side_topology(2), stk::topology::SHELL_SIDE_BEAM_2);
-  EXPECT_EQ(t.side_topology(3), stk::topology::SHELL_SIDE_BEAM_2);
-  EXPECT_EQ(t.side_topology(4), stk::topology::SHELL_SIDE_BEAM_2);
+  EXPECT_EQ(t.side_topology(2), stk::topology::LINE_2);
+  EXPECT_EQ(t.side_topology(3), stk::topology::LINE_2);
+  EXPECT_EQ(t.side_topology(4), stk::topology::LINE_2);
 
   check_edge_node_ordinals(t, get_gold_edge_node_ordinals_shell_tri4());
   check_edge_nodes(t, get_gold_edge_node_ordinals_shell_tri4());
@@ -289,9 +289,9 @@ void check_shell_tri_4_on_device()
   
     NGP_EXPECT_EQ(t.side_topology(0), stk::topology::TRI_4);
     NGP_EXPECT_EQ(t.side_topology(1), stk::topology::TRI_4);
-    NGP_EXPECT_EQ(t.side_topology(2), stk::topology::SHELL_SIDE_BEAM_2);
-    NGP_EXPECT_EQ(t.side_topology(3), stk::topology::SHELL_SIDE_BEAM_2);
-    NGP_EXPECT_EQ(t.side_topology(4), stk::topology::SHELL_SIDE_BEAM_2);
+    NGP_EXPECT_EQ(t.side_topology(2), stk::topology::LINE_2);
+    NGP_EXPECT_EQ(t.side_topology(3), stk::topology::LINE_2);
+    NGP_EXPECT_EQ(t.side_topology(4), stk::topology::LINE_2);
 
     check_edge_node_ordinals_ngp<numNodes>(t, goldEdgeNodeOrdinals);
     check_edge_nodes_ngp<numNodes>(t, goldEdgeNodeOrdinals);
@@ -369,9 +369,9 @@ TEST(stk_topology, shell_tri_6)
 
   EXPECT_EQ(t.side_topology(0), stk::topology::TRI_6);
   EXPECT_EQ(t.side_topology(1), stk::topology::TRI_6);
-  EXPECT_EQ(t.side_topology(2), stk::topology::SHELL_SIDE_BEAM_3);
-  EXPECT_EQ(t.side_topology(3), stk::topology::SHELL_SIDE_BEAM_3);
-  EXPECT_EQ(t.side_topology(4), stk::topology::SHELL_SIDE_BEAM_3);
+  EXPECT_EQ(t.side_topology(2), stk::topology::LINE_3);
+  EXPECT_EQ(t.side_topology(3), stk::topology::LINE_3);
+  EXPECT_EQ(t.side_topology(4), stk::topology::LINE_3);
 
   check_edge_node_ordinals(t, get_gold_edge_node_ordinals_shell_tri6());
   check_edge_nodes(t, get_gold_edge_node_ordinals_shell_tri6());
@@ -421,15 +421,11 @@ void check_shell_tri_6_on_device()
     NGP_EXPECT_EQ(t.face_topology(0), stk::topology::TRI_6);
     NGP_EXPECT_EQ(t.face_topology(1), stk::topology::TRI_6);
 
-    NGP_EXPECT_EQ(t.shell_side_topology(0), stk::topology::SHELL_SIDE_BEAM_3);
-    NGP_EXPECT_EQ(t.shell_side_topology(1), stk::topology::SHELL_SIDE_BEAM_3);
-    NGP_EXPECT_EQ(t.shell_side_topology(2), stk::topology::SHELL_SIDE_BEAM_3);
-  
     NGP_EXPECT_EQ(t.side_topology(0), stk::topology::TRI_6);
     NGP_EXPECT_EQ(t.side_topology(1), stk::topology::TRI_6);
-    NGP_EXPECT_EQ(t.side_topology(2), stk::topology::SHELL_SIDE_BEAM_3);
-    NGP_EXPECT_EQ(t.side_topology(3), stk::topology::SHELL_SIDE_BEAM_3);
-    NGP_EXPECT_EQ(t.side_topology(4), stk::topology::SHELL_SIDE_BEAM_3);
+    NGP_EXPECT_EQ(t.side_topology(2), stk::topology::LINE_3);
+    NGP_EXPECT_EQ(t.side_topology(3), stk::topology::LINE_3);
+    NGP_EXPECT_EQ(t.side_topology(4), stk::topology::LINE_3);
 
     check_edge_node_ordinals_ngp<numNodes>(t, goldEdgeNodeOrdinals);
     check_edge_nodes_ngp<numNodes>(t, goldEdgeNodeOrdinals);

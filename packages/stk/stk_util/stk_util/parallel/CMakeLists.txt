@@ -37,13 +37,14 @@ SET(SOURCES "")
 
 IF (STK_HAS_MPI)
 
-FILE(GLOB HEADERS *.hpp *.h)
-FILE(GLOB SOURCES *.cpp)
+FILE(GLOB HEADERS CONFIGURE_DEPENDS *.hpp *.h)
+FILE(GLOB SOURCES CONFIGURE_DEPENDS *.cpp)
 
 ELSE()
 
 FILE(GLOB HEADERS
      CommBuffer.hpp
+     OutputStreams.hpp
      Parallel.hpp
      ParallelComm.hpp
      ParallelReduce.hpp
@@ -53,6 +54,7 @@ FILE(GLOB HEADERS
     )
 FILE(GLOB SOURCES
      CommBuffer.cpp
+     OutputStreams.cpp
      Parallel.cpp
      ParallelComm.cpp
      ParallelReduce.cpp

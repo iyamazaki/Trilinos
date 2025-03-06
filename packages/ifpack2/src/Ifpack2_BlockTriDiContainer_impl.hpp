@@ -1864,12 +1864,14 @@ namespace Ifpack2 {
                          const BlockHelperDetails::PartInterface<MatrixType> &interf,
                          BlockTridiags<MatrixType> &btdm,
                          BlockHelperDetails::AmD<MatrixType> &amd,
-                         const bool overlap_communication_and_computation) {
+                         const bool overlap_communication_and_computation,
+                         const Teuchos::RCP<AsyncableImport<MatrixType> > &async_importer,
+                         bool useSeqMethod) {
       IFPACK2_BLOCKHELPER_TIMER("BlockTriDi::SymbolicPhase", SymbolicPhase);
 
       using impl_type = BlockHelperDetails::ImplType<MatrixType>;
 
-      // using node_memory_space = typename impl_type::node_memory_space;
+      using execution_space = typename impl_type::execution_space;
       using host_execution_space = typename impl_type::host_execution_space;
 
       using local_ordinal_type = typename impl_type::local_ordinal_type;
@@ -2175,6 +2177,22 @@ namespace Ifpack2 {
         if (interf.n_subparts_per_part > 1)
           btdm.e_values = vector_type_4d_view("btdm.e_values", 2, interf.part2packrowidx0_back, blocksize, blocksize);
       }
+      // Precompute offsets of each A and x entry to speed up residual.
+      // Applies if all of these are true:
+      // - hasBlockCrsMatrix
+      // - execution_space is a GPU
+      // - !useSeqMethod (since this uses a different scheme for indexing A,x)
+      //
+      // Reading A, x take up to 4 and 6 levels of indirection respectively,
+      // but precomputing the offsets reduces it to 2 for both (get index, then value)
+      if(BlockHelperDetails::is_device<execution_space>::value && !useSeqMethod && hasBlockCrsMatrix)
+      {
+        bool is_async_importer_active = !async_importer.is_null();
+        local_ordinal_type_1d_view dm2cm = is_async_importer_active ? async_importer->dm2cm : local_ordinal_type_1d_view();
+        bool ownedRemoteSeparate = overlap_communication_and_computation || !is_async_importer_active;
+        BlockHelperDetails::precompute_A_x_offsets<MatrixType>(amd, interf, g, dm2cm, blocksize, ownedRemoteSeparate);
+      }
+
       IFPACK2_BLOCKHELPER_TIMER_FENCE(typename BlockHelperDetails::ImplType<MatrixType>::execution_space)
     }
 
@@ -2750,7 +2768,7 @@ namespace Ifpack2 {
 */
       Kokkos::Experimental::local_deep_copy(member, view1, view2);
     }
-    template<typename MatrixType>
+    template<typename MatrixType, int ScratchLevel>
     struct ExtractAndFactorizeTridiags {
     public:
       using impl_type = BlockHelperDetails::ImplType<MatrixType>;
@@ -2785,6 +2803,8 @@ namespace Ifpack2 {
       using internal_vector_type = typename impl_type::internal_vector_type;
       static constexpr int vector_length = impl_type::vector_length;
       static constexpr int internal_vector_length = impl_type::internal_vector_length;
+      static_assert(vector_length >= internal_vector_length, "Ifpack2 BlockTriDi Numeric: vector_length must be at least as large as internal_vector_length");
+      static_assert(vector_length % internal_vector_length == 0, "Ifpack2 BlockTriDi Numeric: vector_length must be divisible by internal_vector_length");
 
       /// team policy member type
       using team_policy_type = Kokkos::TeamPolicy<execution_space>;
@@ -2812,7 +2832,6 @@ namespace Ifpack2 {
       // diagonal safety
       const magnitude_type tiny;
       const local_ordinal_type vector_loop_size;
-      const local_ordinal_type vector_length_value;
 
       bool hasBlockCrsMatrix;
 
@@ -2873,8 +2892,7 @@ namespace Ifpack2 {
         blocksize_square(blocksize*blocksize),
         // diagonal weight to avoid zero pivots
         tiny(tiny_),
-        vector_loop_size(vector_length/internal_vector_length),
-        vector_length_value(vector_length) {
+        vector_loop_size(vector_length/internal_vector_length) {
           using crs_matrix_type = typename impl_type::tpetra_crs_matrix_type;
           using block_crs_matrix_type = typename impl_type::tpetra_block_crs_matrix_type;
 
@@ -3191,7 +3209,7 @@ namespace Ifpack2 {
         const local_ordinal_type nrows = partptr_sub(subpartidx,1) - partptr_sub(subpartidx,0);
 
         internal_vector_scratch_type_3d_view
-          WW(member.team_scratch(0), blocksize, blocksize, vector_loop_size);
+          WW(member.team_scratch(ScratchLevel), blocksize, blocksize, vector_loop_size);
 
 #ifdef IFPACK2_BLOCKTRIDICONTAINER_USE_PRINTF
         printf("rank = %d, i0 = %d, npacks = %d, nrows = %d, packidx = %d, subpartidx = %d, partidx = %d, local_subpartidx = %d;\n", member.league_rank(), i0, npacks, nrows, packidx, subpartidx, partidx, local_subpartidx);
@@ -3294,7 +3312,7 @@ namespace Ifpack2 {
         (void) npacks;
 
         internal_vector_scratch_type_3d_view
-          WW(member.team_scratch(0), blocksize, num_vectors, vector_loop_size);
+          WW(member.team_scratch(ScratchLevel), blocksize, num_vectors, vector_loop_size);
         if (local_subpartidx == 0) {
           Kokkos::parallel_for
             (Kokkos::ThreadVectorRange(member, vector_loop_size),[&](const int &v) {
@@ -3333,9 +3351,6 @@ namespace Ifpack2 {
         const local_ordinal_type i0 = pack_td_ptr(partidx,local_subpartidx);
         //const local_ordinal_type r0 = part2packrowidx0_sub(partidx,local_subpartidx);
         //const local_ordinal_type nrows = partptr_sub(subpartidx,1) - partptr_sub(subpartidx,0);
-
-        internal_vector_scratch_type_3d_view
-          WW(member.team_scratch(0), blocksize, blocksize, vector_loop_size);
 
         // Compute S = D - C E
 
@@ -3440,7 +3455,7 @@ namespace Ifpack2 {
         const local_ordinal_type nrows = 2*(pack_td_ptr_schur.extent(1)-1);
 
         internal_vector_scratch_type_3d_view
-          WW(member.team_scratch(0), blocksize, blocksize, vector_loop_size);
+          WW(member.team_scratch(ScratchLevel), blocksize, blocksize, vector_loop_size);
         
 #ifdef IFPACK2_BLOCKTRIDICONTAINER_USE_PRINTF
         printf("FactorizeSchurTag rank = %d, i0 = %d, nrows = %d, vector_loop_size = %d;\n", member.league_rank(), i0, nrows, vector_loop_size);
@@ -3477,7 +3492,7 @@ namespace Ifpack2 {
           const local_ordinal_type n_parts = part2packrowidx0_sub.extent(0);
           writeBTDValuesToFile(n_parts, scalar_values, "before.mm");
 
-          policy.set_scratch_size(0,Kokkos::PerTeam(per_team_scratch));
+          policy.set_scratch_size(ScratchLevel, Kokkos::PerTeam(per_team_scratch));
           Kokkos::parallel_for("ExtractAndFactorize::TeamPolicy::run<ExtractAndFactorizeSubLineTag>",
                               policy, *this);
           execution_space().fence();
@@ -3504,7 +3519,7 @@ namespace Ifpack2 {
               Kokkos::TeamPolicy<execution_space,ExtractBCDTag>
                 policy(packindices_schur.extent(0)*packindices_schur.extent(1), team_size, vector_loop_size);
 
-              policy.set_scratch_size(0,Kokkos::PerTeam(per_team_scratch));
+              policy.set_scratch_size(ScratchLevel, Kokkos::PerTeam(per_team_scratch));
               Kokkos::parallel_for("ExtractAndFactorize::TeamPolicy::run<ExtractBCDTag>",
                                   policy, *this);
               execution_space().fence();
@@ -3523,7 +3538,7 @@ namespace Ifpack2 {
               Kokkos::TeamPolicy<execution_space,ComputeETag>
                 policy(packindices_sub.extent(0), team_size, vector_loop_size);
 
-              policy.set_scratch_size(0,Kokkos::PerTeam(per_team_scratch));
+              policy.set_scratch_size(ScratchLevel, Kokkos::PerTeam(per_team_scratch));
               Kokkos::parallel_for("ExtractAndFactorize::TeamPolicy::run<ComputeETag>",
                                   policy, *this);
               execution_space().fence();
@@ -3544,7 +3559,6 @@ namespace Ifpack2 {
             Kokkos::TeamPolicy<execution_space,ComputeSchurTag>
               policy(packindices_schur.extent(0)*packindices_schur.extent(1), team_size, vector_loop_size);
 
-            policy.set_scratch_size(0,Kokkos::PerTeam(per_team_scratch));
             Kokkos::parallel_for("ExtractAndFactorize::TeamPolicy::run<ComputeSchurTag>",
                                 policy, *this);
             writeBTDValuesToFile(part2packrowidx0_sub.extent(0), scalar_values_schur, "after_schur.mm");
@@ -3561,7 +3575,7 @@ namespace Ifpack2 {
             IFPACK2_BLOCKHELPER_TIMER("BlockTriDi::NumericPhase::FactorizeSchurTag", FactorizeSchurTag0);
             Kokkos::TeamPolicy<execution_space,FactorizeSchurTag>
               policy(packindices_schur.extent(0), team_size, vector_loop_size);
-            policy.set_scratch_size(0,Kokkos::PerTeam(per_team_scratch));
+            policy.set_scratch_size(ScratchLevel, Kokkos::PerTeam(per_team_scratch));
             Kokkos::parallel_for("ExtractAndFactorize::TeamPolicy::run<FactorizeSchurTag>",
                                 policy, *this);
             execution_space().fence();
@@ -3587,9 +3601,29 @@ namespace Ifpack2 {
                         const BlockHelperDetails::PartInterface<MatrixType> &interf,
                         BlockTridiags<MatrixType> &btdm,
                         const typename BlockHelperDetails::ImplType<MatrixType>::magnitude_type tiny) {
+      using impl_type = BlockHelperDetails::ImplType<MatrixType>;
+      using execution_space = typename impl_type::execution_space;
+      using team_policy_type = Kokkos::TeamPolicy<execution_space>;
+      using internal_vector_scratch_type_3d_view = Scratch<typename impl_type::internal_vector_type_3d_view>;
+
       IFPACK2_BLOCKHELPER_TIMER("BlockTriDi::NumericPhase", NumericPhase);
-      ExtractAndFactorizeTridiags<MatrixType> function(btdm, interf, A, G, tiny);
-      function.run();
+
+      int blocksize = btdm.values.extent(1);
+      // Both Kokkos policy vector length and SIMD type vector length are hardcoded in KokkosBatched.
+      // For large block sizes, have to fall back to level 1 scratch.
+      int scratch_required = internal_vector_scratch_type_3d_view::shmem_size(blocksize, blocksize, impl_type::vector_length / impl_type::internal_vector_length);
+      int max_scratch = team_policy_type::scratch_size_max(0);
+
+      if(scratch_required < max_scratch) {
+        // Can use level 0 scratch
+        ExtractAndFactorizeTridiags<MatrixType, 0> function(btdm, interf, A, G, tiny);
+        function.run();
+      }
+      else {
+        // Not enough level 0 scratch, so fall back to level 1
+        ExtractAndFactorizeTridiags<MatrixType, 1> function(btdm, interf, A, G, tiny);
+        function.run();
+      }
       IFPACK2_BLOCKHELPER_TIMER_FENCE(typename BlockHelperDetails::ImplType<MatrixType>::execution_space)
     }
 
@@ -3654,7 +3688,6 @@ namespace Ifpack2 {
           packed_multivector(pmv) {}
 
       // TODO:: modify this routine similar to the team level functions
-      // inline  ---> FIXME HIP: should not need the KOKKOS_INLINE_FUNCTION below...
       KOKKOS_INLINE_FUNCTION
       void
       operator() (const local_ordinal_type &packidx) const {
@@ -4955,7 +4988,8 @@ namespace Ifpack2 {
 
       BlockHelperDetails::ComputeResidualVector<MatrixType>
         compute_residual_vector(amd, G->getLocalGraphDevice(), g.getLocalGraphDevice(), blocksize, interf,
-                                is_async_importer_active ? async_importer->dm2cm : dummy_local_ordinal_type_1d_view);
+                                is_async_importer_active ? async_importer->dm2cm : dummy_local_ordinal_type_1d_view,
+                                hasBlockCrsMatrix);
 
       // norm manager workspace resize
       if (is_norm_manager_active)
@@ -4983,6 +5017,7 @@ namespace Ifpack2 {
               // real use case does not use overlap comp and comm
               if (overlap_communication_and_computation || !is_async_importer_active) {
                 if (is_async_importer_active) async_importer->asyncSendRecv(YY);
+                // OverlapTag, compute_owned = true
                 compute_residual_vector.run(pmv, XX, YY, remote_multivector, true);
                 if (is_norm_manager_active && norm_manager.checkDone(sweep, tolerance)) {
                   if (is_async_importer_active) async_importer->cancel();
@@ -4990,12 +5025,14 @@ namespace Ifpack2 {
                 }
                 if (is_async_importer_active) {
                   async_importer->syncRecv();
+                  // OverlapTag, compute_owned = false
                   compute_residual_vector.run(pmv, XX, YY, remote_multivector, false);
                 }
               } else {
                 if (is_async_importer_active)
                   async_importer->syncExchange(YY);
                 if (is_norm_manager_active && norm_manager.checkDone(sweep, tolerance)) break;
+                // AsyncTag
                 compute_residual_vector.run(pmv, XX, YY, remote_multivector);
               }
             }

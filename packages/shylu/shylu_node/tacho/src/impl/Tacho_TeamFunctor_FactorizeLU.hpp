@@ -34,6 +34,9 @@ public:
   using value_type_array = typename supernode_info_type::value_type_array;
   using value_type_matrix = typename supernode_info_type::value_type_matrix;
 
+  using arith_traits = ArithTraits<value_type>;
+  using mag_type = typename arith_traits::mag_type;
+
 private:
   supernode_info_type _info;
   ordinal_type_array _compute_mode;
@@ -47,6 +50,7 @@ private:
   ordinal_type _buf_offset;
   size_type_array _buf_ptr;
 
+  mag_type _tol;
   int *_rval;
 
 public:
@@ -58,7 +62,7 @@ public:
                           const ordinal_type_array &level_sids, const ordinal_type_array &piv,
                           const value_type_array buf, int *rval)
       : _info(info), _compute_mode(compute_mode), _parallel_device_update(parallel_device_update), _level_sids(level_sids), _piv(piv),
-	_buf(buf), _buf_offset(0), _rval(rval) {}
+	_buf(buf), _buf_offset(0), _tol(0.0), _rval(rval) {}
 
   inline void setRange(const ordinal_type pbeg, const ordinal_type pend) {
     _pbeg = pbeg;
@@ -68,6 +72,7 @@ public:
   inline void setParallelDeviceUpdate(const bool parallel_device_update) { _parallel_device_update = parallel_device_update; }
   inline void setBufferPtr(const size_type_array &buf_ptr) { _buf_ptr = buf_ptr; }
   inline void setBufferOffset(const ordinal_type buf_offset) { _buf_offset = buf_offset; }
+  inline void setDiagPertubationTol(const mag_type tol) { _tol = tol; }
 
   ///
   /// Main functions
@@ -84,7 +89,10 @@ public:
     if (m > 0) {
       UnmanagedViewType<value_type_matrix> AT(s.u_buf, m, n);
 
-      err = LU<LU_AlgoType>::invoke(member, AT, P);
+      if (_tol > 0.0)
+        err = LU<LU_AlgoType>::invoke(member, _tol, AT, P);
+      else
+        err = LU<LU_AlgoType>::invoke(member, AT, P);
       member.team_barrier();
       if (err != 0) {
         Kokkos::atomic_add(_rval, 1);
@@ -123,7 +131,10 @@ public:
     if (m > 0) {
       UnmanagedViewType<value_type_matrix> AT(s.u_buf, m, n);
 
-      err = LU<LU_AlgoType>::invoke(member, AT, P);
+      if (_tol > 0.0)
+        err = LU<LU_AlgoType>::invoke(member, _tol, AT, P);
+      else
+        err = LU<LU_AlgoType>::invoke(member, AT, P);
       member.team_barrier();
       if (err != 0) {
         Kokkos::atomic_add(_rval, 1);
@@ -184,7 +195,10 @@ public:
     if (m > 0) {
       UnmanagedViewType<value_type_matrix> AT(s.u_buf, m, n);
 
-      err = LU<LU_AlgoType>::invoke(member, AT, P);
+      if (_tol > 0.0)
+        err = LU<LU_AlgoType>::invoke(member, _tol, AT, P);
+      else
+        err = LU<LU_AlgoType>::invoke(member, AT, P);
       member.team_barrier();
       if (err != 0) {
         Kokkos::atomic_add(_rval, 1);

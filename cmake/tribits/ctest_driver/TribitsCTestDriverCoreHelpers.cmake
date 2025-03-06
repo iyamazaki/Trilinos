@@ -175,7 +175,7 @@ endfunction()
 #
 function(tribits_create_repo_updates_file)
   extrarepo_execute_process_wrapper(
-    COMMAND ${PYTHON_EXECUTABLE}
+    COMMAND ${Python3_EXECUTABLE}
       ${GITDIST_EXE} --dist-no-color
       log "--pretty=format:%h:  %s%nAuthor: %an <%ae>%nDate:   %ad%n"
       --name-status -C ORIG_HEAD..HEAD
@@ -269,7 +269,7 @@ macro(enable_package_if_not_explicitly_excluded  TRIBITS_PACKAGE)
     if (${TRIBITS_PACKAGE}_EXPLICITY_EXCLUDED)
       message("NOT enabling explicitly set package ${TRIBITS_PACKAGE} since it was explicitly excluded!")
     else()
-       message("Enabling explicitly set package ${TRIBITS_PACKAGE} which was default or otherwise disabed!")
+       message("Enabling explicitly set package ${TRIBITS_PACKAGE} which was default or otherwise disabled!")
       set(${PROJECT_NAME}_ENABLE_${TRIBITS_PACKAGE} ON)
     endif()
   else()
@@ -376,14 +376,14 @@ macro(enable_only_modified_packages)
 
   # A.3) Get the names of the modified packages
 
-  if (NOT PYTHON_EXECUTABLE)
+  if (NOT Python3_EXECUTABLE)
     message(FATAL_ERROR "Error, Python must be enabled to map from modified"
       " files to packages!")
   endif()
 
   if (EXISTS "${MODIFIED_FILES_FILE_NAME}")
     execute_process(
-      COMMAND ${PYTHON_EXECUTABLE}
+      COMMAND ${Python3_EXECUTABLE}
         ${${PROJECT_NAME}_TRIBITS_DIR}/ci_support/get-tribits-packages-from-files-list.py
         --files-list-file=${MODIFIED_FILES_FILE_NAME}
         --project-dir=${TRIBITS_PROJECT_ROOT}
@@ -847,7 +847,7 @@ function(tribits_get_failed_packages_from_failed_tests
    LAST_TESTS_FAILED_FILE  FAILED_PACKAGES_OUT
    )
   execute_process(
-    COMMAND ${PYTHON_EXECUTABLE}
+    COMMAND ${Python3_EXECUTABLE}
       "${${PROJECT_NAME}_TRIBITS_DIR}/ci_support/get-tribits-packages-from-last-tests-failed.py"
       "--deps-xml-file=${CTEST_BINARY_DIRECTORY}/${${PROJECT_NAME}_PACKAGE_DEPS_XML_FILE_NAME}"
       "--last-tests-failed-file=${LAST_TESTS_FAILED_FILE}"
@@ -955,7 +955,7 @@ macro(tribits_ctest_package_by_package)
         set(PBP_CONFIGURE_PASSED TRUE)
         # load target properties and test keywords
         ctest_read_custom_files(BUILD "${CTEST_BINARY_DIRECTORY}")
-        # Overridde from this file!
+        # Override from this file!
         include("${TRIBITS_PROJECT_ROOT}/CTestConfig.cmake")
       else()
         message("\n${TRIBITS_PACKAGE} FAILED to configure!\n")
@@ -1384,7 +1384,7 @@ macro(tribits_ctest_all_at_once)
   # configure failed and the file CTestCustom.cmake does exist.  In this case,
   # CTest will just do nothing.
 
-  # Overridde any values by loading <projectDir>/CTestConfig.cmake
+  # Override any values by loading <projectDir>/CTestConfig.cmake
   include("${TRIBITS_PROJECT_ROOT}/CTestConfig.cmake")
 
   # Print out values read from project CTestCustom.cmake file
@@ -1531,7 +1531,7 @@ macro(tribits_ctest_all_at_once)
   if (NOT CTEST_DO_COVERAGE_TESTING)
   
     message("")
-    message("Skipping converage tests because CTEST_DO_COVERAGE_TESTING='${CTEST_DO_COVERAGE_TESTING}'!")
+    message("Skipping coverage tests because CTEST_DO_COVERAGE_TESTING='${CTEST_DO_COVERAGE_TESTING}'!")
     message("")
 
   elseif (NOT AAO_CONFIGURE_PASSED)

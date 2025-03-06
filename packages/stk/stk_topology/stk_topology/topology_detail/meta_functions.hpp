@@ -41,6 +41,7 @@
 
 namespace stk::topology_detail {
 
+#ifndef STK_HIDE_DEPRECATED_CODE // Delete after Feb 2025
 namespace impl {
 // Temporary function used to identify the new SHELL_[TRI|QUAD]_ALL_FACE_SIDES
 // Will be removed once a proper conversion is available
@@ -55,6 +56,22 @@ constexpr bool is_temporary_shell_with_all_face_sides() {
           Topology::value == topology::SHELL_TRI_6_ALL_FACE_SIDES);
 }
 }
+
+//------------------------------------------------------------------------------
+
+template <typename Topology, unsigned ShellSideOrdinal>
+STK_DEPRECATED
+STK_INLINE_FUNCTION
+constexpr topology::topology_t shell_side_topology_()
+{
+  if constexpr (Topology::is_shell && Topology::dimension == 3 && ShellSideOrdinal < Topology::num_edges)
+  {
+    if constexpr (!impl::is_temporary_shell_with_all_face_sides<Topology>())
+      return Topology::shell_side_topology_vector[ShellSideOrdinal];
+  }
+  return topology::INVALID_TOPOLOGY;
+}
+#endif
 
 //------------------------------------------------------------------------------
 template <typename Topology, unsigned EdgeOrdinal>
@@ -128,16 +145,16 @@ constexpr topology::topology_t face_topology_()
 
 //------------------------------------------------------------------------------
 
-template <typename Topology, unsigned ShellSideOrdinal>
+template <typename Topology, unsigned SideOrdinal>
 STK_INLINE_FUNCTION
-constexpr topology::topology_t shell_side_topology_()
+constexpr topology::rank_t side_rank_()
 {
-  if constexpr (Topology::is_shell && Topology::dimension == 3 && ShellSideOrdinal < Topology::num_edges)
-  {
-    if constexpr (!impl::is_temporary_shell_with_all_face_sides<Topology>())
-      return Topology::shell_side_topology_vector[ShellSideOrdinal];
+  if constexpr (SideOrdinal < Topology::num_faces) {
+    return topology::FACE_RANK;
+  } else {
+    return topology::EDGE_RANK;
   }
-  return topology::INVALID_TOPOLOGY;
+  return Topology::side_rank;
 }
 
 //------------------------------------------------------------------------------

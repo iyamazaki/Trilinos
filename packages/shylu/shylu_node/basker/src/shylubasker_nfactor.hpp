@@ -98,7 +98,6 @@ namespace BaskerNS
 #ifdef BASKER_KOKKOS
     Kokkos::Timer timer;
 
-    typedef Kokkos::TeamPolicy<Exe_Space>        TeamPolicy;
     // --------------------------------------------------------------- //
     // ----------------------- Big A block --------------------------- //
     if(btf_tabs_offset != 0)
@@ -171,13 +170,9 @@ namespace BaskerNS
       }//end while
       if(Options.verbose == BASKER_TRUE)
       {
-        printf("Time DOMAIN: %lf \n", timer.seconds());
+        printf("Time DOMAIN: %lf \n\n", timer.seconds());
         timer.reset();
       }
-      #ifdef BASKER_TIMER
-      printf("Time DOMAIN: %lf \n", timer.seconds());
-      timer.reset();
-      #endif
 
 #else// else basker_kokkos
       #pragma omp parallel
@@ -282,13 +277,9 @@ namespace BaskerNS
       //printf( " End Sep: info = %d (%d, %d)\n",info,BASKER_SUCCESS,BASKER_ERROR );
       if(Options.verbose == BASKER_TRUE)
       {
-        printf("Time SEP: %lf \n", timer.seconds());
+        printf("Time SEP: %lf \n\n", timer.seconds());
         timer.reset();
       }
-      #ifdef BASKER_TIMER
-      printf("Time SEP: %lf \n", timer.seconds());
-      timer.reset();
-      #endif
     }
 
     // ---------------------------------------------------------------------------------------- //
@@ -363,11 +354,8 @@ namespace BaskerNS
 
       if(Options.verbose == BASKER_TRUE)
       {
-        printf("Time BTF: %lf \n", timer.seconds());
+        printf("Time BTF: %lf \n\n", timer.seconds());
       }
-      #ifdef BASKER_TIMER
-      printf("Time BTF: %lf \n", timer.seconds());
-      #endif
     }//end btf call
 
     Kokkos::Timer tzback;

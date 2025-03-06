@@ -1662,7 +1662,7 @@ TEST(BulkData, testFamilyTreeGhosting)
   }
 
   // Create family tree
-  Entity family_tree = mesh.declare_constraint(my_family_tree_id, empty_parts);
+  Entity family_tree = mesh.declare_entity(stk::topology::CONSTRAINT_RANK, my_family_tree_id, empty_parts);
   // Add relation to element
   unsigned downward_ordinal = 0; // we only have 1 down relation, it has ordinal 0
   mesh.declare_relation(family_tree, elem, downward_ordinal);
@@ -2846,7 +2846,7 @@ TEST(BulkData, mayCreateRelationsToNodesDifferently)
     stk::mesh::RelationIdentifier node_rel_id = 1;
     stkMeshBulkData.declare_relation(element1, sharedNode1, node_rel_id);
   }
-  EXPECT_NO_THROW( stkMeshBulkData.modification_end());
+  stkMeshBulkData.modification_end();
 
   {
     stk::mesh::Bucket & nodeBucket = stkMeshBulkData.bucket(sharedNode1);
@@ -5815,8 +5815,7 @@ TEST(FaceCreation, test_face_creation_2Hexes_2procs)
     stk::mesh::MetaData meta(3);
     stk::unit_test_util::BulkDataFaceSharingTester mesh(meta, MPI_COMM_WORLD);
 
-    const std::string generatedMeshSpec = "generated:1x1x2";
-    stk::io::fill_mesh(generatedMeshSpec, mesh);
+    stk::mesh::fixtures::HexFixture::fill_mesh(1,1,2, mesh);
 
     int procId = stk::parallel_machine_rank(MPI_COMM_WORLD);
 
@@ -6018,8 +6017,7 @@ TEST(ChangeEntityId, test_throw_on_shared_node)
   std::shared_ptr<BulkData> bulkPtr = stk::unit_test_util::build_mesh(spatialDim, MPI_COMM_WORLD);
   stk::mesh::BulkData& mesh = *bulkPtr;
 
-  const std::string generatedMeshSpec = "generated:1x1x2";
-  stk::io::fill_mesh(generatedMeshSpec, mesh);
+  stk::mesh::fixtures::HexFixture::fill_mesh(1,1,2, mesh);
 
   stk::mesh::Entity sharedNode5 = mesh.get_entity(stk::topology::NODE_RANK, 5);
 
@@ -6041,8 +6039,7 @@ TEST(AmbiguousTopology, hexRedefinedAsShell)
   stk::mesh::MetaData& meta= bulkPtr->mesh_meta_data();
   stk::mesh::BulkData& mesh = *bulkPtr;
 
-  const std::string generatedMeshSpec = "generated:1x1x1";
-  stk::io::fill_mesh(generatedMeshSpec, mesh);
+  stk::mesh::fixtures::HexFixture::fill_mesh(1,1,1, mesh);
 
   stk::mesh::Part& shellPart = meta.get_topology_root_part(stk::topology::SHELL_QUAD_4);
   stk::mesh::EntityId elemId = 1;

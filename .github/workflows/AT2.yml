@@ -1,24 +1,27 @@
-name: AT2-EXPERIMENTAL
+name: AT2
 
 on:
   pull_request:
     types:
       - opened
       - synchronize
-  pull_request_review:
-    types: 
-      - submitted
     branches:
-    - master
-    - develop
+      - master
+      - develop
   workflow_dispatch:
+
+# Cancels any in progress 'workflows' associated with this PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # actions: write needed by skip-duplicate-actions (handled below as per OpenSSF scorecard)
 permissions: 
   contents: read
 
 jobs:
-  # Jobs depend on the output of pre-checks to run
+  # Jobs depend on the output of pre-checks to run.
+  # Cancels new workflows if prior runs were successful (same tree hash)
   pre-checks:
         runs-on: ubuntu-latest
         # actions: write needed by skip-duplicate-actions
@@ -28,11 +31,11 @@ jobs:
             should_skip: ${{ steps.skip_check.outputs.should_skip }}
         steps:
         - id: skip_check
-          uses: fkirc/skip-duplicate-actions@v5
+          uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
           with:
             skip_after_successful_duplicate: 'true'
 
-  gcc10-openmpi416-EXPERIMENTAL:
+  gcc10-openmpi4:
     needs: pre-checks
     runs-on: [self-hosted, gcc-10.3.0_openmpi-4.1.6]
     if: ${{ needs.pre-checks.outputs.should_skip != 'true' && (github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.review.state == 'APPROVED') }}
@@ -57,7 +60,7 @@ jobs:
           mkdir -p /home/Trilinos/src/Trilinos
           mkdir -p /home/Trilinos/build
       - name: Clone trilinos
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
       - name: Repo status
@@ -71,7 +74,7 @@ jobs:
       - name: get dependencies
         working-directory: ./packages/framework
         run: |
-          bash -l -c "./get_dependencies.sh --container"
+          bash -l -c "./get_dependencies.sh"
       - name: PullRequestLinuxDriverTest.py
         shell: bash -l {0}
         working-directory: /home/Trilinos/build
@@ -86,32 +89,43 @@ jobs:
           export TRILINOS_DIR=${GITHUB_WORKSPACE:?}
           export PYTHONPATH=${PYTHONPATH}:${TRILINOS_DIR}/packages/framework/GenConfig
           export PYTHONPATH=${PYTHONPATH}:${TRILINOS_DIR}/packages/framework/pr_tools
-
+          export GENCONFIG_BUILD_NAME=rhel8_gcc-openmpi_debug_shared_no-kokkos-arch_no-asan_complex_no-fpic_mpi_no-pt_no-rdc_no-uvm_deprecated-on_no-package-enables
           printf "\n\n\n"
 
-          echo "image: ${AT2_IMAGE:-unknown}"
+          echo "image: ${AT2_IMAGE_FULLPATH:-${AT2_IMAGE:-unknown}}"
 
           python3 ${GITHUB_WORKSPACE}/packages/framework/pr_tools/PullRequestLinuxDriverTest.py \
             --target-branch-name ${{ github.event.pull_request.base.ref }} \
-            --genconfig-build-name rhel8_gcc-openmpi_debug_shared_no-kokkos-arch_no-asan_complex_no-fpic_mpi_no-pt_no-rdc_no-uvm_deprecated-on_no-package-enables \
+            --genconfig-build-name ${GENCONFIG_BUILD_NAME} \
             --pullrequest-number ${{ github.event.pull_request.number }} \
             --pullrequest-env-config-file ${GITHUB_WORKSPACE}/packages/framework/pr_tools/trilinos_pr.ini \
             --pullrequest-gen-config-file ${GITHUB_WORKSPACE}/packages/framework/GenConfig/src/gen-config.ini \
             --workspace-dir /home/runner/_work/Trilinos \
             --source-dir ${GITHUB_WORKSPACE} \
             --build-dir /home/Trilinos/build \
-            --dashboard-build-name `cat /etc/hostname` \
+            --dashboard-build-name=PR-${{ github.event.pull_request.number }}_${AT2_IMAGE}_debug_shared \
             --ctest-driver /home/runner/_work/Trilinos/Trilinos/cmake/SimpleTesting/cmake/ctest-driver.cmake \
             --ctest-drop-site sems-cdash-son.sandia.gov/cdash \
             --filename-subprojects ./package_subproject_list.cmake \
-            --filename-packageenables ./packageEnables.cmake
+            --filename-packageenables ./packageEnables.cmake \
+            --max-cores-allowed=29 \
+            --num-concurrent-tests=16
+      - name: Upload artifacts
+        if: success() || failure()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        env:
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
+        with:
+          name: ${{ github.job }}-artifacts
+          path: /home/runner/artifacts/*
+          retention-days: 90
       - name: Summary
         if: ${{ !cancelled() }}
         shell: bash -l {0}
         working-directory: /home/Trilinos/build
         run: |
           echo "## Image" >> $GITHUB_STEP_SUMMARY
-          echo "image: ${AT2_IMAGE:-unknown}" >> $GITHUB_STEP_SUMMARY
+          echo "image: ${AT2_IMAGE_FULLPATH:-${AT2_IMAGE:-unknown}}" >> $GITHUB_STEP_SUMMARY
           echo "## CDash Links" >> $GITHUB_STEP_SUMMARY
           echo "### Current Build" >> $GITHUB_STEP_SUMMARY
           AT2_URL=$(</home/runner/AT2_URL.txt)
@@ -123,7 +137,7 @@ jobs:
           echo "https://github.com/trilinos/Trilinos/wiki/Containers" >> $GITHUB_STEP_SUMMARY
           echo "https://gitlab-ex.sandia.gov/trilinos-project/trilinos-containers/-/wikis/Containers-at-Sandia" >> $GITHUB_STEP_SUMMARY
 
-  gcc830-serial-EXPERIMENTAL:
+  gcc830:
     needs: pre-checks
     runs-on: [self-hosted, gcc-8.3.0_serial]
     if: ${{ needs.pre-checks.outputs.should_skip != 'true' && (github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.review.state == 'APPROVED') }}
@@ -148,7 +162,7 @@ jobs:
           mkdir -p /home/Trilinos/src/Trilinos
           mkdir -p /home/Trilinos/build
       - name: Clone trilinos
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
       - name: Repo status
@@ -162,7 +176,7 @@ jobs:
       - name: get dependencies
         working-directory: ./packages/framework
         run: |
-          bash -l -c "./get_dependencies.sh --container"
+          bash -l -c "./get_dependencies.sh"
       - name: PullRequestLinuxDriverTest.py
         shell: bash -l {0}
         working-directory: /home/Trilinos/build
@@ -177,32 +191,44 @@ jobs:
           export TRILINOS_DIR=${GITHUB_WORKSPACE:?}
           export PYTHONPATH=${PYTHONPATH}:${TRILINOS_DIR}/packages/framework/GenConfig
           export PYTHONPATH=${PYTHONPATH}:${TRILINOS_DIR}/packages/framework/pr_tools
+          export GENCONFIG_BUILD_NAME=rhel8_gcc-serial_release-debug_shared_no-kokkos-arch_no-asan_no-complex_no-fpic_no-mpi_no-pt_no-rdc_no-uvm_deprecated-on_no-package-enables
 
           printf "\n\n\n"
 
-          echo "image: ${AT2_IMAGE:-unknown}"
+          echo "image: ${AT2_IMAGE_FULLPATH:-${AT2_IMAGE:-unknown}}"
 
           python3 ${GITHUB_WORKSPACE}/packages/framework/pr_tools/PullRequestLinuxDriverTest.py \
             --target-branch-name ${{ github.event.pull_request.base.ref }} \
-            --genconfig-build-name rhel8_gcc-serial_release-debug_shared_no-kokkos-arch_no-asan_no-complex_no-fpic_no-mpi_no-pt_no-rdc_no-uvm_deprecated-on_no-package-enables \
+            --genconfig-build-name ${GENCONFIG_BUILD_NAME} \
             --pullrequest-number ${{ github.event.pull_request.number }} \
             --pullrequest-env-config-file ${GITHUB_WORKSPACE}/packages/framework/pr_tools/trilinos_pr.ini \
             --pullrequest-gen-config-file ${GITHUB_WORKSPACE}/packages/framework/GenConfig/src/gen-config.ini \
             --workspace-dir /home/runner/_work/Trilinos \
             --source-dir ${GITHUB_WORKSPACE} \
             --build-dir /home/Trilinos/build \
-            --dashboard-build-name `cat /etc/hostname` \
+            --dashboard-build-name=PR-${{ github.event.pull_request.number }}_${AT2_IMAGE}_release-debug_shared \
             --ctest-driver /home/runner/_work/Trilinos/Trilinos/cmake/SimpleTesting/cmake/ctest-driver.cmake \
             --ctest-drop-site sems-cdash-son.sandia.gov/cdash \
             --filename-subprojects ./package_subproject_list.cmake \
-            --filename-packageenables ./packageEnables.cmake
+            --filename-packageenables ./packageEnables.cmake \
+            --max-cores-allowed=29 \
+            --num-concurrent-tests=16
+      - name: Upload artifacts
+        if: success() || failure()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        env:
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
+        with:
+          name: ${{ github.job }}-artifacts
+          path: /home/runner/artifacts/*
+          retention-days: 90
       - name: Summary
         if: ${{ !cancelled() }}
         shell: bash -l {0}
         working-directory: /home/Trilinos/build
         run: |
           echo "## Image" >> $GITHUB_STEP_SUMMARY
-          echo "image: ${AT2_IMAGE:-unknown}" >> $GITHUB_STEP_SUMMARY
+          echo "image: ${AT2_IMAGE_FULLPATH:-${AT2_IMAGE:-unknown}}" >> $GITHUB_STEP_SUMMARY
           echo "## CDash Links" >> $GITHUB_STEP_SUMMARY
           echo "### Current Build" >> $GITHUB_STEP_SUMMARY
           AT2_URL=$(</home/runner/AT2_URL.txt)
@@ -214,7 +240,7 @@ jobs:
           echo "https://github.com/trilinos/Trilinos/wiki/Containers" >> $GITHUB_STEP_SUMMARY
           echo "https://gitlab-ex.sandia.gov/trilinos-project/trilinos-containers/-/wikis/Containers-at-Sandia" >> $GITHUB_STEP_SUMMARY
 
-  cuda11-uvm-EXPERIMENTAL:
+  cuda11:
     needs: pre-checks
     runs-on: [self-hosted, cuda-11.4.2_gcc-10.3.0_openmpi-4.1.6]
     if: ${{ needs.pre-checks.outputs.should_skip != 'true' && (github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.review.state == 'APPROVED') }}
@@ -239,7 +265,7 @@ jobs:
           mkdir -p /home/Trilinos/src/Trilinos
           mkdir -p /home/Trilinos/build
       - name: Clone trilinos
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
       - name: Repo status
@@ -253,7 +279,7 @@ jobs:
       - name: get dependencies
         working-directory: ./packages/framework
         run: |
-          bash -l -c "./get_dependencies.sh --container"
+          bash -l -c "./get_dependencies.sh"
       - name: PullRequestLinuxDriverTest.py
         shell: bash -l {0}
         working-directory: /home/Trilinos/build
@@ -267,34 +293,44 @@ jobs:
           export TRILINOS_DIR=${GITHUB_WORKSPACE:?}
           export PYTHONPATH=${PYTHONPATH}:${TRILINOS_DIR}/packages/framework/GenConfig
           export PYTHONPATH=${PYTHONPATH}:${TRILINOS_DIR}/packages/framework/pr_tools
-
+          export GENCONFIG_BUILD_NAME=rhel8_cuda-11-gcc-openmpi_release_static_Ampere80_no-asan_complex_no-fpic_mpi_pt_no-rdc_no-uvm_deprecated-on_no-package-enables
           printf "\n\n\n"
 
-          echo "image: ${AT2_IMAGE:-unknown}"
+          echo "image: ${AT2_IMAGE_FULLPATH:-${AT2_IMAGE:-unknown}}"
           type python
           python3 ${GITHUB_WORKSPACE}/packages/framework/pr_tools/PullRequestLinuxDriverTest.py \
             --target-branch-name ${{ github.event.pull_request.base.ref }} \
-            --genconfig-build-name rhel8_cuda-gcc-openmpi_release_static_Ampere80_no-asan_complex_no-fpic_mpi_pt_no-rdc_uvm_deprecated-on_no-package-enables \
+            --genconfig-build-name ${GENCONFIG_BUILD_NAME} \
             --pullrequest-number ${{ github.event.pull_request.number }} \
             --pullrequest-env-config-file ${GITHUB_WORKSPACE}/packages/framework/pr_tools/trilinos_pr.ini \
             --pullrequest-gen-config-file ${GITHUB_WORKSPACE}/packages/framework/GenConfig/src/gen-config.ini \
             --workspace-dir /home/runner/_work/Trilinos \
             --source-dir ${GITHUB_WORKSPACE} \
             --build-dir /home/Trilinos/build \
-            --dashboard-build-name `cat /etc/hostname` \
+            --dashboard-build-name=PR-${{ github.event.pull_request.number }}_${AT2_IMAGE}_release_static \
             --ctest-driver /home/runner/_work/Trilinos/Trilinos/cmake/SimpleTesting/cmake/ctest-driver.cmake \
             --ctest-drop-site sems-cdash-son.sandia.gov/cdash \
             --filename-subprojects ./package_subproject_list.cmake \
             --filename-packageenables ./packageEnables.cmake \
-            --max-cores-allowed=96 \
-            --num-concurrent-tests=96
+            --max-cores-allowed=56 \
+            --num-concurrent-tests=112 \
+            --slots-per-gpu=8
+      - name: Upload artifacts
+        if: success() || failure()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        env:
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
+        with:
+          name: ${{ github.job }}-artifacts
+          path: /home/runner/artifacts/*
+          retention-days: 90
       - name: Summary
         if: ${{ !cancelled() }}
         shell: bash -l {0}
         working-directory: /home/Trilinos/build
         run: |
           echo "## Image" >> $GITHUB_STEP_SUMMARY
-          echo "image: ${AT2_IMAGE:-unknown}" >> $GITHUB_STEP_SUMMARY
+          echo "image: ${AT2_IMAGE_FULLPATH:-${AT2_IMAGE:-unknown}}" >> $GITHUB_STEP_SUMMARY
           echo "## CDash Links" >> $GITHUB_STEP_SUMMARY
           echo "### Current Build" >> $GITHUB_STEP_SUMMARY
           AT2_URL=$(</home/runner/AT2_URL.txt)
@@ -306,7 +342,7 @@ jobs:
           echo "https://github.com/trilinos/Trilinos/wiki/Containers" >> $GITHUB_STEP_SUMMARY
           echo "https://gitlab-ex.sandia.gov/trilinos-project/trilinos-containers/-/wikis/Containers-at-Sandia" >> $GITHUB_STEP_SUMMARY
 
-  framework-tests-EXPERIMENTAL:
+  framework-tests:
     needs: pre-checks
     runs-on: [self-hosted, python-3.9]
     if: ${{ needs.pre-checks.outputs.should_skip != 'true' && (github.event.action == 'synchronize' || github.event.action == 'opened' || github.event.review.state == 'APPROVED') }}
@@ -331,7 +367,7 @@ jobs:
           mkdir -p /home/Trilinos/src/Trilinos
           mkdir -p /home/Trilinos/build
       - name: Clone trilinos
-        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
       - name: Repo status
@@ -345,7 +381,7 @@ jobs:
       - name: get dependencies
         working-directory: ./packages/framework
         run: |
-          bash -l -c "./get_dependencies.sh --container"
+          bash -l -c "./get_dependencies.sh"
       - name: PullRequestLinuxDriverTest.py
         shell: bash -l {0}
         working-directory: /home/Trilinos/build
@@ -359,32 +395,41 @@ jobs:
           export TRILINOS_DIR=${GITHUB_WORKSPACE:?}
           export PYTHONPATH=${PYTHONPATH}:${TRILINOS_DIR}/packages/framework/GenConfig
           export PYTHONPATH=${PYTHONPATH}:${TRILINOS_DIR}/packages/framework/pr_tools
-
+          export GENCONFIG_BUILD_NAME=rhel8_python_debug_shared_no-kokkos-arch_no-asan_no-complex_no-fpic_no-mpi_no-pt_no-rdc_no-uvm_deprecated-on_pr-framework
           printf "\n\n\n"
 
-          echo "image: ${AT2_IMAGE:-unknown}"
+          echo "image: ${AT2_IMAGE_FULLPATH:-${AT2_IMAGE:-unknown}}"
           type python
           python3 ${GITHUB_WORKSPACE}/packages/framework/pr_tools/PullRequestLinuxDriverTest.py \
             --target-branch-name ${{ github.event.pull_request.base.ref }} \
-            --genconfig-build-name rhel8_python_debug_shared_no-kokkos-arch_no-asan_no-complex_no-fpic_no-mpi_no-pt_no-rdc_no-uvm_deprecated-on_pr-framework \
+            --genconfig-build-name ${GENCONFIG_BUILD_NAME} \
             --pullrequest-number ${{ github.event.pull_request.number }} \
             --pullrequest-env-config-file ${GITHUB_WORKSPACE}/packages/framework/pr_tools/trilinos_pr.ini \
             --pullrequest-gen-config-file ${GITHUB_WORKSPACE}/packages/framework/GenConfig/src/gen-config.ini \
             --workspace-dir /home/runner/_work/Trilinos \
             --source-dir ${GITHUB_WORKSPACE} \
             --build-dir /home/Trilinos/build \
-            --dashboard-build-name `cat /etc/hostname` \
+            --dashboard-build-name=PR-${{ github.event.pull_request.number }}_${AT2_IMAGE}_framework-tests \
             --ctest-driver /home/runner/_work/Trilinos/Trilinos/cmake/SimpleTesting/cmake/ctest-driver.cmake \
             --ctest-drop-site sems-cdash-son.sandia.gov/cdash \
             --filename-subprojects ./package_subproject_list.cmake \
-            --filename-packageenables ./packageEnables.cmake \
+            --skip-create-packageenables \
+      - name: Upload artifacts
+        if: success() || failure()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        env:
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
+        with:
+          name: ${{ github.job }}-artifacts
+          path: /home/runner/artifacts/*
+          retention-days: 90
       - name: Summary
         if: ${{ !cancelled() }}
         shell: bash -l {0}
         working-directory: /home/Trilinos/build
         run: |
           echo "## Image" >> $GITHUB_STEP_SUMMARY
-          echo "image: ${AT2_IMAGE:-unknown}" >> $GITHUB_STEP_SUMMARY
+          echo "image: ${AT2_IMAGE_FULLPATH:-${AT2_IMAGE:-unknown}}" >> $GITHUB_STEP_SUMMARY
           echo "## CDash Links" >> $GITHUB_STEP_SUMMARY
           echo "### Current Build" >> $GITHUB_STEP_SUMMARY
           AT2_URL=$(</home/runner/AT2_URL.txt)
@@ -395,4 +440,3 @@ jobs:
           echo "## Helpful Links" >> $GITHUB_STEP_SUMMARY
           echo "https://github.com/trilinos/Trilinos/wiki/Containers" >> $GITHUB_STEP_SUMMARY
           echo "https://gitlab-ex.sandia.gov/trilinos-project/trilinos-containers/-/wikis/Containers-at-Sandia" >> $GITHUB_STEP_SUMMARY
-

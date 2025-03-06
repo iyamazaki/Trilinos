@@ -316,9 +316,10 @@ TEST(CoarseSearchCorrectness, coarseSearchDoubleBoxes_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_coarse_search_for_algorithm<double>(stk::search::ARBORX, MPI_COMM_WORLD);
-  test_coarse_search_for_algorithm_with_views<double, Kokkos::DefaultExecutionSpace>(stk::search::ARBORX, MPI_COMM_WORLD);
   test_coarse_search_for_algorithm_with_views<double, Kokkos::DefaultHostExecutionSpace>(stk::search::ARBORX, MPI_COMM_WORLD);
+  test_coarse_search_for_algorithm_with_views<double, Kokkos::DefaultExecutionSpace>(stk::search::ARBORX, MPI_COMM_WORLD);
 
 }
 
@@ -327,6 +328,7 @@ TEST(CoarseSearchCorrectness, coarseSearchFloatBoxes_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_coarse_search_for_algorithm<float>(stk::search::ARBORX, MPI_COMM_WORLD);
   test_coarse_search_for_algorithm_with_views<float>(stk::search::ARBORX, MPI_COMM_WORLD);
 }
@@ -427,6 +429,7 @@ TEST(CoarseSearchCorrectness, Ngp_Local_CoarseSearchDoubleBoxes_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   host_local_test_coarse_search_for_algorithm<double>(stk::search::ARBORX);
   device_local_test_coarse_search_for_algorithm<double>(stk::search::ARBORX);
 }
@@ -436,6 +439,7 @@ TEST(CoarseSearchCorrectness, Ngp_Local_CoarseSearchFloatBoxes_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   host_local_test_coarse_search_for_algorithm<float>(stk::search::ARBORX);
   device_local_test_coarse_search_for_algorithm<float>(stk::search::ARBORX);
 }
@@ -673,6 +677,7 @@ TEST(stk_search, coarse_search_two_pass_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_coarse_search_two_pass(stk::search::ARBORX, MPI_COMM_WORLD, 2);
 }
 
@@ -694,14 +699,18 @@ void test_ident_proc_with_search_with_views(stk::search::SearchMethod searchMeth
     IdentProc id1(1, 0);
     IdentProc id2(1, 1);
 
-    BoxIdentProcViewType boxes("", 1);
+    BoxIdentProcViewType boxes("boxes", 1);
+    auto hostBoxes = Kokkos::create_mirror_view(boxes);
+
     if (procId == 0) {
-      boxes(0) = {box1, id1};
+      hostBoxes(0) = {box1, id1};
     } else if (procId == 1) {
-      boxes(0) = {box2, id2};
+      hostBoxes(0) = {box2, id2};
     }
 
-    SearchResultsViewType searchResults("", 3);
+    Kokkos::deep_copy(boxes, hostBoxes);
+
+    SearchResultsViewType searchResults("searchResults", 3);
 
     auto execSpace = ExecSpace{};
     bool enforceSearchResultSymmetry = true;
@@ -710,7 +719,10 @@ void test_ident_proc_with_search_with_views(stk::search::SearchMethod searchMeth
     coarse_search(boxes, boxes, searchMethod, comm, searchResults, execSpace,
                          enforceSearchResultSymmetry, autoSwapDomainAndRange, sortSearchResults);
 
-    SearchResultsViewType goldResults("", 3);
+    auto hostSearchResults = Kokkos::create_mirror_view(searchResults);
+    Kokkos::deep_copy(hostSearchResults, searchResults);
+
+    SearchResultsViewType::HostMirror goldResults("goldResults", 3);
 
     IdentProc goldId1(1, 0);
     IdentProc goldId2(1, 1);
@@ -730,7 +742,7 @@ void test_ident_proc_with_search_with_views(stk::search::SearchMethod searchMeth
     Kokkos::sort(goldResults, stk::search::Comparator<typename SearchResultsViewType::value_type>());
 
     for (size_t i = 0; i < goldResults.extent(0); i++) {
-      EXPECT_EQ(goldResults[i], searchResults[i])
+      EXPECT_EQ(goldResults[i], hostSearchResults[i])
           << "Test comparison for proc " << procId << " failed for comparsion #" << i << std::endl;
     }
   }
@@ -808,6 +820,7 @@ TEST(stk_search, coarse_search_ident_proc_switch_ARBORX)
   GTEST_SKIP();
 #endif
   test_ident_proc_with_search(stk::search::ARBORX);
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_ident_proc_with_search_with_views(stk::search::ARBORX);
 }
 
@@ -872,6 +885,7 @@ TEST(stk_search, coarse_search_one_point_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_coarse_search_one_point(stk::search::ARBORX);
 }
 
@@ -939,6 +953,7 @@ TEST(CoarseSearch, forDeterminingSharingAllAllCase_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_coarse_search_for_determining_sharing_all_all_case(stk::search::ARBORX);
 }
 
@@ -1064,6 +1079,7 @@ TEST(CoarseSearch, forDeterminingSharingLinearAdjacentCase_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_coarse_search_for_determining_sharing_linear_adjacent_case(stk::search::ARBORX);
 }
 
@@ -1072,6 +1088,7 @@ TEST(CoarseSearchScaling, forDeterminingSharingLinearAdjacentCase_ARBORX)
 #ifndef STK_HAS_ARBORX
   GTEST_SKIP();
 #endif
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_coarse_search_for_determining_sharing_linear_adjacent_case(stk::search::ARBORX, 1000);
 }
 
@@ -1083,6 +1100,7 @@ TEST(CoarseSearch, nonDefaultView_MORTON_LBVH)
 
 TEST(CoarseSearch, nonDefaultView_ARBORX)
 {
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_coarse_search_with_non_default_view(stk::search::ARBORX, stk::parallel_machine_world());
 }
 
@@ -1093,6 +1111,7 @@ TEST(LocalCoarseSearch, nonDefaultView_MORTON_LBVH)
 
 TEST(LocalCoarseSearch, nonDefaultView_ARBORX)
 {
+  if (!stk::unit_test_util::can_run_device_tests(stk::parallel_machine_world())) GTEST_SKIP();
   test_local_coarse_search_with_non_default_view(stk::search::ARBORX);
 }
 #endif
