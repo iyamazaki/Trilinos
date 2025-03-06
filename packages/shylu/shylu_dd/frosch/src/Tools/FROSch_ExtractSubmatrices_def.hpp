@@ -85,7 +85,6 @@ namespace FROSch {
                     Array<SC> valuesLocal;
                     for (LO j=0; j<size; j++) {
                         LO localIndex = subdomainMap->getLocalElement(indices[j]);
-                        LO globalIndex = subdomainMap->getGlobalElement(localIndex);
                         if (localIndex>=0) {
                             indicesLocal.push_back(localIndex);
                             valuesLocal.push_back(zero);

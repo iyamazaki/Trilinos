@@ -94,7 +94,7 @@ public:
                 LO localIndex_j  = outputRowMap_.getLocalElement(globalIndex_j);
                 if (localIndex_j >= 0) {
                     // look for the same column index in localSubdomainMatrix
-                    for (LO k=localOutputPtrs_(localRowTarget); k<localOutputPtrs_(localRowTarget+1); k++)
+                    for (size_t k=localOutputPtrs_(localRowTarget); k<localOutputPtrs_(localRowTarget+1); k++)
                     {
                         if (localOutputInds_(k) == localIndex_j)
                         {
