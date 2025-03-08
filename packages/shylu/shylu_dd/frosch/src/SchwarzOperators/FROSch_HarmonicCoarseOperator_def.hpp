@@ -53,6 +53,9 @@ namespace FROSch {
                                                     this->targetMapGIDs,this->targetMapGIDsBegin,this->ownedRowGIDs,
                                                     this->localRowsSend,this->localRowsSendBegin,this->localRowsRecv,this->localRowsRecvBegin,
                                                     this->columnsRecv,
+                                                    //
+                                                    this->valuesRecv_d,
+                                                    this->mapRecvToLocal,
                                                     //  
                                                     this->K_.getConst(),
                                                     this->coarseSubdomainMatrix_,
@@ -1267,7 +1270,7 @@ namespace FROSch {
                                                        this->distributor, this->numTerms,this->locCount, this->sourceSize,this->targetSize,this->rowCount,
                                                        this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
                                                        this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
-                                                       this->columnsRecv, tpetraNewMat, replaceVals);
+                                                       this->columnsRecv, this->valuesRecv_d, this->mapRecvToLocal, tpetraNewMat, replaceVals);
                   #if FROSCH_DEBUG_OUT
                   //MPI_Barrier(MPI_COMM_WORLD); 
                   printf( " HarmonicCoarseOperator::extractLocalSubdomainMatrix_Symbolic::doImport done\n" );
@@ -1277,6 +1280,14 @@ namespace FROSch {
               {
                  // importSquareMatrix_impor calls fillComplete (not anymore, keep it nonLocal to replace in importSquareMatrix_import for Compute)
                  this->coarseSubdomainMatrix_->fillComplete();
+              }
+              // extract map from RecvVals to LocalVals
+              if (false) {
+                  // regain Tpetra matrix
+                  const CrsMatrixWrap<SC,LO,GO,NO>& crsNewOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(this->coarseSubdomainMatrix_));
+                  const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraNewMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsNewOp.getCrsMatrix());
+                  auto tpetraNewMat = xTpetraNewMat.getTpetra_CrsMatrixNonConst();
+                  tFunctions.extractMapRecvToLocal(this->distributor, this->numTerms, this->rowCount, this->localRowsRecv, this->localRowsRecvBegin, this->columnsRecv, tpetraNewMat, this->mapRecvToLocal);
               }
               //if (this->coarseSubdomainMatrix_->isLocallyIndexed ()) printf( " isLocal(2)\n" );
               //else printf( " not isLocal(2)\n" ); fflush(stdout);

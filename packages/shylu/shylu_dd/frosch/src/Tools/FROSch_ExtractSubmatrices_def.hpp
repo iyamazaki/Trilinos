@@ -64,15 +64,15 @@ namespace FROSch {
         auto subdomainMap = subdomainMatrix->getRowMap();
 
         const SC zero = ScalarTraits<SC>::zero();
-	if (subdomainMap->getComm()->getRank() == 0) {
+        if (subdomainMap->getComm()->getRank() == 0) {
           printf( " * localSubdomainMatrix(%s)\n",(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global") );
-	}
+        }
         if ( subdomainMatrix->isLocallyIndexed ()
              //&& !subdomainMatrix->isGloballyIndexed()
            ) {
-	    if (subdomainMap->getComm()->getRank() == 0) {
+            if (subdomainMap->getComm()->getRank() == 0) {
               printf( " Extract-locally(%d with %d)\n",subdomainMap->getComm()->getRank(),int(subdomainMap->getLocalNumElements()) );
-	    }
+            }
             for (unsigned i=0; i<subdomainMap->getLocalNumElements(); i++) {
                 ArrayView<const LO> indices;
                 ArrayView<const SC> values;
@@ -95,9 +95,9 @@ namespace FROSch {
                 }
             }
         } else {
-	    if (subdomainMap->getComm()->getRank() == 0) {
+            if (subdomainMap->getComm()->getRank() == 0) {
               printf( " Extract-Globally(%d with %d)\n",subdomainMap->getComm()->getRank(),int(subdomainMap->getLocalNumElements()) );
-	    }
+            }
             for (unsigned i=0; i<subdomainMap->getLocalNumElements(); i++) {
                 ArrayView<const GO> indices;
                 ArrayView<const SC> values;
@@ -133,7 +133,7 @@ namespace FROSch {
         ExtractLocalSubdomainMatrix_Compute(scatter, globalMatrix, subdomainMatrix, localSubdomainMatrix);
     }
 
-    template <class SC,class LO,class GO,class NO>
+    template <class SC,class LO,class GO,class NO, class ValuesViewT_dev, class PointerViewT_dev>
     void ExtractLocalSubdomainMatrix_Compute(const size_t numTerms,
                                              const size_t locCount,
                                              std::vector<size_t> sourceSize,
@@ -151,6 +151,9 @@ namespace FROSch {
                                              std::vector<LO> localRowsRecvBegin,
                                              std::vector<LO> columnsRecv,
                                              //
+                                             ValuesViewT_dev  &valuesRecv_d,
+                                             PointerViewT_dev &mapRecvToLocal,
+                                             //
                                              RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
                                              RCP<      Matrix<SC,LO,GO,NO> > subdomainMatrix,
                                              RCP<      Matrix<SC,LO,GO,NO> > localSubdomainMatrix)
@@ -158,9 +161,9 @@ namespace FROSch {
         FROSCH_DETAILTIMER_START(extractLocalSubdomainMatrixTime_compute, "ExtractLocalSubdomainMatrix_Compute(Custom)");
         auto subdomainRowMap = subdomainMatrix->getRowMap();
 
-	if (subdomainRowMap->getComm()->getRank() == 0) {
+        if (subdomainRowMap->getComm()->getRank() == 0) {
           printf( " %d: ExtractLocalSubdomainMatrix_Compute(Custom, %s, %d,%d)\n",subdomainRowMap->getComm()->getRank(),(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global"),int(subdomainMatrix->getLocalNumRows()),int(localSubdomainMatrix->getLocalNumRows()) );
-	}
+        }
         //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); subdomainMatrix->fillComplete(); if(subdomainRowMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix (Before) === \n\n"; subdomainMatrix->describe(*fancy,VERB_EXTREME); }
         //const SC zero = ScalarTraits<SC>::zero();
         //subdomainMatrix->setAllToScalar(zero);
@@ -175,13 +178,13 @@ namespace FROSch {
             const CrsMatrixWrap<SC,LO,GO,NO>& crsDistSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*subdomainMatrix);
             const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraDistSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsDistSubOp.getCrsMatrix());
             auto tpetraDistSubMat = xTpetraDistSubMat.getTpetra_CrsMatrixNonConst();
-	    auto outputRowMap = tpetraDistSubMat->getRowMap();
+            auto outputRowMap = tpetraDistSubMat->getRowMap();
             #else
             bool extract_local = true;
             const CrsMatrixWrap<SC,LO,GO,NO>& crsSubOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*subdomainMatrix);
             const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraSubMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsSubOp.getCrsMatrix());
             auto tpetraSubMat = xTpetraSubMat.getTpetra_CrsMatrixNonConst();
-	    auto outputRowMap = tpetraSubMat->getRowMap();
+            auto outputRowMap = tpetraSubMat->getRowMap();
             #endif
             localSubdomainMatrix->resumeFill();
             {
@@ -195,7 +198,7 @@ namespace FROSch {
                                                      distributor, numTerms,locCount, sourceSize,targetSize,rowCount,
                                                      targetMapGIDs,targetMapGIDsBegin, ownedRowGIDs,
                                                      localRowsSend, localRowsSendBegin, localRowsRecv, localRowsRecvBegin,
-                                                     columnsRecv, tpetraSubMat, replaceVals);
+                                                     columnsRecv, valuesRecv_d, mapRecvToLocal, tpetraSubMat, replaceVals);
 
               }
             }
@@ -285,7 +288,7 @@ namespace FROSch {
             fillCompleteParams->set("No Nonlocal Changes", true);
             localSubdomainMatrix->fillComplete(fillCompleteParams);
         }
-	/*{
+        /*{
             MPI_Barrier(MPI_COMM_WORLD);
             if (subdomainRowMap->getComm()->getRank() == 0) {
                 printf( "\n [\n" );
@@ -300,9 +303,9 @@ namespace FROSch {
             MPI_Barrier(MPI_COMM_WORLD);
         }*/
         //printf( " Barrier (%d) ..\n",subdomainRowMap->getComm()->getRank() ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
-	if (subdomainRowMap->getComm()->getRank() == 0) {
+        if (subdomainRowMap->getComm()->getRank() == 0) {
           printf( " ExtractLocalSubdomainMatrix_Compute(Custom, %s) done\n",(localSubdomainMatrix->isLocallyIndexed() ? "local" : "global") ); fflush(stdout);
-	}
+        }
         //MPI_Barrier(MPI_COMM_WORLD); 
         return;
     }

@@ -36,6 +36,12 @@ class TpetraFunctions
   using IndicesViewT = typename tCrsMatrix::local_inds_host_view_type;
   using GlobalIndicesViewT = typename tCrsMatrix::global_inds_host_view_type;
   
+  using LocalMatrix_dev  = typename tCrsMatrix::local_matrix_device_type;
+  using LocalGraph_dev   = typename tCrsMatrix::local_graph_device_type;
+  using ValuesViewT_dev  = typename LocalMatrix_dev::values_type::non_const_type;
+  using IndicesViewT_dev = typename LocalGraph_dev::entries_type::non_const_type;
+  using PointerViewT_dev = typename LocalGraph_dev::row_map_type::non_const_type;
+
 public:
 
     TpetraFunctions() = default;
@@ -127,11 +133,22 @@ public:
         local_vals_device_type localOutputVals_;
     };
 
-    template<class local_map_device_type,
-            class local_ptrs_device_const, class local_inds_device_const, class local_vals_device_const,
-            class local_ptrs_device_type,  class local_inds_device_type,  class local_vals_device_type>
     struct TpetraFunctor_insert
     {
+        TpetraFunctor_insert(PointerViewT_dev mapRecvToLocal_, ValuesViewT_dev valuesRecv_, ValuesViewT_dev localOutputVals_) :
+        mapRecvToLocal    (mapRecvToLocal_),
+        valuesRecv_d      (valuesRecv_),
+        localOutputVals_d (localOutputVals_)
+        {}
+
+        KOKKOS_INLINE_FUNCTION
+        void operator()(const int i) const {
+            localOutputVals_d(mapRecvToLocal(i)) = valuesRecv_d(i);
+        }
+
+        PointerViewT_dev mapRecvToLocal;
+        ValuesViewT_dev  valuesRecv_d;
+        ValuesViewT_dev  localOutputVals_d;
     };
 
   // --------------------------------------------------------------------------- //
@@ -171,9 +188,22 @@ public:
                             const std::vector<LO> & localRowsRecv,
                             const std::vector<LO> & localRowsRecvBegin,
                             const std::vector<LO> & columnsRecv,
+                            ValuesViewT_dev  &valuesRecv_d,
+                            PointerViewT_dev &mapRecvToLocal,
                             Teuchos::RCP<tCrsMatrix> & outputMatrix,
                             bool replaceVals = false);
+
+  void
+  extractMapRecvToLocal(Teuchos::RCP<Tpetra::Distributor> distributor,
+                       const size_t numTerms,
+                       const Teuchos::ArrayRCP<size_t> & rowCount,
+                       const std::vector<LO> & localRowsRecv,
+                       const std::vector<LO> & localRowsRecvBegin,
+                       const std::vector<LO> & columnsRecv,
+                       RCP<tCrsMatrix> & outputMatrix,
+                       PointerViewT_dev &mapRecvToLocal);
   // --------------------------------------------------------------------------- //
+
 private:
   // --------------------------------------------------------------------------- //
   Teuchos::RCP<Xpetra::Matrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>>
@@ -210,6 +240,8 @@ private:
                                     const std::vector<LO> & localRowsRecv,
                                     const std::vector<LO> & localRowsRecvBegin,
                                     const std::vector<LO> & columnsRecv,
+                                    ValuesViewT_dev  &valuesRecv_d,
+                                    PointerViewT_dev &mapRecvToLocal,
                                     Teuchos::RCP<tCrsMatrix> & outputMatrix,
                                     bool replaceVals);
   // --------------------------------------------------------------------------- //

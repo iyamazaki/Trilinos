@@ -210,7 +210,7 @@ namespace FROSch {
           size_t numTerms, locCount;
           std::vector<size_t> sourceSize;
           std::vector<size_t> targetSize;
-	  Teuchos::ArrayRCP<size_t> rowCount;
+          Teuchos::ArrayRCP<size_t> rowCount;
           //
           RCP<Tpetra::Distributor> distributor;
           //
@@ -221,7 +221,15 @@ namespace FROSch {
           std::vector<LO> localRowsSendBegin;
           std::vector<LO> localRowsRecv;
           std::vector<LO> localRowsRecvBegin;
-	  std::vector<LO> columnsRecv;
+          std::vector<LO> columnsRecv;
+          //
+          using tCrsMatrix = Tpetra::CrsMatrix<SC,LO,GO,NO>;
+          using LocalMatrix_dev  = typename tCrsMatrix::local_matrix_device_type;
+          using LocalGraph_dev   = typename tCrsMatrix::local_graph_device_type;
+          using ValuesViewT_dev  = typename LocalMatrix_dev::values_type::non_const_type;
+          using PointerViewT_dev = typename LocalGraph_dev::row_map_type::non_const_type;
+	  ValuesViewT_dev  valuesRecv_d;
+          PointerViewT_dev mapRecvToLocal;
         // ------------------------------------------- //
 
         bool Verbose_ = false;

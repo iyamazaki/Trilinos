@@ -85,6 +85,8 @@ importSquareMatrix_import(RCP<const tCrsMatrix> inputMatrix,
                           const std::vector<LO> & localRowsRecv,
                           const std::vector<LO> & localRowsRecvBegin,
                           const std::vector<LO> & columnsRecv,
+                          ValuesViewT_dev  &valuesRecv_d,
+                          PointerViewT_dev &mapRecvToLocal,
                           RCP<tCrsMatrix> & outputMatrix,
                           bool replaceVals)
 {
@@ -95,8 +97,46 @@ importSquareMatrix_import(RCP<const tCrsMatrix> inputMatrix,
                                  numTerms, locCount, sourceSize, targetSize, rowCount,
                                  targetMapGIDs, targetMapGIDsBegin, ownedRowGIDs,
                                  localRowsSend, localRowsSendBegin, localRowsRecv,
-                                 localRowsRecvBegin, columnsRecv, outputMatrix,
-                                 replaceVals);
+                                 localRowsRecvBegin, columnsRecv, valuesRecv_d, mapRecvToLocal,
+                                 outputMatrix, replaceVals);
+}
+
+template <class SC, class LO, class GO, class NO>
+void TpetraFunctions<SC,LO,GO,NO>::
+extractMapRecvToLocal(Teuchos::RCP<Tpetra::Distributor> distributor,
+                      const size_t numTerms,
+                      const Teuchos::ArrayRCP<size_t> & rowCount,
+                      const std::vector<LO> & localRowsRecv,
+                      const std::vector<LO> & localRowsRecvBegin,
+                      const std::vector<LO> & columnsRecv,
+                      RCP<tCrsMatrix> & outputMatrix,
+                      PointerViewT_dev &mapRecvToLocal)
+{
+    auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: extractMapRecvToLocal");
+    Teuchos::TimeMonitor CaseTimer( *caseTimer );
+
+    auto localOutputPtrs_h = outputMatrix->getLocalRowPtrsHost();
+    auto localOutputInds_h = outputMatrix->getLocalIndicesHost();
+
+    printf( " extractMapRecvToLocal(%d -> %d : %d,%d)\n",mapRecvToLocal.extent(0),numTerms, localOutputPtrs_h.extent(0),localOutputInds_h.extent(0) );
+    const size_t numRecvs = distributor->getNumReceives();
+    Kokkos::resize(mapRecvToLocal, numTerms);
+    auto mapRecvToLocal_h = Kokkos::create_mirror_view(mapRecvToLocal);
+    size_t countTerms = 0;
+    for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
+        const LO localRow = localRowsRecv[j];
+        for (size_t i=0; i<rowCount[localRow]; i++) {
+            for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
+                if (localOutputInds_h(k) == columnsRecv[countTerms]) {
+                    mapRecvToLocal_h(countTerms) = k;
+                    countTerms++;
+                    break;
+                }
+            }
+        }
+    }
+    printf( " extractMapRecvToLocal(%d vs %d)\n",numTerms,countTerms );
+    Kokkos::deep_copy(mapRecvToLocal, mapRecvToLocal_h);
 }
 // ------------------------------------------------------------------------------- //
 
@@ -224,9 +264,7 @@ communicateMatrixData_build(RCP<const tCrsMatrix> inputMatrix,
         numTerms += procCount;
     }
 
-    //std::vector<LO> columnsRecv(numTerms);
     columnsRecv.resize(numTerms);
-    std::vector<SC> valuesRecv(numTerms);
 #if 0
     if (columnMap->getComm()->getRank() == 2) {
         printf(" + localRowsRecv[i]=[\n");
@@ -297,6 +335,8 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
                       const std::vector<LO> & localRowsRecv,
                       const std::vector<LO> & localRowsRecvBegin,
                       const std::vector<LO> & columnsRecv,
+                      ValuesViewT_dev  &valuesRecv_d,
+                      PointerViewT_dev &mapRecvToLocal,
                       RCP<tCrsMatrix> & outputMatrix,
                       bool replaceVals)
 {
@@ -341,12 +381,15 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
     //MPI_Barrier(MPI_COMM_WORLD); printf( " >> communicateMatrixData_import(1) <<\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 
     // Communicate
-    std::vector<SC> valuesRecv(numTerms);
+    // TODO: !! move allocation of valuesRecv to communicateMatrixData_build !!
+    //ValuesViewT_dev  valuesRecv_d("valuesRecv", numTerms);
+    Kokkos::resize(valuesRecv_d, numTerms);
+    auto valuesRecv = Kokkos::create_mirror_view(valuesRecv_d);
     using KSX = typename Kokkos::ArithTraits<SC>::val_type;
     const KSX* matrixValues_K = reinterpret_cast<const KSX*>(matrixValues.data());
     KSX* valuesRecv_K = reinterpret_cast<KSX*>(valuesRecv.data());
     const size_t sizeSend = matrixValues.size();
-    const size_t sizeRecv = valuesRecv.size();
+    const size_t sizeRecv = valuesRecv.extent(0);
     {
         auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (communicate)");
         Teuchos::TimeMonitor CaseTimer( *caseTimer );
@@ -358,6 +401,7 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
     //MPI_Barrier(MPI_COMM_WORLD); printf( " >> communicateMatrixData_import(2) <<\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 
     // Insert numerical values into local matrix
+    int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
     if (replaceVals) {
         auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (replace)");
         Teuchos::TimeMonitor CaseTimer( *caseTimer );
@@ -475,58 +519,77 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
         // ----------------------------------- //
         // insert ** RECEIVED ** contributions //
         // ----------------------------------- //
-        int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
         if (true) {
             auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (replaceLocalVals_localView received)");
             Teuchos::TimeMonitor CaseTimer( *caseTimer );
-
-            auto localOutputPtrs_h = outputMatrix->getLocalRowPtrsHost();
-            auto localOutputInds_h = outputMatrix->getLocalIndicesHost();
-            auto localOutputVals_h = outputMatrix->getLocalValuesHost(Tpetra::Access::OverwriteAll);
-            // NOTE:
-            // 1) create a map from valuesRecv to localOutputVals
-            // 2) copy valuesRecv to GPU
-            // 3) just copy valuesRecv to localOutputVals with the map
-            size_t countTerms = valuesRecv.size();
-            using local_ptrs_device_type = typename tCrsMatrix::crs_graph_type::offset_device_view_type;
-	    local_ptrs_device_type mapRecvToLocal("mapRecvToLocal",countTerms);
-	    auto mapRecvToLocal_h = Kokkos::create_mirror_view(mapRecvToLocal);
-            countTerms = 0;
-            for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
-                const LO localRow = localRowsRecv[j];
-                //printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
-                for (size_t i=0; i<rowCount[localRow]; i++) {
-                    for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
-                        if (localOutputInds_h(k) == columnsRecv[countTerms]) {
-                            mapRecvToLocal_h(countTerms) = k;
-                            countTerms++;
-                            break;
-                        }
-                    }
-		}
-	    }
-	    //Kokkos::deep_copy(mapRecvToLocal, mapRecvToLocal_h);
-#if 1
-            countTerms = valuesRecv.size();
-            for (size_t i=0; i<countTerms; i++) {
-                localOutputVals_h(mapRecvToLocal_h(i)) = valuesRecv[i];
-	    }
-#else
-            countTerms = 0;
-            for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
-                const LO localRow = localRowsRecv[j];
-                //printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
-                for (size_t i=0; i<rowCount[localRow]; i++) {
-                    for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
-                        if (localOutputInds_h(k) == columnsRecv[countTerms]) {
-                            localOutputVals_h(k) = valuesRecv[countTerms];
-                            countTerms++;
-                            break;
+            if (mapRecvToLocal.extent(0) < numTerms) {
+                #if 1
+                extractMapRecvToLocal(distributor, numTerms, rowCount,
+                                      localRowsRecv, localRowsRecvBegin, columnsRecv,
+                                      outputMatrix, mapRecvToLocal);
+                #else
+                auto localOutputPtrs_h = outputMatrix->getLocalRowPtrsHost();
+                auto localOutputInds_h = outputMatrix->getLocalIndicesHost();
+                // create a map from valuesRecv to localOutputVals
+                size_t countTerms = 0;
+                Kokkos::resize(mapRecvToLocal, numTerms);
+                auto mapRecvToLocal_h = Kokkos::create_mirror_view(mapRecvToLocal);
+                for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
+                    const LO localRow = localRowsRecv[j];
+                    //printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
+                    for (size_t i=0; i<rowCount[localRow]; i++) {
+                        for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
+                            if (localOutputInds_h(k) == columnsRecv[countTerms]) {
+                                mapRecvToLocal_h(countTerms) = k;
+                                countTerms++;
+                                break;
+                            }
                         }
                     }
                 }
+                Kokkos::deep_copy(mapRecvToLocal, mapRecvToLocal_h);
+                #endif
             }
-#endif
+            // copy received non-zero values to local matrix
+            #if 1
+             #if 1
+             {
+                 Kokkos::deep_copy(valuesRecv_d, valuesRecv);
+                 auto localOutputVals_d = outputMatrix->getLocalValuesDevice(Tpetra::Access::OverwriteAll);
+
+                 using execution_space = typename tMap::local_map_type::execution_space;
+                 Kokkos::RangePolicy<execution_space> policy_row (0, valuesRecv.extent(0));
+                 TpetraFunctor_insert tpetra_functor(mapRecvToLocal, valuesRecv_d, localOutputVals_d);
+                 Kokkos::RangePolicy<execution_space> policy_replace (0, valuesRecv.extent(0));
+                 Kokkos::parallel_for(
+                     "FROSch::communicateMatrixData_imports::readMap", policy_replace, tpetra_functor);
+                 Kokkos::fence();
+             }
+             #else
+             {
+                 auto localOutputVals_h = outputMatrix->getLocalValuesHost(Tpetra::Access::OverwriteAll);
+                 auto mapRecvToLocal_h = Kokkos::create_mirror_view(mapRecvToLocal);
+                 for (size_t i=0; i<valuesRecv.extent(0); i++) {
+                     localOutputVals_h(mapRecvToLocal_h(i)) = valuesRecv(i);
+                 }
+             }
+             #endif
+            #else
+             countTerms = 0;
+             for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
+                 const LO localRow = localRowsRecv[j];
+                 //printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
+                 for (size_t i=0; i<rowCount[localRow]; i++) {
+                     for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
+                         if (localOutputInds_h(k) == columnsRecv[countTerms]) {
+                             localOutputVals_h(k) = valuesRecv(countTerms);
+                             countTerms++;
+                             break;
+                         }
+                     }
+                 }
+             }
+            #endif
         } else
         {
             auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (replaceLocalVals received)");
@@ -538,7 +601,7 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
                 valuesVec.resize(rowCount[localRow]);
                 for (size_t k=0; k<rowCount[localRow]; k++) {
                     indicesVec[k] = columnsRecv[countTerms];
-                    valuesVec[k] = valuesRecv[countTerms++];
+                    valuesVec[k] = valuesRecv(countTerms++);
                 }
                 outputMatrix->replaceLocalValues(localRow, 
                                                  Teuchos::ArrayView<const LO>(indicesVec),
@@ -603,9 +666,9 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
             indicesVec.resize(rowCount[localRow]);
             valuesVec.resize(rowCount[localRow]);
             for (size_t k=0; k<rowCount[localRow]; k++) {
-                //if (inputColMap->getComm()->getRank() == 2) printf( " * %d(%d) %e\n",outputRowMap->getGlobalElement(columnsRecv[countTerms]),valuesRecv[countTerms] );
+                //if (inputColMap->getComm()->getRank() == 2) printf( " * %d(%d) %e\n",outputRowMap->getGlobalElement(columnsRecv[countTerms]),valuesRecv(countTerms) );
                 indicesVec[k] = outputRowMap->getGlobalElement(columnsRecv[countTerms]);
-                valuesVec[k] = valuesRecv[countTerms++];
+                valuesVec[k] = valuesRecv(countTerms++);
             }
             /*{
                 GlobalIndicesViewT gIndices;
@@ -619,6 +682,33 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
             outputMatrix->insertGlobalValues(globalRow,
                                              Teuchos::ArrayView<const GO>(indicesVec),
                                              Teuchos::ArrayView<const SC>(valuesVec));
+        }
+        if (false) {
+            outputMatrix->fillComplete();
+            // create a map from valuesRecv to localOutputVals
+            auto localOutputPtrs_h = outputMatrix->getLocalRowPtrsHost();
+            auto localOutputInds_h = outputMatrix->getLocalIndicesHost();
+
+            Kokkos::resize(mapRecvToLocal, numTerms);
+            auto mapRecvToLocal_h = Kokkos::create_mirror_view(mapRecvToLocal);
+            size_t countTerms = 0;
+            for (LO j=0; j<localRowsRecvBegin[numRecvs]; j++) {
+                const LO localRow = localRowsRecv[j];
+                //printf( " %d: localRowsRecv[%d] = %d\n",myRank,j,localRow );
+                for (size_t i=0; i<rowCount[localRow]; i++) {
+                    for (size_t k=localOutputPtrs_h(localRow); k<localOutputPtrs_h(localRow+1); k++) {
+                        if (localOutputInds_h(k) == columnsRecv[countTerms]) {
+                            mapRecvToLocal_h(countTerms) = k;
+                            countTerms++;
+                            break;
+                        }
+                    }
+                }
+            }
+            Kokkos::deep_copy(mapRecvToLocal, mapRecvToLocal_h);
+            //outputMatrix->resumeFill();
+        } else {
+            Kokkos::resize(mapRecvToLocal, 0);
         }
     }
     //if (outputMatrix->isLocallyIndexed ()) printf( " isLocal(b)\n" );

@@ -47,7 +47,7 @@ namespace FROSch {
                                              RCP<      Matrix<SC,LO,GO,NO> > subdomainMatrix,
                                              RCP<      Matrix<SC,LO,GO,NO> > repeatedMatrix);
 
-    template <class SC,class LO,class GO,class NO> 
+    template <class SC,class LO,class GO,class NO, class ValuesViewT_dev, class PointerViewT_dev> 
     void ExtractLocalSubdomainMatrix_Compute(const size_t numTerms,
                                              const size_t locCount,
                                              std::vector<size_t> sourceSize,
@@ -63,7 +63,9 @@ namespace FROSch {
                                              std::vector<LO> localRowsSendBegin,
                                              std::vector<LO> localRowsRecv,
                                              std::vector<LO> localRowsRecvBegin,
-					     std::vector<LO> columnsRecv,
+                                             std::vector<LO> columnsRecv,
+                                             ValuesViewT_dev  &valuesRecv_d,
+                                             PointerViewT_dev &mapRecvToLocal,
                                              //  
                                              RCP<const Matrix<SC,LO,GO,NO> > globalMatrix,
                                              RCP<      Matrix<SC,LO,GO,NO> > subdomainMatrix,

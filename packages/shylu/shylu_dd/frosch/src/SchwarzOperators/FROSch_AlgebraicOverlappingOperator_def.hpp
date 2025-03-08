@@ -289,6 +289,9 @@ namespace FROSch {
                                                     this->targetMapGIDs,this->targetMapGIDsBegin,this->ownedRowGIDs,
                                                     this->localRowsSend,this->localRowsSendBegin,this->localRowsRecv,this->localRowsRecvBegin,
                                                     this->columnsRecv,
+                                                    //
+                                                    this->valuesRecv_d,
+                                                    this->mapRecvToLocal,
                                                     //  
                                                     this->K_,
                                                     this->subdomainMatrix_,
@@ -342,8 +345,8 @@ namespace FROSch {
             this->subdomainScatter_ = ImportFactory<LO,GO,NO>::Build(this->K_->getRowMap(), this->OverlappingMap_);
 
             // import GlobalMatrix K into subdomainMatrix
-            {
 #ifdef  USE_CUSTOM_IMPORT
+            {
                TpetraFunctions<SC,LO,GO,NO> tFunctions;
                //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); this->coarseSubdomainMatrix_->fillComplete(); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === Before === \n\n"; this->coarseSubdomainMatrix_->describe(*fancy,VERB_EXTREME); }
 
@@ -373,12 +376,20 @@ namespace FROSch {
                                                        this->distributor, this->numTerms,this->locCount, this->sourceSize,this->targetSize,this->rowCount,
                                                        this->targetMapGIDs,this->targetMapGIDsBegin, this->ownedRowGIDs,
                                                        this->localRowsSend, this->localRowsSendBegin, this->localRowsRecv, this->localRowsRecvBegin,
-                                                       this->columnsRecv, tpetraNewMat, replaceVals);
+                                                       this->columnsRecv, this->valuesRecv_d, this->mapRecvToLocal, tpetraNewMat, replaceVals);
                   //{ RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); if(repeatedMap->getComm()->getRank()==0) std::cout << "\n === SubMatrix === \n\n"; tpetraNewMat->describe(*fancy,VERB_EXTREME); }
               }
+              // extract map from RecvVals to LocalVals 
+              if (false) {
+                  // regain Tpetra matrix
+                  const CrsMatrixWrap<SC,LO,GO,NO>& crsNewOp = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(this->subdomainMatrix_));
+                  const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraNewMat = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsNewOp.getCrsMatrix());
+                  auto tpetraNewMat = xTpetraNewMat.getTpetra_CrsMatrixNonConst();
+                  tFunctions.extractMapRecvToLocal(this->distributor, this->numTerms, this->rowCount, this->localRowsRecv, this->localRowsRecvBegin, this->columnsRecv, tpetraNewMat, this->mapRecvToLocal);
+              }
               //MPI_Barrier(MPI_COMM_WORLD); if (this->subdomainMatrix_->getRowMap()->getComm()->getRank() == 0) printf( " importSquareMatrix_import (done)\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
-#endif
             }
+#endif
 
             // extract subdomainMatrix into localSubdomainMatrix
             // build local subdomain matrix
