@@ -118,7 +118,7 @@ extractMapRecvToLocal(Teuchos::RCP<Tpetra::Distributor> distributor,
     auto localOutputPtrs_h = outputMatrix->getLocalRowPtrsHost();
     auto localOutputInds_h = outputMatrix->getLocalIndicesHost();
 
-    printf( " extractMapRecvToLocal(%d -> %d : %d,%d)\n",mapRecvToLocal.extent(0),numTerms, localOutputPtrs_h.extent(0),localOutputInds_h.extent(0) );
+    //printf( " extractMapRecvToLocal(%d -> %d : %d,%d)\n",mapRecvToLocal.extent(0),numTerms, localOutputPtrs_h.extent(0),localOutputInds_h.extent(0) );
     const size_t numRecvs = distributor->getNumReceives();
     Kokkos::resize(mapRecvToLocal, numTerms);
     auto mapRecvToLocal_h = Kokkos::create_mirror_view(mapRecvToLocal);
@@ -135,7 +135,7 @@ extractMapRecvToLocal(Teuchos::RCP<Tpetra::Distributor> distributor,
             }
         }
     }
-    printf( " extractMapRecvToLocal(%d vs %d)\n",numTerms,countTerms );
+    //printf( " extractMapRecvToLocal(%d vs %d)\n",numTerms,countTerms );
     Kokkos::deep_copy(mapRecvToLocal, mapRecvToLocal_h);
 }
 // ------------------------------------------------------------------------------- //

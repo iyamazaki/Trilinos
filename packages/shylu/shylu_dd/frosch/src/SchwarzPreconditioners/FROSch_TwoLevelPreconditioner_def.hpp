@@ -212,11 +212,18 @@ namespace FROSch {
       int ret = 0;
       {
         FROSCH_TIMER_START_LEVELID(computeTime,"TwoLevelPreconditioner::compute");
-        if (0>this->OverlappingOperator_->compute()) ret -= 1;
+        int rval = 0;
+
+        // compute first level overlapping precond
+        rval = this->OverlappingOperator_->compute();
+        if (rval < 0) ret -= 1;
         #if FROSCH_DEBUG_OUT
         MPI_Barrier(MPI_COMM_WORLD); printf( " --> TwoLevelPreconditioner:: OverlappingOperator::compute done\n" );
         #endif
-        if (0>CoarseOperator_->compute()) ret -= 10;
+
+        // compute second level coarse precond
+        rval = CoarseOperator_->compute();
+        if (rval < 0) ret -= 10;
         #if FROSCH_DEBUG_OUT
         MPI_Barrier(MPI_COMM_WORLD); printf( " --> TwoLevelPreconditioner:: CoarseOperator::compute done\n" );
         #endif
