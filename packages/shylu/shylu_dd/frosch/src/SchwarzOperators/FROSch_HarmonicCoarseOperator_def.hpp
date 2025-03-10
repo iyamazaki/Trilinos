@@ -531,7 +531,9 @@ namespace FROSch {
         if (numMVRows > 0 && numCols > 0) {
 
             XMatrixPtr phiGamma;
-#if defined(HAVE_XPETRA_KOKKOS_REFACTOR) && defined(HAVE_XPETRA_TPETRA)
+#if defined(HAVE_XPETRA_TPETRA)
+            Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Check");
+            Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
             if (rowMap->lib() == UseTpetra)
             {
                 Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Tpetra");
@@ -564,10 +566,16 @@ namespace FROSch {
                     "FROSch_HarmonicCoarseOperator::detectLinearDependencies::scale", policy_scale, scale_functor);
 
                 // count nnz
+                indices_type indicesGammaDofsAll_d (Kokkos::ViewAllocateWithoutInitializing("Indices"), indicesGammaDofsAll.size());
+		{
+		    auto indicesGammaDofsAll_h = Kokkos::create_mirror_view(indicesGammaDofsAll_d);
+		    for (int i=0; i<cindicesGammaDofsAll_view; i++) indicesGammaDofsAll_h(i) = indicesGammaDofsAll[i];
+		    Kokkos::deep_copy(indicesGammaDofsAll_d, indicesGammaDofsAll_h);
+	        }
                 rowptr_type Rowptr (Kokkos::ViewAllocateWithoutInitializing("Rowptr"), numRows+1);
                 Kokkos::deep_copy(Rowptr, 0);
                 detectLinearDependenciesFunctor<GOVecView, SCView, local_map_type, local_mv_type, rowptr_type, indices_type, values_type>
-                    count_functor(numMVRows, numCols, localMVBasis, tresholdDropping, indicesGammaDofsAll,
+                    count_functor(numMVRows, numCols, localMVBasis, tresholdDropping, indicesGammaDofsAll_d,
                                   localRowMap, localRepeatedMap, Rowptr);
                 Kokkos::RangePolicy<CountNnzTag, execution_space> policy_count (0, numMVRows);
                 Kokkos::parallel_for(
@@ -582,8 +590,14 @@ namespace FROSch {
                 Kokkos::fence();
 
                 // make it into offsets
+
+#if KOKKOSKERNELS_VERSION >= 40199
+                KokkosKernels::Impl::kk_inclusive_parallel_prefix_sum<execution_space>
+                    (1+numRows, Rowptr);
+#else
                 KokkosKernels::Impl::kk_inclusive_parallel_prefix_sum<rowptr_type, execution_space>
                     (1+numRows, Rowptr);
+#endif
                 Kokkos::fence();
 
                 // allocate local matrix
@@ -592,7 +606,7 @@ namespace FROSch {
 
                 // fill in all the nz entries
                 detectLinearDependenciesFunctor<GOVecView, SCView, local_map_type, local_mv_type, rowptr_type, indices_type, values_type>
-                    fill_functor(numMVRows, numCols, scale, localMVBasis, tresholdDropping, indicesGammaDofsAll,
+                    fill_functor(numMVRows, numCols, scale, localMVBasis, tresholdDropping, indicesGammaDofsAll_d,
                                  localRowMap, localRepeatedMap, Rowptr, Indices, Values);
                 Kokkos::RangePolicy<FillNzEntriesTag, execution_space> policy_fill (0, numMVRows);
                 Kokkos::parallel_for(
@@ -616,6 +630,8 @@ namespace FROSch {
             } else
 #endif
             {
+                Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Epetra");
+                Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
                 // Array for scaling the columns of PhiGamma (1/norm(PhiGamma(:,i)))
                 SCVec scale(numCols, 0.0);
                 for (UN j = 0; j < numCols; j++) {
