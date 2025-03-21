@@ -120,8 +120,15 @@ namespace FROSch {
         #endif
 
         //Detect linear dependencies
-        if (!this->ParameterList_->get("Skip DetectLinearDependencies",false)) {
-            LOVecPtr linearDependentVectors = detectLinearDependencies(indicesGammaDofsAll(),this->K_->getRowMap(),this->K_->getRangeMap(),repeatedMap,this->ParameterList_->get("Phi: Dropping Threshold",1.e-8),this->ParameterList_->get("Phi: Orthogonalization Threshold",1.e-12));
+        if (this->ParameterList_->get("Skip DetectLinearDependencies",false)) {
+            if (this->K_->getRowMap()->getComm()->getRank() == 0) {
+                std::cout << "\n ** Skip detecting linear dependencies **\n" << std::endl;
+	    }
+	} else {
+            LOVecPtr linearDependentVectors = detectLinearDependencies(indicesGammaDofsAll(),this->K_->getRowMap(),this->K_->getRangeMap(),repeatedMap,
+                                                                       this->phiGamma,
+                                                                       this->ParameterList_->get("Phi: Dropping Threshold",1.e-8),
+                                                                       this->ParameterList_->get("Phi: Orthogonalization Threshold",1.e-12));
             #if FROSCH_DEBUG_OUT
             MPI_Barrier(MPI_COMM_WORLD); cout << this->MpiComm_->getRank() << " " << linearDependentVectors.size() << endl;
             #endif
@@ -515,6 +522,7 @@ namespace FROSch {
                                                                                                                          ConstXMapPtr rowMap,
                                                                                                                          ConstXMapPtr rangeMap,
                                                                                                                          ConstXMapPtr repeatedMap,
+                                                                                                                         XMatrixPtr &phiGamma,
                                                                                                                          SC tresholdDropping,
                                                                                                                          SC tresholdOrthogonalization)
     {
@@ -530,7 +538,7 @@ namespace FROSch {
         UN numCols = asembledBasis->getNumVectors();
         if (numMVRows > 0 && numCols > 0) {
 
-            XMatrixPtr phiGamma;
+            //XMatrixPtr phiGamma;
 #if defined(HAVE_XPETRA_TPETRA)
             Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Check");
             Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
@@ -567,14 +575,14 @@ namespace FROSch {
 
                 // count nnz
                 indices_type indicesGammaDofsAll_d (Kokkos::ViewAllocateWithoutInitializing("Indices"), indicesGammaDofsAll.size());
-		{
-		    auto indicesGammaDofsAll_h = Kokkos::create_mirror_view(indicesGammaDofsAll_d);
-		    for (int i=0; i<cindicesGammaDofsAll_view; i++) indicesGammaDofsAll_h(i) = indicesGammaDofsAll[i];
-		    Kokkos::deep_copy(indicesGammaDofsAll_d, indicesGammaDofsAll_h);
-	        }
+                {
+                    auto indicesGammaDofsAll_h = Kokkos::create_mirror_view(indicesGammaDofsAll_d);
+                    for (int i=0; i<indicesGammaDofsAll.size(); i++) indicesGammaDofsAll_h(i) = indicesGammaDofsAll[i];
+                    Kokkos::deep_copy(indicesGammaDofsAll_d, indicesGammaDofsAll_h);
+                }
                 rowptr_type Rowptr (Kokkos::ViewAllocateWithoutInitializing("Rowptr"), numRows+1);
                 Kokkos::deep_copy(Rowptr, 0);
-                detectLinearDependenciesFunctor<GOVecView, SCView, local_map_type, local_mv_type, rowptr_type, indices_type, values_type>
+                detectLinearDependenciesFunctor<indices_type, SCView, local_map_type, local_mv_type, rowptr_type, indices_type, values_type>
                     count_functor(numMVRows, numCols, localMVBasis, tresholdDropping, indicesGammaDofsAll_d,
                                   localRowMap, localRepeatedMap, Rowptr);
                 Kokkos::RangePolicy<CountNnzTag, execution_space> policy_count (0, numMVRows);
@@ -605,7 +613,7 @@ namespace FROSch {
                 values_type  Values  (Kokkos::ViewAllocateWithoutInitializing("Values"),  nnz);
 
                 // fill in all the nz entries
-                detectLinearDependenciesFunctor<GOVecView, SCView, local_map_type, local_mv_type, rowptr_type, indices_type, values_type>
+                detectLinearDependenciesFunctor<indices_type, SCView, local_map_type, local_mv_type, rowptr_type, indices_type, values_type>
                     fill_functor(numMVRows, numCols, scale, localMVBasis, tresholdDropping, indicesGammaDofsAll_d,
                                  localRowMap, localRepeatedMap, Rowptr, Indices, Values);
                 Kokkos::RangePolicy<FillNzEntriesTag, execution_space> policy_fill (0, numMVRows);
@@ -619,13 +627,114 @@ namespace FROSch {
 
                 graph_type crsgraph (Indices, Rowptr);
                 crsmat_type crsmat = crsmat_type ("CrsMatrix", numRows, Values, crsgraph);
-
                 {
-                  Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Build");
-                  Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+                  if (phiGamma.is_null()) {
+                    // TODO TODO : need to call this (to generate phiGamma structure) in symbolic : TODO TODO
+                    Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::Build");
+                    Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+                    phiGamma = MatrixFactory<SC,LO,GO,NO>::Build(crsmat, rowMap, basisMap, basisMapUnique, rangeMap,
+                                                                 params);
+#if 1
+                    {
+                       LO numRows = phiGamma->getLocalNumRows();
+                       const CrsMatrixWrap<SC,LO,GO,NO>& crsPhiGamma = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(phiGamma));
+                       const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraPhiGamma = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsPhiGamma.getCrsMatrix());
+                       auto tpetraPhiGamma = xTpetraPhiGamma.getTpetra_CrsMatrixNonConst();
+                       auto localPhiGammaPtrs_d = tpetraPhiGamma->getLocalRowPtrsDevice();
+                       auto localPhiGammaInds_d = tpetraPhiGamma->getLocalIndicesDevice();
+                       auto localPhiGammaPtrs = Kokkos::create_mirror_view(localPhiGammaPtrs_d);
+                       auto localPhiGammaInds = Kokkos::create_mirror_view(localPhiGammaInds_d);
+                       Kokkos::deep_copy(localPhiGammaPtrs, localPhiGammaPtrs_d);
+                       Kokkos::deep_copy(localPhiGammaInds, localPhiGammaInds_d);
 
-                  phiGamma = MatrixFactory<SC,LO,GO,NO>::Build(crsmat, rowMap, basisMap, basisMapUnique, rangeMap,
-                                                               params);
+                       LO nnz = localPhiGammaPtrs.extent(0);
+                       Kokkos::resize(PhiGammaMap, nnz);
+                       auto PhiGammaMap_h = Kokkos::create_mirror_view(PhiGammaMap);
+
+                       auto Rowptr_h = Kokkos::create_mirror_view(Rowptr);
+                       auto Indices_h = Kokkos::create_mirror_view(Indices);
+                       for (LO i=0; i<numRows; i++) {
+                         for (size_t j=localPhiGammaPtrs(i); j<localPhiGammaPtrs(i+1); j++) {
+                           bool found = false;
+                           for (size_t k=Rowptr_h(i); k<Rowptr_h(i+1) && !found; k++) {
+                             if (Indices_h(k) == localPhiGammaInds(j)) {
+                               PhiGammaMap_h(j) = k;
+                               found = true;
+                             }
+                           }
+                           if (!found) printf( " not found\n" );
+                         }
+                       }
+                       Kokkos::deep_copy(PhiGammaMap, PhiGammaMap_h);
+		    }
+#endif
+                  } else {
+                    Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("HarmonicCoarseOperator::detectLinearDependencies::ReBuild");
+                    Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+#if 1
+                    #if 0
+                    {
+                       LO numRows = phiGamma->getLocalNumRows();
+                       const CrsMatrixWrap<SC,LO,GO,NO>& crsPhiGamma = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(phiGamma));
+                       const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraPhiGamma = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsPhiGamma.getCrsMatrix());
+                       auto tpetraPhiGamma = xTpetraPhiGamma.getTpetra_CrsMatrixNonConst();
+                       auto localPhiGammaVals_d = tpetraPhiGamma->getLocalValuesDevice(Tpetra::Access::OverwriteAll /*Tpetra::Access::ReadWrite*/);
+                       auto localPhiGammaVals = Kokkos::create_mirror_view(localPhiGammaVals_d);
+
+                       auto Values_h = Kokkos::create_mirror_view(Values);
+
+                       #if 0
+                       auto localPhiGammaPtrs_d = tpetraPhiGamma->getLocalRowPtrsDevice();
+                       auto localPhiGammaInds_d = tpetraPhiGamma->getLocalIndicesDevice();
+                       auto localPhiGammaPtrs = Kokkos::create_mirror_view(localPhiGammaPtrs_d);
+                       auto localPhiGammaInds = Kokkos::create_mirror_view(localPhiGammaInds_d);
+		       Kokkos::deep_copy(localPhiGammaPtrs, localPhiGammaPtrs_d);
+		       Kokkos::deep_copy(localPhiGammaInds, localPhiGammaInds_d);
+
+                       auto Rowptr_h = Kokkos::create_mirror_view(Rowptr);
+                       auto Indices_h = Kokkos::create_mirror_view(Indices);
+		       for (LO i=0; i<numRows; i++) {
+                         for (size_t j=localPhiGammaPtrs(i); j<localPhiGammaPtrs(i+1); j++) {
+                           bool found = false;
+                           for (size_t k=Rowptr_h(i); k<Rowptr_h(i+1) && !found; k++) {
+                             if (Indices_h(k) == localPhiGammaInds(j)) {
+                               localPhiGammaVals(j) = Values_h(k);
+			       found = true;
+			     }
+			   }
+			   if (!found) printf( " not found\n" );
+                         }
+                       }
+                       #else
+                       auto PhiGammaMap_h = Kokkos::create_mirror_view(PhiGammaMap);
+
+		       for (size_t i=0; i<localPhiGammaVals.extent(0); i++) {
+                         localPhiGammaVals(i) = Values_h(PhiGammaMap_h(i));
+		       }
+                       #endif
+		       Kokkos::deep_copy(localPhiGammaVals_d, localPhiGammaVals);
+		    }
+                    #else
+                    {
+                       const CrsMatrixWrap<SC,LO,GO,NO>& crsPhiGamma = dynamic_cast<const CrsMatrixWrap<SC,LO,GO,NO>&>(*(phiGamma));
+                       const TpetraCrsMatrix<SC,LO,GO,NO>& xTpetraPhiGamma = dynamic_cast<const TpetraCrsMatrix<SC,LO,GO,NO>&>(*crsPhiGamma.getCrsMatrix());
+                       auto tpetraPhiGamma = xTpetraPhiGamma.getTpetra_CrsMatrixNonConst();
+                       auto localPhiGammaVals_d = tpetraPhiGamma->getLocalValuesDevice(Tpetra::Access::OverwriteAll /*Tpetra::Access::ReadWrite*/);
+                       // fill in all the nz entries
+		       size_t nnz = localPhiGammaVals_d.extent(0);
+                       detectLinearDependenciesFunctor_insert <rowptr_type, values_type, values_type>
+                         fill_functor(PhiGammaMap, Values, localPhiGammaVals_d);
+                       Kokkos::RangePolicy<execution_space> policy_fill (0, nnz);
+                       Kokkos::parallel_for(
+                          "FROSch_HarmonicCoarseOperator::detectLinearDependenciesInsert", policy_fill, fill_functor);
+                       Kokkos::fence();
+                    }
+                    #endif
+#else
+                    phiGamma = MatrixFactory<SC,LO,GO,NO>::Build(crsmat, rowMap, basisMap, basisMapUnique, rangeMap,
+                                                                 params);
+#endif
+                  }
                 }
             } else
 #endif
@@ -676,7 +785,27 @@ namespace FROSch {
               Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
 
               RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout));
-              phiTPhi = MatrixMatrix<SC,LO,GO,NO>::Multiply(*phiGamma,true,*phiGamma,false,*fancy); //phiGamma->describe(*fancy,VERB_EXTREME); phiTPhi->describe(*fancy,VERB_EXTREME); //AssembledInterfaceCoarseSpace_->getBasisMap()->describe(*fancy,VERB_EXTREME);
+#if 1
+              phiTPhi = MatrixMatrix<SC,LO,GO,NO>::Multiply(*phiGamma,true,*phiGamma,false,*fancy);
+#else
+              bool call_FillComplete_on_result = true;
+              bool doOptimizeStorage           = false; //true;
+              RCP<ParameterList> mmParams;
+              bool computeGlobal = this->ParameterList_->get("Compute Global Constants",true);
+              if (this->MpiComm_->getRank() == 0) {
+                printf( " !! buildCoarseMatrix %s computing Global constraints (was set to be false for Albany runs on Perlmutter) !!\n",(computeGlobal ? "with" : "without") );
+              }
+              if (!computeGlobal) {
+                mmParams = rcp(new ParameterList());
+                mmParams->set("compute global constants: temporaries", false);
+                //call_FillComplete_on_result = false;
+                //doOptimizeStorage = false;
+              }
+
+              phiTPhi = MatrixMatrix<SC,LO,GO,NO>::Multiply(*phiGamma,true,*phiGamma,false,*fancy,
+                                                            call_FillComplete_on_result,doOptimizeStorage,"",mmParams);
+#endif
+              //phiGamma->describe(*fancy,VERB_EXTREME); phiTPhi->describe(*fancy,VERB_EXTREME); //AssembledInterfaceCoarseSpace_->getBasisMap()->describe(*fancy,VERB_EXTREME);
             }
             #if FROSCH_DEBUG_OUT
             MPI_Barrier(MPI_COMM_WORLD); printf( " check 2\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);

@@ -32,6 +32,7 @@ namespace FROSch {
         using XMapPtrVecPtr2D           = typename SchwarzOperator<SC,LO,GO,NO>::XMapPtrVecPtr2D;
         using ConstXMapPtrVecPtr2D      = typename SchwarzOperator<SC,LO,GO,NO>::ConstXMapPtrVecPtr2D;
 
+        using XMatrix                   = typename SchwarzOperator<SC,LO,GO,NO>::XMatrix;
         using XMatrixPtr                = typename SchwarzOperator<SC,LO,GO,NO>::XMatrixPtr;
         using ConstXMatrixPtr           = typename SchwarzOperator<SC,LO,GO,NO>::ConstXMatrixPtr;
 
@@ -149,6 +150,9 @@ namespace FROSch {
             IndicesType Indices;
             ValuesType  Values;
 
+            // Default Constructor
+            detectLinearDependenciesFunctor() {}
+
             // Constructor for ScaleTag
             detectLinearDependenciesFunctor(UN numRows_, UN numCols_, SCView scale_, localMVBasisType localMVBasis_) :
             numRows (numRows_),
@@ -238,6 +242,25 @@ namespace FROSch {
                 }
             }
         };
+
+        template<class PointerType, class InputValuesType, class OutputValuesType>
+        struct detectLinearDependenciesFunctor_insert
+        {
+            detectLinearDependenciesFunctor_insert(PointerType map_,InputValuesType valuesIn_, OutputValuesType valuesOut_) :
+            map       (map_),
+            valuesIn  (valuesIn_),
+            valuesOut (valuesOut_)
+            {}
+
+            KOKKOS_INLINE_FUNCTION
+            void operator()(const int k) const {
+               valuesOut(map(k)) = valuesIn(k);
+            }
+
+            PointerType       map;
+            InputValuesType   valuesIn;
+            OutputValuesType  valuesOut;
+        };
         #endif
 
     protected:
@@ -267,6 +290,7 @@ namespace FROSch {
                                                         ConstXMapPtr rowMap,
                                                         ConstXMapPtr rangeMap,
                                                         ConstXMapPtr repeatedMap,
+							XMatrixPtr &phiGamma,
                                                         SC tresholdDropping,
                                                         SC tresholdOrthogonalization);
 
@@ -306,6 +330,11 @@ namespace FROSch {
         UN NumberOfBlocks_ = 0;
 
         UN MaxNumNeigh_ = 0;
+
+        using local_matrix_device_type = typename XMatrix::local_matrix_type;
+        using rowptr_type = typename local_matrix_device_type::StaticCrsGraphType::row_map_type::non_const_type;
+        rowptr_type PhiGammaMap;
+	XMatrixPtr phiGamma;
     };
 
 }
