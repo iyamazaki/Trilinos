@@ -74,14 +74,14 @@ namespace FROSch {
                         ConstXMultiVectorPtr subspaceBasis = null,
                         UN offset = 0);
 
-        int assembleCoarseSpace();
+        int assembleCoarseSpace(bool assembleMap = true);
 
         int buildGlobalBasisMatrix(ConstXMapPtr rowMap,
                                    ConstXMapPtr rangeMap,
                                    ConstXMapPtr repeatedMap,
                                    SC tresholdDropping);
 
-        int clearCoarseSpace();
+        int clearCoarseSpace(bool clear_maps = true);
 
         int zeroOutBasisVectors(ConstLOVecView zeros);
 

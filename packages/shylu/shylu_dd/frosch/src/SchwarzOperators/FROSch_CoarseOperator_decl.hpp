@@ -113,7 +113,7 @@ namespace FROSch {
 
         virtual ConstXMapPtr computeCoarseSpace(CoarseSpacePtr coarseSpace) = 0;
 
-        virtual int clearCoarseSpace();
+        virtual int clearCoarseSpace(bool clear_maps = true);
 
         virtual void apply(const XMultiVector &x,
                            XMultiVector &y,

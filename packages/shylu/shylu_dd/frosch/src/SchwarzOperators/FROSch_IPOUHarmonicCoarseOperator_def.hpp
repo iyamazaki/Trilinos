@@ -56,7 +56,7 @@ namespace FROSch {
                                                             ConstXMultiVectorPtrVecPtr nodeListVec,
                                                             GOVecPtr2D dirichletBoundaryDofsVec)
     {
-        FROSCH_TIMER_START_LEVELID(initializeTime,"IPOUHarmonicCoarseOperator::initialize");
+        FROSCH_TIMER_START_LEVELID(initializeTime,"IPOUHarmonicCoarseOperator::initialize with repeatedMap");
         buildCoarseSpace(dimension,dofsPerNodeVec,repeatedNodesMapVec,repeatedDofMapsVec,nullSpaceBasisVec,dirichletBoundaryDofsVec,nodeListVec);
         this->CoarseMap_ = this->assembleCoarseMap();
         this->assembleInterfaceCoarseSpace();
@@ -180,7 +180,7 @@ namespace FROSch {
                                                                   GOVecPtr2D dirichletBoundaryDofsVec,
                                                                   ConstXMultiVectorPtrVecPtr nodeListVec)
     {
-        FROSCH_DETAILTIMER_START_LEVELID(buildCoarseSpaceTime,"IPOUHarmonicCoarseOperator::buildCoarseSpace");
+        FROSCH_DETAILTIMER_START_LEVELID(buildCoarseSpaceTime,"IPOUHarmonicCoarseOperator::buildCoarseSpace with Maps");
 
         UN TotalNumberOfBlocks = repeatedNodesMapVec.size();
 

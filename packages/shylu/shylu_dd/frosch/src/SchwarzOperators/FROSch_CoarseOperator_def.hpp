@@ -51,11 +51,17 @@ namespace FROSch {
         }
 
         if (!reuseCoarseBasis) {
+            bool reuseCoarseBasisMap = this->ParameterList_->get("Reuse: Coarse Basis Map",false);
             if (this->IsComputed_ && this->Verbose_) cout << "FROSch::CoarseOperator : Recomputing the Coarse Basis" << endl;
-            clearCoarseSpace(); // AH 12/11/2018: If we do not clear the coarse space, we will always append just append the coarse space
+	    if (reuseCoarseBasisMap) {
+                if (this->K_->getRowMap()->getComm()->getRank() == 0 ) {
+		    cout << "\n ** Reuse Coarse Basis Maps **\n" << endl;
+		}
+	    }
+            clearCoarseSpace(!reuseCoarseBasisMap); // AH 12/11/2018: If we do not clear the coarse space, we will always append just append the coarse space
             ConstXMapPtr subdomainMap = this->computeCoarseSpace(CoarseSpace_); // AH 12/11/2018: This map could be overlapping, repeated, or unique. This depends on the specific coarse operator
             if (CoarseSpace_->hasUnassembledMaps()) { // If there is no unassembled basis, the current Phi_ should already be correct
-                CoarseSpace_->assembleCoarseSpace();
+                CoarseSpace_->assembleCoarseSpace(!reuseCoarseBasisMap);
                 FROSCH_ASSERT(CoarseSpace_->hasAssembledBasis(),"FROSch::CoarseOperator : !CoarseSpace_->hasAssembledBasis()");
                 CoarseSpace_->buildGlobalBasisMatrix(this->K_->getRowMap(),this->K_->getRangeMap(),subdomainMap,this->ParameterList_->get("Phi: Dropping Threshold",1.e-8));
                 FROSCH_ASSERT(CoarseSpace_->hasGlobalBasisMatrix(),"FROSch::CoarseOperator : !CoarseSpace_->hasGlobalBasisMatrix()");
@@ -85,9 +91,9 @@ namespace FROSch {
     }
 
     template <class SC,class LO,class GO,class NO>
-    int CoarseOperator<SC,LO,GO,NO>::clearCoarseSpace()
+    int CoarseOperator<SC,LO,GO,NO>::clearCoarseSpace(bool clear_maps)
     {
-        return CoarseSpace_->clearCoarseSpace();
+        return CoarseSpace_->clearCoarseSpace(clear_maps);
     }
 
     template<class SC,class LO,class GO,class NO>

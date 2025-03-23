@@ -52,37 +52,41 @@ namespace FROSch {
     }
 
     template <class SC,class LO,class GO,class NO>
-    int CoarseSpace<SC,LO,GO,NO>::assembleCoarseSpace()
+    int CoarseSpace<SC,LO,GO,NO>::assembleCoarseSpace(bool assembleMap)
     {
+        Teuchos::RCP< Teuchos::Time > SymboTimer_ = Teuchos::TimeMonitor::getNewCounter ("CoarseSpace::assembleCoarseSpace");
+        Teuchos::TimeMonitor numFactTimer(*SymboTimer_);
+
         FROSCH_ASSERT(UnassembledBasesMaps_.size()>0,"FROSch::CoarseSpace: UnassembledBasesMaps_.size()==0");
         FROSCH_ASSERT(UnassembledBasesMapsUnique_.size()>0,"FROSch::CoarseSpace: UnassembledBasesMapsUnique_.size()==0");
         FROSCH_ASSERT(UnassembledSubspaceBases_.size()>0,"FROSch::CoarseSpace: UnassembledSubspaceBases_.size()==0");
 
-        UN itmp = 0;
-        LOVecPtr2D partMappings;
+        if (assembleMap || AssembledBasisMap_.is_null()) {
+            LOVecPtr2D partMappings;
 
-        // BasisMap
-        AssembledBasisMap_ = AssembleMaps(UnassembledBasesMaps_(),partMappings);
+            // BasisMap
+            AssembledBasisMap_ = AssembleMaps(UnassembledBasesMaps_(),partMappings);
 
-        // BasisMapUnique - First, we check if any of the unassembled unique maps is null. In case, we re-build a unique map
-        bool buildUniqueMap = false;
-        UN i=0;
-        while (!buildUniqueMap && i<UnassembledBasesMapsUnique_.size()) {
-            buildUniqueMap = UnassembledBasesMapsUnique_[i].is_null();
-            i++;
+            // BasisMapUnique - First, we check if any of the unassembled unique maps is null. In case, we re-build a unique map
+            bool buildUniqueMap = false;
+            UN i=0;
+            while (!buildUniqueMap && i<UnassembledBasesMapsUnique_.size()) {
+                buildUniqueMap = UnassembledBasesMapsUnique_[i].is_null();
+                i++;
+            }
+            int buildUniqueMapMax = 0;
+            reduceAll(*this->MpiComm_,REDUCE_MAX,int(buildUniqueMap),ptr(&buildUniqueMapMax));
+
+            if (buildUniqueMapMax>0) {
+                FROSCH_NOTIFICATION("FROSch::CoarseSpace",this->MpiComm_->getRank()==0,"We re-build a unique map of AssembledBasisMap_.");
+                AssembledBasisMapUnique_ = BuildUniqueMap<LO,GO,NO>(AssembledBasisMap_);
+            } else {
+                AssembledBasisMapUnique_ = AssembleMaps(UnassembledBasesMapsUnique_(),partMappings);
+            }
+            FROSCH_ASSERT(AssembledBasisMap_->getMaxAllGlobalIndex()==AssembledBasisMapUnique_->getMaxAllGlobalIndex(),"FROSch::CoarseSpace: AssembledBasisMap_->getMaxAllGlobalIndex()!=AssembledBasisMapUnique_->getMaxAllGlobalIndex()");
+            FROSCH_ASSERT(AssembledBasisMap_->getMinAllGlobalIndex()==AssembledBasisMapUnique_->getMinAllGlobalIndex(),"FROSch::CoarseSpace: AssembledBasisMap_->getMinAllGlobalIndex()!=AssembledBasisMapUnique_->getMinAllGlobalIndex()");
+            FROSCH_ASSERT(GO(AssembledBasisMapUnique_->getGlobalNumElements())==GO(AssembledBasisMapUnique_->getMaxAllGlobalIndex()+1),"FROSch::CoarseSpace: AssembledBasisMapUnique_->getGlobalNumElements()!=(AssembledBasisMapUnique_->getMaxAllGlobalIndex()+1)");
         }
-        int buildUniqueMapMax = 0;
-        reduceAll(*this->MpiComm_,REDUCE_MAX,int(buildUniqueMap),ptr(&buildUniqueMapMax));
-
-        if (buildUniqueMapMax>0) {
-            FROSCH_NOTIFICATION("FROSch::CoarseSpace",this->MpiComm_->getRank()==0,"We re-build a unique map of AssembledBasisMap_.");
-            AssembledBasisMapUnique_ = BuildUniqueMap<LO,GO,NO>(AssembledBasisMap_);
-        } else {
-            AssembledBasisMapUnique_ = AssembleMaps(UnassembledBasesMapsUnique_(),partMappings);
-        }
-        FROSCH_ASSERT(AssembledBasisMap_->getMaxAllGlobalIndex()==AssembledBasisMapUnique_->getMaxAllGlobalIndex(),"FROSch::CoarseSpace: AssembledBasisMap_->getMaxAllGlobalIndex()!=AssembledBasisMapUnique_->getMaxAllGlobalIndex()");
-        FROSCH_ASSERT(AssembledBasisMap_->getMinAllGlobalIndex()==AssembledBasisMapUnique_->getMinAllGlobalIndex(),"FROSch::CoarseSpace: AssembledBasisMap_->getMinAllGlobalIndex()!=AssembledBasisMapUnique_->getMinAllGlobalIndex()");
-        FROSCH_ASSERT(GO(AssembledBasisMapUnique_->getGlobalNumElements())==GO(AssembledBasisMapUnique_->getMaxAllGlobalIndex()+1),"FROSch::CoarseSpace: AssembledBasisMapUnique_->getGlobalNumElements()!=(AssembledBasisMapUnique_->getMaxAllGlobalIndex()+1)");
 
         // Basis
         if (!AssembledBasisMap_.is_null()) {
@@ -106,13 +110,15 @@ namespace FROSch {
                     auto assembledCols = Tpetra::getMultiVectorWhichVectors(*  assembledTpetraMVector);
 
                     UN itmp = 0;
+		    //printf( " %d: UnassembledSubspaceBases_.size = %d\n",AssembledBasisMap_->getComm()->getRank(),UnassembledSubspaceBases_.size());
                     for (UN i=0; i<UnassembledSubspaceBases_.size(); i++) {
                         if (!UnassembledSubspaceBases_[i].is_null()) {
                             const UN Offset_i = Offsets_[i];
                             const UN NumVectors_i = UnassembledSubspaceBases_[i]->getNumVectors();
                             const UN LocalLength_i = UnassembledSubspaceBases_[i]->getLocalLength();
 
-                            FROSCH_ASSERT(NumVectors_i+itmp <= AssembledBasis_->getNumVectors(),"FROSch::CoarseSpace: NumVectors_i+itmp <= AssembledBasis_->getNumVectors()");
+                            FROSCH_ASSERT(NumVectors_i+itmp <= AssembledBasis_->getNumVectors(),
+                                          "FROSch::CoarseSpace: NumVectors_i+itmp <= AssembledBasis_->getNumVectors ("+std::to_string(NumVectors_i)+"+"+std::to_string(itmp)+"<="+std::to_string(AssembledBasis_->getNumVectors())+")");
                             FROSCH_ASSERT(LocalLength_i+Offsets_[i] <= AssembledBasis_->getLocalLength(),"FROSch::CoarseSpace: LocalLength_i+Offsets_[i] <= AssembledBasis_");
 
                             Kokkos::RangePolicy<execution_space> policy (0, LocalLength_i);
@@ -139,6 +145,7 @@ namespace FROSch {
                 } else
                 #endif
                 {
+                    UN itmp = 0;
                     for (UN i=0; i<UnassembledSubspaceBases_.size(); i++) {
                         if (!UnassembledSubspaceBases_[i].is_null()) {
                             for (UN j=0; j<UnassembledSubspaceBases_[i]->getNumVectors(); j++) {
@@ -326,19 +333,21 @@ namespace FROSch {
     }
 
     template <class SC,class LO,class GO,class NO>
-    int CoarseSpace<SC,LO,GO,NO>::clearCoarseSpace()
+    int CoarseSpace<SC,LO,GO,NO>::clearCoarseSpace(bool clear_maps)
     {
-        ConstXMapPtrVec emptyVec1;
-        UnassembledBasesMaps_.swap(emptyVec1);
-
-        ConstXMapPtrVec emptyVec2;
-        UnassembledBasesMapsUnique_.swap(emptyVec2);
-
+        if (clear_maps) {
+            ConstXMapPtrVec emptyVec1;
+            ConstXMapPtrVec emptyVec2;
+            UnassembledBasesMaps_.swap(emptyVec1);
+            UnassembledBasesMapsUnique_.swap(emptyVec2);
+        }
         ConstXMultiVectorPtrVec emptyVec3;
         UnassembledSubspaceBases_.swap(emptyVec3);
 
-        AssembledBasisMap_.reset();
-        AssembledBasisMapUnique_.reset();
+        if (clear_maps) {
+            AssembledBasisMap_.reset();
+            AssembledBasisMapUnique_.reset();
+	}
         AssembledBasis_.reset();
 
         UNVec emptyVec4;

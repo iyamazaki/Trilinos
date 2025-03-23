@@ -377,27 +377,68 @@ communicateMatrixData_import(RCP<const tCrsMatrix> inputMatrix,
               }
           }
       }
+      // resized for the first call (in symbolic)
+      Kokkos::resize(valuesRecv_d, numTerms);
     }
     //MPI_Barrier(MPI_COMM_WORLD); printf( " >> communicateMatrixData_import(1) <<\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 
     // Communicate
-    // TODO: !! move allocation of valuesRecv to communicateMatrixData_build !!
-    //ValuesViewT_dev  valuesRecv_d("valuesRecv", numTerms);
-    Kokkos::resize(valuesRecv_d, numTerms);
-    auto valuesRecv = Kokkos::create_mirror_view(valuesRecv_d);
+    // MPI through host CPU, create buffer on host
     using KSX = typename Kokkos::ArithTraits<SC>::val_type;
+    auto valuesRecv = Kokkos::create_mirror_view(valuesRecv_d);
     const KSX* matrixValues_K = reinterpret_cast<const KSX*>(matrixValues.data());
     KSX* valuesRecv_K = reinterpret_cast<KSX*>(valuesRecv.data());
     const size_t sizeSend = matrixValues.size();
     const size_t sizeRecv = valuesRecv.extent(0);
+#if 1
     {
-        auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (communicate)");
+        int numProcs = inputRowMap->getComm()->getSize();
+        int sendcounts[  numProcs];
+        int senddispls[1+numProcs];
+        int recvcounts[  numProcs];
+        int recvdispls[1+numProcs];
+        {
+            auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (communicate:alltoallv:prep)");
+            Teuchos::TimeMonitor CaseTimer( *caseTimer );
+            senddispls[0] = 0;
+            recvdispls[0] = 0;
+            for (int i=0; i<numProcs; i++) {
+                sendcounts[i] = 0;
+                recvcounts[i] = 0;
+            }
+            auto procsFrom = distributor->getProcsFrom();
+            for (size_t i=0; i<distributor->getNumReceives(); i++) {
+                recvcounts[procsFrom[i]] = targetSize[i];
+            }
+            auto procsTo = distributor->getProcsTo();
+            for (size_t i=0; i<distributor->getNumSends(); i++) {
+                sendcounts[procsTo[i]] = sourceSize[i];
+            }
+            for (int i=0; i<numProcs; i++) {
+                senddispls[i+1] = senddispls[i]+sendcounts[i];
+                recvdispls[i+1] = recvdispls[i]+recvcounts[i];
+                //printf( " %d/%d: sendcount[%d/%d] = %d, recvcount[%d/%d] = %d\n",inputRowMap->getComm()->getRank(),inputRowMap->getComm()->getSize(), i,numProcs,sendcounts[i], i,numProcs,recvcounts[i] );
+            }
+            //fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
+        }
+        {
+            auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (communicate:alltoallv:mpi)");
+            Teuchos::TimeMonitor CaseTimer( *caseTimer );
+            MPI_Alltoallv(matrixValues_K, sendcounts, senddispls, MPI_DOUBLE,
+                          valuesRecv_K, recvcounts, recvdispls, MPI_DOUBLE,
+                          Teuchos::getRawMpiComm(*(inputRowMap->getComm())));
+        }
+    }
+#else
+    {
+        auto caseTimer = Teuchos::TimeMonitor::getNewTimer("GDSW test: communicateMatrixData_import (communicate:doPostAndWait)");
         Teuchos::TimeMonitor CaseTimer( *caseTimer );
         distributor->doPostsAndWaits(Kokkos::View<const KSX*, Kokkos::HostSpace>(matrixValues_K, sizeSend),
                                      Teuchos::ArrayView<const size_t>(sourceSize),
                                      Kokkos::View<KSX*, Kokkos::HostSpace>(valuesRecv_K, sizeRecv),
                                      Teuchos::ArrayView<const size_t>(targetSize));
     }
+#endif
     //MPI_Barrier(MPI_COMM_WORLD); printf( " >> communicateMatrixData_import(2) <<\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 
     // Insert numerical values into local matrix
