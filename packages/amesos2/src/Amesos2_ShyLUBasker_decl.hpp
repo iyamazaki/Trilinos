@@ -77,6 +77,9 @@ public:
   typedef Kokkos::View<local_ordinal_type*, HostExecSpaceType> host_ordinal_type_array;
   typedef Kokkos::View<shylubasker_type*, HostExecSpaceType>   host_value_type_array;
 
+  typedef typename Kokkos::View<shylubasker_type**, Kokkos::LayoutLeft, 
+                                typename HostExecSpaceType::memory_space> host_solve_array_t;
+
 
   ShyLUBasker( Teuchos::RCP<const Matrix> A,
           Teuchos::RCP<Vector>       X,
@@ -126,6 +129,11 @@ private:
   int solve_impl(const Teuchos::Ptr<MultiVecAdapter<Vector> >       X,
                  const Teuchos::Ptr<const MultiVecAdapter<Vector> > B) const;
 
+  int solve_view(host_solve_array_t X,
+                 host_solve_array_t B) const;
+
+  int local_spmv(shylubasker_type alpha, host_solve_array_t X,
+                 shylubasker_type beta,  host_solve_array_t B) const;
 
   /**
    * \brief Determines whether the shape of the matrix is OK for this solver.
@@ -168,20 +176,13 @@ private:
   /// Stores the row indices of the nonzero entries
   host_ordinal_type_array colptr_view_;
 
-
   bool is_contiguous_;
-  bool use_gather_;
-
-  typedef typename Kokkos::View<shylubasker_type**, Kokkos::LayoutLeft, 
-                                typename HostExecSpaceType::memory_space> host_solve_array_t;
 
   /// Persisting 1D store for X
   mutable host_solve_array_t xValues_;
-  int ldx_;
 
   /// Persisting 1D store for B
   mutable host_solve_array_t bValues_;
-  int ldb_;
 
   /*Handle for ShyLUBasker object*/
 #if defined( HAVE_AMESOS2_KOKKOS ) && defined( KOKKOS_ENABLE_OPENMP )

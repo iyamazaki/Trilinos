@@ -12,6 +12,8 @@
 #include <Teuchos_oblackholestream.hpp>
 #include <Teuchos_VerboseObject.hpp>
 #include <Teuchos_CommandLineProcessor.hpp>
+#include <Teuchos_StackedTimer.hpp>
+#include <Teuchos_ParameterXMLFileReader.hpp>
 
 #include <Tpetra_Core.hpp>
 #include <Tpetra_Map.hpp>
@@ -43,7 +45,7 @@ int main(int argc, char *argv[]) {
   using Tpetra::Import;
   using Teuchos::RCP;
   using Teuchos::rcp;
-
+  using Teuchos::rcpFromRef;
 
   //
   // Get the default communicator
@@ -53,37 +55,45 @@ int main(int argc, char *argv[]) {
 
   Teuchos::oblackholestream blackhole;
 
-  bool printTiming   = false;
-  bool equil         = false;
-  bool tinyPivot     = true;
-  bool multiSolves   = false;
-  bool solveIR       = false;
-  int  mc64_job      = 1;
-  int  numIRs        = 5;
-  bool verboseIR     = true;
-  bool verbose       = true;
+  bool checkSolution   = false;
+  bool printTiming     = false;
+  bool useStackedTimer = false;
+  bool equil           = false;
+  bool tinyPivot       = true;
+  bool multiSolves     = false;
+  bool solveIR         = false;
+  int  mc64_job        = 1;
+  int  numIRs          = 5;
+  bool verboseIR       = true;
+  bool verbose         = true;
   std::string solverName("SuperLUDist");
   std::string rowPerm("NOROWPERM");
   std::string filename("arc130.mtx");
   std::string rhsFilename("");
+  std::string xml_filename("");
   Teuchos::CommandLineProcessor cmdp(false,true);
   cmdp.setOption("verbose","quiet",&verbose,"Print messages and results.");
+  cmdp.setOption("solvername",&solverName,"Name of solver.");
   cmdp.setOption("equil","noEquil",&equil,"Use Equil.");
   cmdp.setOption("rowperm",&rowPerm,"RowPerm.");
   cmdp.setOption("job",&mc64_job,"Option for MC64.");
   cmdp.setOption("tinyPivot","noTinyPivot",&tinyPivot,"Replace tiny pivot.");
   cmdp.setOption("multiSolves","noMultiSolves",&multiSolves,"Do numerical factor and solve twice.");
   cmdp.setOption("solveIR","noSolveIR",&solveIR,"Solve with IR.");
+  cmdp.setOption("numIRs",&numIRs,"Number of refinements.");
   cmdp.setOption("solver",&solverName,"Solver name");
   cmdp.setOption("filename",&filename,"Filename for Matrix-Market test matrix.");
-  cmdp.setOption("rhsFilename",&rhsFilename,"Filename for RHS.");
+  cmdp.setOption("rhs_filename",&rhsFilename,"Filename for RHS.");
+  cmdp.setOption("xml_filename",&xml_filename,"XML Filename for Solver parameters.");
   cmdp.setOption("print-timing","no-print-timing",&printTiming,"Print solver timing statistics");
+  cmdp.setOption("use-stacked-timer","no-stacked-timer",&useStackedTimer,"Use StackedTimer to print solver timing statistics");
+  cmdp.setOption("check-solution","no-check-solution",&checkSolution,"Check solution vector after solve.");
   if (cmdp.parse(argc,argv) != Teuchos::CommandLineProcessor::PARSE_SUCCESSFUL) {
     return -1;
   }
 
   std::ostream& out = ( (verbose && myRank == 0) ? std::cout : blackhole );
-  RCP<Teuchos::FancyOStream> fos = Teuchos::fancyOStream(Teuchos::rcpFromRef(out));
+  RCP<Teuchos::FancyOStream> fos = Teuchos::fancyOStream(rcpFromRef(out));
 
   // Say hello
   out << myRank << " : " << Amesos2::version() << std::endl << std::endl;
@@ -117,7 +127,7 @@ int main(int argc, char *argv[]) {
   solver = Amesos2::create<MAT,MV>(solverName, A, X, B);
   Teuchos::ParameterList amesos2_params("Amesos2");
   if (solverName == "SuperLUDist") {
-    auto superlu_params = Teuchos::sublist(Teuchos::rcpFromRef(amesos2_params), "SuperLU_DIST");
+    auto superlu_params = Teuchos::sublist(rcpFromRef(amesos2_params), "SuperLU_DIST");
     superlu_params->set("Equil", equil);
     superlu_params->set("RowPerm", rowPerm);
     superlu_params->set("LargeDiag_MC64-Options", mc64_job);
@@ -128,13 +138,31 @@ int main(int argc, char *argv[]) {
     amesos2_params.set("Number of iterative refinements", numIRs);
     amesos2_params.set("Verboes for iterative refinement", verboseIR);
   }
-  solver->setParameters( Teuchos::rcpFromRef(amesos2_params) );
-  solver->symbolicFactorization().numericFactorization().solve();
-  if (multiSolves) {
-    solver->numericFactorization().solve();
+  solver->setParameters( rcpFromRef(amesos2_params) );
+  if (xml_filename != "") {
+    Teuchos::ParameterList xml_params =
+      Teuchos::ParameterXMLFileReader(xml_filename).getParameters();
+    Teuchos::ParameterList& amesos2_params = xml_params.sublist("Amesos2");
+    solver->setParameters( rcpFromRef(amesos2_params) );
   }
 
-  if (verbose) {
+  RCP<Teuchos::StackedTimer> stackedTimer;
+  if(useStackedTimer) {
+    stackedTimer = rcp(new Teuchos::StackedTimer("Amesos2 SimpleSolve-File"));
+    Teuchos::TimeMonitor::setStackedTimer(stackedTimer);
+  }
+  solver->symbolicFactorization(); comm->barrier();
+  solver->numericFactorization();  comm->barrier();
+  solver->solve();  comm->barrier();
+  if (multiSolves) {
+    solver->numericFactorization(); comm->barrier();
+    solver->solve(); comm->barrier();
+  }
+  if(useStackedTimer) {
+    stackedTimer->stopBaseTimer();
+  }
+
+  if( checkSolution ){
     using mag_type = MV::mag_type;
     MV R (B->getMap (), B->getNumVectors ());
     Teuchos::Array<mag_type> B_norms (B->getNumVectors ());
@@ -145,12 +173,20 @@ int main(int argc, char *argv[]) {
     R.norm2 (R_norms ());
     out << "normR = " << R_norms[0] << " / " << B_norms[0] << " = " << R_norms[0]/B_norms[0] << std::endl;
   }
-
-  if( printTiming ){
-    // Print some timing statistics
+  // Print some timing statistics
+  if(useStackedTimer) {
+    Teuchos::StackedTimer::OutputOptions options;
+    options.num_histogram=3;
+    options.print_warnings = false;
+    options.output_histogram = true;
+    options.output_fraction=true;
+    options.output_minmax = true;
+    stackedTimer->report(std::cout, comm, options);
+  } else if( printTiming ){
     solver->printTiming(*fos);
+  } else {
+    Teuchos::TimeMonitor::summarize();
   }
-  Teuchos::TimeMonitor::summarize();
 
   // We are done.
   return 0;

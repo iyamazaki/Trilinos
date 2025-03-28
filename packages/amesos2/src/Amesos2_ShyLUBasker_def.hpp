@@ -37,7 +37,6 @@ ShyLUBasker<Matrix,Vector>::ShyLUBasker(
   Teuchos::RCP<const Vector> B )
   : SolverCore<Amesos2::ShyLUBasker,Matrix,Vector>(A, X, B)
   , is_contiguous_(true)
-  , use_gather_(true)
 {
 
   //Nothing
@@ -281,12 +280,13 @@ ShyLUBasker<Matrix,Vector>::solve_impl(
   const global_size_type ld_rhs = this->root_ ? X->getGlobalLength() : 0;
   const size_t nrhs = X->getGlobalNumVectors();
 
-  const bool ShyluBaskerTransposeRequest = this->control_.useTranspose_;
   const bool initialize_data = true;
   const bool do_not_initialize_data = false;
-  bool use_gather = use_gather_; // user param
+  bool use_gather = this->use_gather_; // user param
   use_gather = (use_gather && this->matrixA_->getComm()->getSize() > 1); // only with multiple MPIs
   use_gather = (use_gather && (std::is_same<scalar_type, float>::value || std::is_same<scalar_type, double>::value)); // only for double or float
+
+  // Gather the RHS
   {
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor mvConvTimer(this->timers_.vecConvTime_);
@@ -329,20 +329,8 @@ ShyLUBasker<Matrix,Vector>::solve_impl(
     }
   }
 
-  if ( this->root_ ) { // do solve
-#ifdef HAVE_AMESOS2_TIMERS
-    Teuchos::TimeMonitor solveTimer(this->timers_.solveTime_);
-#endif
-
-    shylubasker_dtype * pxValues = function_map::convert_scalar(xValues_.data());
-    shylubasker_dtype * pbValues = function_map::convert_scalar(bValues_.data());
-    if (!ShyluBaskerTransposeRequest)
-      ierr = ShyLUbasker->Solve(nrhs, pbValues, pxValues);
-    else
-      ierr = ShyLUbasker->Solve(nrhs, pbValues, pxValues, true);
-  }
-  /* All processes should have the same error code */
-  Teuchos::broadcast(*(this->getComm()), 0, &ierr);
+  // Do the solve
+  ierr = this->solve_view(xValues_, bValues_);
 
   TEUCHOS_TEST_FOR_EXCEPTION( ierr  > 0,
       std::runtime_error,
@@ -350,6 +338,8 @@ ShyLUBasker<Matrix,Vector>::solve_impl(
   TEUCHOS_TEST_FOR_EXCEPTION( ierr == -1,
       std::runtime_error,
       "Could not alloc needed working memory for solve" );
+
+  // Scatter the solution
   {
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor redistTimer(this->timers_.vecRedistTime_);
@@ -367,6 +357,56 @@ ShyLUBasker<Matrix,Vector>::solve_impl(
     }
   }
   return(ierr);
+}
+
+template <class Matrix, class Vector>
+int
+ShyLUBasker<Matrix,Vector>::solve_view(
+ host_solve_array_t Xview,
+ host_solve_array_t Bview) const
+{
+#ifdef HAVE_AMESOS2_TIMERS
+    Teuchos::TimeMonitor solveTimer(this->timers_.solveTime_);
+#endif
+
+  int ierr = 0; // returned error code
+  if ( this->root_ ) { // do solve
+    const bool ShyluBaskerTransposeRequest = this->control_.useTranspose_;
+    const size_t nrhs = Xview.extent(1);
+
+    shylubasker_dtype * pxValues = function_map::convert_scalar(Xview.data());
+    shylubasker_dtype * pbValues = function_map::convert_scalar(Bview.data());
+    if (!ShyluBaskerTransposeRequest)
+      ierr = ShyLUbasker->Solve(nrhs, pbValues, pxValues);
+    else
+      ierr = ShyLUbasker->Solve(nrhs, pbValues, pxValues, true);
+  }
+
+  /* All processes should have the same error code */
+  Teuchos::broadcast(*(this->getComm()), 0, &ierr);
+
+  return ierr;
+}
+
+template <class Matrix, class Vector>
+int
+ShyLUBasker<Matrix,Vector>::local_spmv(
+     shylubasker_type alpha, host_solve_array_t Xview,
+     shylubasker_type beta,  host_solve_array_t Bview) const {
+
+  int ierr = 0; // returned error code
+  using host_crsmat_t = KokkosSparse::CrsMatrix<shylubasker_type, local_ordinal_type, HostExecSpaceType, void, local_ordinal_type>;
+  using host_graph_t  = typename host_crsmat_t::StaticCrsGraphType;
+
+  if ( this->root_ ) { // do solve
+    const int nrows = this->matrixA_->getGlobalNumRows();
+    host_graph_t  static_graph (rowind_view_, colptr_view_);
+    host_crsmat_t crsmat ("CrsMatrix", nrows, nzvals_view_, static_graph);
+
+    // Transpose because ShyLU-Basker stores its matrix in column-majore
+    KokkosSparse::spmv("T", alpha, crsmat, Xview, beta, Bview);
+  }
+  return ierr;
 }
 
 
@@ -396,7 +436,7 @@ ShyLUBasker<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::Param
 
   if(parameterList->isParameter("UseCustomGather"))
     {
-      use_gather_ = parameterList->get<bool>("UseCustomGather");
+      this->use_gather_ = parameterList->get<bool>("UseCustomGather");
     }
 
   if(parameterList->isParameter("num_threads"))
@@ -603,7 +643,7 @@ ShyLUBasker<Matrix,Vector>::loadA_impl(EPhase current_phase)
     }
 
     local_ordinal_type nnz_ret = -1;
-    bool use_gather = use_gather_; // user param
+    bool use_gather = this->use_gather_; // user param
     use_gather = (use_gather && this->matrixA_->getComm()->getSize() > 1); // only with multiple MPIs
     use_gather = (use_gather && (std::is_same<scalar_type, float>::value || std::is_same<scalar_type, double>::value)); // only for double or float
     {
