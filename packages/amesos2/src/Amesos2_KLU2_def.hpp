@@ -36,7 +36,6 @@ KLU2<Matrix,Vector>::KLU2(
   : SolverCore<Amesos2::KLU2,Matrix,Vector>(A, X, B)
   , transFlag_(0)
   , is_contiguous_(true)
-  , use_gather_(true)
 {
   ::KLU2::klu_defaults<klu2_dtype, local_ordinal_type> (&(data_.common_)) ;
   data_.symbolic_ = NULL;
@@ -205,7 +204,7 @@ KLU2<Matrix,Vector>::solve_impl(
 
   bool bDidAssignX;
   bool bDidAssignB;
-  bool use_gather = use_gather_; // user param
+  bool use_gather = this->use_gather_; // user param
   use_gather = (use_gather && this->matrixA_->getComm()->getSize() > 1); // only with multiple MPIs
   use_gather = (use_gather && (std::is_same<scalar_type, float>::value || std::is_same<scalar_type, double>::value)); // only for double or float
   {
@@ -411,7 +410,7 @@ KLU2<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::ParameterLis
     is_contiguous_ = parameterList->get<bool>("IsContiguous");
   }
   if( parameterList->isParameter("UseCustomGather") ){
-    use_gather_ = parameterList->get<bool>("UseCustomGather");
+    this->use_gather_ = parameterList->get<bool>("UseCustomGather");
   }
 }
 
@@ -476,7 +475,7 @@ KLU2<Matrix,Vector>::loadA_impl(EPhase current_phase)
         Kokkos::resize(host_col_ptr_view_, this->globalNumRows_ + 1);
     }
     local_ordinal_type nnz_ret = -1;
-    bool use_gather = use_gather_; // user param
+    bool use_gather = this->use_gather_; // user param
     use_gather = (use_gather && this->matrixA_->getComm()->getSize() > 1); // only with multiple MPIs
     use_gather = (use_gather && (std::is_same<scalar_type, float>::value || std::is_same<scalar_type, double>::value)); // only for double or float
     {

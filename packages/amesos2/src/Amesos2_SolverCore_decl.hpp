@@ -84,6 +84,10 @@ namespace Amesos2 {
     typedef typename MatrixAdapter<matrix_type>::global_size_t      global_size_type;
     typedef typename MatrixAdapter<matrix_type>::node_t             node_type;
 
+    typedef Kokkos::DefaultHostExecutionSpace                               HostExecSpaceType;
+    typedef typename Kokkos::View<scalar_type**, Kokkos::LayoutLeft,
+                                  typename HostExecSpaceType::memory_space> host_solve_array_t;
+
     /// \name Constructor/Destructor methods
     //@{
 
@@ -417,6 +421,28 @@ namespace Amesos2 {
      */
     void setNnzLU(size_t nnz){ status_.lu_nnz_ = nnz; }
 
+    virtual
+    int solve_view(host_solve_array_t X,
+                   host_solve_array_t B) const {
+      TEUCHOS_TEST_FOR_EXCEPTION( true, std::runtime_error, "solve_view not implemented.");
+      return -1;
+    }
+
+    virtual
+    int local_spmv(scalar_type alpha, host_solve_array_t X,
+                   scalar_type beta,  host_solve_array_t B) const {
+      TEUCHOS_TEST_FOR_EXCEPTION( true, std::runtime_error, "local_spmv not implemented.");
+      return -1;
+    }
+
+    //virtual
+    template<typename rowmap_type, typename colind_type, typename values_type>
+    bool get_local_matrix_vectors(rowmap_type &rowmap_view,
+                                  colind_type &colind_view,
+                                  values_type &values_view) const {
+      return false;
+    }
+
     /// The LHS operator
     Teuchos::RCP<const MatrixAdapter<Matrix> > matrixA_;
 
@@ -474,6 +500,9 @@ namespace Amesos2 {
     /// Number of process images in the matrix communicator
     int nprocs_;
 
+    /// Use Custom gather of vectors/matrix
+    bool use_gather_;
+
     /// Contiguous GID map for reindex
     typedef Tpetra::Map<local_ordinal_type,
                         global_ordinal_type,
@@ -482,7 +511,6 @@ namespace Amesos2 {
     Teuchos::RCP<const map_type> contig_colmap_;
 
     /// Communication pattern for gather
-    typedef Kokkos::DefaultHostExecutionSpace                 HostExecSpaceType;
     typedef Kokkos::View<local_ordinal_type*, HostExecSpaceType> host_ordinal_type_array;
     typedef Kokkos::View<       scalar_type*, HostExecSpaceType> host_scalar_type_array;
     host_ordinal_type_array perm_g2l;

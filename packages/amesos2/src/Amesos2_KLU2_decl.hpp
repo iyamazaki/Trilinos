@@ -228,7 +228,6 @@ private:
   int transFlag_;
 
   bool is_contiguous_;
-  bool use_gather_;
 };                              // End class KLU2
 
 
