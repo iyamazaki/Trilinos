@@ -31,7 +31,11 @@ struct Timers {
     : mtxRedistTime_(*(Teuchos::TimeMonitor::getNewTimer("Time to redistribute data structures")))
     , mtxConvTime_(*(Teuchos::TimeMonitor::getNewTimer("Time to convert matrix to solver format")))
     , vecRedistTime_(*(Teuchos::TimeMonitor::getNewTimer("Time to redistribute vectors")))
+    , vecRedistTimeIR_(*(Teuchos::TimeMonitor::getNewTimer("Time to redistribute vectors (IR)")))
     , vecConvTime_(*(Teuchos::TimeMonitor::getNewTimer("Time to convert vectors to solver format")))
+    , vecConvTimeIR_(*(Teuchos::TimeMonitor::getNewTimer("Time to convert vectors to solver format (IR)")))
+    , vecCopyTimeIR_(*(Teuchos::TimeMonitor::getNewTimer("Time to copy vectors (IR)")))
+    , spmvTimeIR_(*(Teuchos::TimeMonitor::getNewTimer("Time to perform SpMV (IR)")))
     , preOrderTime_(*(Teuchos::TimeMonitor::getNewTimer("Time for matrix pre-order")))
     , symFactTime_(*(Teuchos::TimeMonitor::getNewTimer("Time for symbolic factorization")))
     , numFactTime_(*(Teuchos::TimeMonitor::getNewTimer("Time for numeric factorization")))
@@ -39,13 +43,18 @@ struct Timers {
     , coreSymFactTime_(*(Teuchos::TimeMonitor::getNewTimer("SolverCore::symbolicFactorization")))
     , coreNumFactTime_(*(Teuchos::TimeMonitor::getNewTimer("SolverCore::numericFactorization")))
     , coreSolveTime_(*(Teuchos::TimeMonitor::getNewTimer("SolverCore::solve")))
+    , coreIRTime_(*(Teuchos::TimeMonitor::getNewTimer("SolverCore::iterativeRefinements")))
     , totalTime_(*(Teuchos::TimeMonitor::getNewTimer("Total Time in Amesos2 interface")))
     {}
 
   Teuchos::Time mtxRedistTime_;
   Teuchos::Time mtxConvTime_;
   Teuchos::Time vecRedistTime_;
+  Teuchos::Time vecRedistTimeIR_;
   Teuchos::Time vecConvTime_;
+  Teuchos::Time vecConvTimeIR_;
+  Teuchos::Time vecCopyTimeIR_;
+  Teuchos::Time spmvTimeIR_;
   Teuchos::Time preOrderTime_;
   Teuchos::Time symFactTime_;
   Teuchos::Time numFactTime_;
@@ -53,6 +62,7 @@ struct Timers {
   Teuchos::Time coreSymFactTime_;
   Teuchos::Time coreNumFactTime_;
   Teuchos::Time coreSolveTime_;
+  Teuchos::Time coreIRTime_;
   Teuchos::Time totalTime_;
 };
 
