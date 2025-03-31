@@ -141,6 +141,7 @@ jobs:
           AT2_ALL_BUILDS=$(</home/runner/AT2_ALL_BUILDS.txt)
           echo $AT2_ALL_BUILDS >> $GITHUB_STEP_SUMMARY
           echo "## Helpful Links" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/trilinos/Trilinos/wiki/Reproducing-Pull-Request-Testing-Errors" >> $GITHUB_STEP_SUMMARY
           echo "https://github.com/trilinos/Trilinos/wiki/Containers" >> $GITHUB_STEP_SUMMARY
           echo "https://gitlab-ex.sandia.gov/trilinos-project/trilinos-containers/-/wikis/Containers-at-Sandia" >> $GITHUB_STEP_SUMMARY
 
@@ -254,6 +255,7 @@ jobs:
           AT2_ALL_BUILDS=$(</home/runner/AT2_ALL_BUILDS.txt)
           echo $AT2_ALL_BUILDS >> $GITHUB_STEP_SUMMARY
           echo "## Helpful Links" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/trilinos/Trilinos/wiki/Reproducing-Pull-Request-Testing-Errors" >> $GITHUB_STEP_SUMMARY
           echo "https://github.com/trilinos/Trilinos/wiki/Containers" >> $GITHUB_STEP_SUMMARY
           echo "https://gitlab-ex.sandia.gov/trilinos-project/trilinos-containers/-/wikis/Containers-at-Sandia" >> $GITHUB_STEP_SUMMARY
 
@@ -366,6 +368,7 @@ jobs:
           AT2_ALL_BUILDS=$(</home/runner/AT2_ALL_BUILDS.txt)
           echo $AT2_ALL_BUILDS >> $GITHUB_STEP_SUMMARY
           echo "## Helpful Links" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/trilinos/Trilinos/wiki/Reproducing-Pull-Request-Testing-Errors" >> $GITHUB_STEP_SUMMARY
           echo "https://github.com/trilinos/Trilinos/wiki/Containers" >> $GITHUB_STEP_SUMMARY
           echo "https://gitlab-ex.sandia.gov/trilinos-project/trilinos-containers/-/wikis/Containers-at-Sandia" >> $GITHUB_STEP_SUMMARY
 
@@ -472,5 +475,6 @@ jobs:
           AT2_ALL_BUILDS=$(</home/runner/AT2_ALL_BUILDS.txt)
           echo $AT2_ALL_BUILDS >> $GITHUB_STEP_SUMMARY
           echo "## Helpful Links" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/trilinos/Trilinos/wiki/Reproducing-Pull-Request-Testing-Errors" >> $GITHUB_STEP_SUMMARY
           echo "https://github.com/trilinos/Trilinos/wiki/Containers" >> $GITHUB_STEP_SUMMARY
           echo "https://gitlab-ex.sandia.gov/trilinos-project/trilinos-containers/-/wikis/Containers-at-Sandia" >> $GITHUB_STEP_SUMMARY
