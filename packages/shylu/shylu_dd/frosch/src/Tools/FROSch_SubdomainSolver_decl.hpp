@@ -12,10 +12,13 @@
 
 #include <ShyLU_DDFROSch_config.h>
 
+#include <FROSch_Types.h>
 #include <FROSch_Output.h>
 #include <FROSch_Timers.h>
 
-#include <FROSch_Tools_decl.hpp>
+#include <Xpetra_MultiVectorFactory.hpp>
+#include <Xpetra_Operator.hpp>
+#include <Xpetra_Matrix_decl.hpp>
 
 #ifdef HAVE_SHYLU_DDFROSCH_EPETRA
 #include "Epetra_LinearProblem.h"
@@ -58,10 +61,6 @@
 
 namespace FROSch {
 
-    using namespace std;
-    using namespace Teuchos;
-    using namespace Xpetra;
-
     template <class SC,
               class LO,
               class GO,
@@ -84,16 +83,16 @@ namespace FROSch {
               class LO = int,
               class GO = DefaultGlobalOrdinal,
               class NO = Tpetra::KokkosClassic::DefaultNode::DefaultNodeType>
-    class SubdomainSolver : public Operator<SC,LO,GO,NO> {
+    class SubdomainSolver : public Xpetra::Operator<SC,LO,GO,NO> {
 
     protected:
 
-        using XMap                        = Map<LO,GO,NO>;
+        using XMap                        = Xpetra::Map<LO,GO,NO>;
         using XMapPtr                     = RCP<XMap>;
         using ConstXMapPtr                = RCP<const XMap>;
-        using XMapPtrVecPtr               = ArrayRCP<XMapPtr>;
+        using XMapPtrVecPtr               = Teuchos::ArrayRCP<XMapPtr>;
 
-        using XMatrix                     = Matrix<SC,LO,GO,NO>;
+        using XMatrix                     = Xpetra::Matrix<SC,LO,GO,NO>;
         using XMatrixPtr                  = RCP<XMatrix>;
         using ConstXMatrixPtr             = RCP<const XMatrix>;
 
@@ -110,11 +109,11 @@ namespace FROSch {
         using TRowMatrixPtr               = RCP<TRowMatrix>;
         using ConstTRowMatrixPtr          = RCP<const TRowMatrix>;
 
-        using XMultiVector                = MultiVector<SC,LO,GO,NO>;
-        using ConstXMultiVector           = const MultiVector<SC,LO,GO,NO>;
+        using XMultiVector                = Xpetra::MultiVector<SC,LO,GO,NO>;
+        using ConstXMultiVector           = const Xpetra::MultiVector<SC,LO,GO,NO>;
         using XMultiVectorPtr             = RCP<XMultiVector>;
         using ConstXMultiVectorPtr        = RCP<const XMultiVector>;
-        using ConstXMultiVectorPtrVecPtr  = ArrayRCP<ConstXMultiVectorPtr>;
+        using ConstXMultiVectorPtrVecPtr  = Teuchos::ArrayRCP<ConstXMultiVectorPtr>;
 
         using TMultiVector                = Tpetra::MultiVector<SC,LO,GO,NO>;
         using TMultiVectorPtr             = RCP<TMultiVector>;
@@ -124,9 +123,9 @@ namespace FROSch {
         using EMultiVectorPtr             = RCP<EMultiVector>;
 #endif
 
-        using XMultiVectorFactory         = MultiVectorFactory<SC,LO,GO,NO>;
+        using XMultiVectorFactory         = Xpetra::MultiVectorFactory<SC,LO,GO,NO>;
 
-        using ParameterListPtr            = RCP<ParameterList>;
+        using ParameterListPtr            = RCP<Teuchos::ParameterList>;
 
 #ifdef HAVE_SHYLU_DDFROSCH_EPETRA
         using ELinearProblem              = Epetra_LinearProblem;
@@ -147,11 +146,11 @@ namespace FROSch {
         using MueLuHierarchyPtr           = RCP<MueLu::Hierarchy<SC,LO,GO,NO> >;
 #endif
 
-        using UN                            = unsigned;
-        using UNVec                         = Teuchos::Array<UN>;
-        using UNVecPtr                      = Teuchos::ArrayRCP<UN>;
+        using UN                          = unsigned;
+        using UNVec                       = Teuchos::Array<UN>;
+        using UNVecPtr                    = Teuchos::ArrayRCP<UN>;
 
-        using GOVecPtr                      = ArrayRCP<GO>;
+        using GOVecPtr                    = Teuchos::ArrayRCP<GO>;
 
     public:
 
@@ -170,8 +169,8 @@ namespace FROSch {
         */
         SubdomainSolver(ConstXMatrixPtr k,
                         ParameterListPtr parameterList,
-                        string description = "undefined",
-                        GOVecPtr blockCoarseSize=null);
+                        std::string description = "undefined",
+                        GOVecPtr blockCoarseSize=Teuchos::null);
 
         //! Destructor
         virtual ~SubdomainSolver();
@@ -207,9 +206,9 @@ namespace FROSch {
         */
         virtual void apply(const XMultiVector &x,
                            XMultiVector &y,
-                           ETransp mode=NO_TRANS,
-                           SC alpha=ScalarTraits<SC>::one(),
-                           SC beta=ScalarTraits<SC>::zero()) const;
+                           Teuchos::ETransp mode = Teuchos::NO_TRANS,
+                           SC alpha = Teuchos::ScalarTraits<SC>::one(),
+                           SC beta = Teuchos::ScalarTraits<SC>::zero()) const;
 
         //! Get domain map
         virtual ConstXMapPtr getDomainMap() const;
@@ -223,15 +222,15 @@ namespace FROSch {
         \param out Output stream to be used
         \param Verbosity level used for printing
         */
-        virtual void describe(FancyOStream &out,
-                              const EVerbosityLevel verbLevel=Describable::verbLevel_default) const;
+        virtual void describe(Teuchos::FancyOStream &out,
+                              const Teuchos::EVerbosityLevel verbLevel = Teuchos::Describable::verbLevel_default) const;
 
         /*!
         \brief Get description of this operator
 
         \return String describing this operator
         */
-        virtual string description() const;
+        virtual std::string description() const;
 
         //! @name Access to class members
         //!@{
@@ -263,7 +262,7 @@ namespace FROSch {
         ParameterListPtr ParameterList_;
 
         //! Description of the solver
-        string Description_;
+        std::string Description_;
 
         mutable XMultiVectorPtr YTmp_;
 
@@ -289,8 +288,8 @@ namespace FROSch {
 #endif
 
 #ifdef HAVE_SHYLU_DDFROSCH_BELOS
-        RCP<Belos::LinearProblem<SC,MultiVector<SC,LO,GO,NO>,Belos::OperatorT<MultiVector<SC,LO,GO,NO> > > > BelosLinearProblem_;
-        RCP<Belos::SolverManager<SC,MultiVector<SC,LO,GO,NO>,Belos::OperatorT<MultiVector<SC,LO,GO,NO> > > > BelosSolverManager_;
+        RCP<Belos::LinearProblem<SC,Xpetra::MultiVector<SC,LO,GO,NO>,Belos::OperatorT<Xpetra::MultiVector<SC,LO,GO,NO> > > > BelosLinearProblem_;
+        RCP<Belos::SolverManager<SC,Xpetra::MultiVector<SC,LO,GO,NO>,Belos::OperatorT<Xpetra::MultiVector<SC,LO,GO,NO> > > > BelosSolverManager_;
 #endif
 
 #ifdef HAVE_SHYLU_DDFROSCH_IFPACK2
