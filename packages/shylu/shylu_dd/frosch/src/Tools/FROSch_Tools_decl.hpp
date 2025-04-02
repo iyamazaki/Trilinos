@@ -412,6 +412,7 @@ namespace FROSch {
         /*!
         \brief Print map to terminal.
         
+        \details
         Example: FROSch::debug::printMap(map, "Row Map", __FILE__, __LINE__);
 
         Sample output:
@@ -432,6 +433,7 @@ namespace FROSch {
         /*!
         \brief Print Xpetra matrix to terminal, based on what each rank holds, in dense format, i.e., including zeros.
         
+        \details
         Example: FROSch::debug::printXpetraMatrix_local_dense(matrix, "Stiffness matrix", __FILE__, __LINE__);
 
         Sample output:
@@ -470,6 +472,7 @@ namespace FROSch {
         /*!
         \brief Print Tpetra matrix to terminal, based on what each rank holds, in sparse format.
         
+        \details
         Example: FROSch::debug::printTpetraCrsMatrix_local_sparse(matrix, "Stiffness matrix", __FILE__, __LINE__);
 
         Sample output:
@@ -511,7 +514,7 @@ namespace FROSch {
         template <typename matrix_type>
         void printTpetraCrsMatrix_local_sparse(const Teuchos::RCP<matrix_type> M, const std::string strInfoToDisplay = "", const char* file = 0, const int line = -1);
 
-        // TODO: missing info
+        // TODO: [JK] missing info
         template <typename matrix_type>
         void printXpetraMatrix_local_sparse(const Teuchos::RCP<matrix_type> M, const std::string strInfoToDisplay = "", const char* file = 0, const int line = -1);
     }
@@ -520,6 +523,7 @@ namespace FROSch {
     /*!
     \brief Throw runtime error due to missing package in build configuration
 
+    \details
     As many packages are optional, we might detect only at runtime that a certain package
     is not included in the build configuration but is used by FROSch.
     Use this routine to throw a generic error message with some information for the user
