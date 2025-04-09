@@ -36,6 +36,7 @@ struct Timers {
     , vecConvTimeIR_(*(Teuchos::TimeMonitor::getNewTimer("Time to convert vectors to solver format (IR)")))
     , vecCopyTimeIR_(*(Teuchos::TimeMonitor::getNewTimer("Time to copy vectors (IR)")))
     , spmvTimeIR_(*(Teuchos::TimeMonitor::getNewTimer("Time to perform SpMV (IR)")))
+    , solveTimeIR_(*(Teuchos::TimeMonitor::getNewTimer("Time to solve (IR)")))
     , preOrderTime_(*(Teuchos::TimeMonitor::getNewTimer("Time for matrix pre-order")))
     , symFactTime_(*(Teuchos::TimeMonitor::getNewTimer("Time for symbolic factorization")))
     , numFactTime_(*(Teuchos::TimeMonitor::getNewTimer("Time for numeric factorization")))
@@ -55,6 +56,7 @@ struct Timers {
   Teuchos::Time vecConvTimeIR_;
   Teuchos::Time vecCopyTimeIR_;
   Teuchos::Time spmvTimeIR_;
+  Teuchos::Time solveTimeIR_;
   Teuchos::Time preOrderTime_;
   Teuchos::Time symFactTime_;
   Teuchos::Time numFactTime_;
