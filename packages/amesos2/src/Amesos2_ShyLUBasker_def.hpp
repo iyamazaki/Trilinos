@@ -332,6 +332,8 @@ ShyLUBasker<Matrix,Vector>::solve_impl(
 
   // Do the solve
   ierr = this->solve_view(xValues_, bValues_);
+  /* All processes should have the same error code */
+  Teuchos::broadcast(*(this->getComm()), 0, &ierr);
 
   TEUCHOS_TEST_FOR_EXCEPTION( ierr  > 0,
       std::runtime_error,
@@ -382,10 +384,6 @@ ShyLUBasker<Matrix,Vector>::solve_view(
     else
       ierr = ShyLUbasker->Solve(nrhs, pbValues, pxValues, true);
   }
-
-  /* All processes should have the same error code */
-  Teuchos::broadcast(*(this->getComm()), 0, &ierr);
-
   return ierr;
 }
 

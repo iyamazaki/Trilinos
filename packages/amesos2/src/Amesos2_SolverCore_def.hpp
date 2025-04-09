@@ -263,7 +263,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
   bool use_gather = use_gather_;
   use_gather = (use_gather && this->matrixA_->getComm()->getSize() > 1); // only with multiple MPIs
   use_gather = (use_gather && (std::is_same<scalar_type, float>::value || std::is_same<scalar_type, double>::value)); // only for double or float
-  if (this->root_) {
+  if (verbose && this->root_) {
     std::cout << std::endl <<  " RUNNING IR with " << name() << std::endl << std::endl;
   }
   global_size_type rowIndexBase = this->rowIndexBase_;
@@ -291,8 +291,6 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
     R = createMultiVecAdapter<Vector>(Teuchos::rcpFromPtr(r));
     E = createMultiVecAdapter<Vector>(Teuchos::rcpFromPtr(e));
   }
-  //Teuchos::RCP<MVAdapter> R = createMultiVecAdapter<Vector>(Teuchos::rcpFromPtr(r));
-  //Teuchos::RCP<MVAdapter> E = createMultiVecAdapter<Vector>(Teuchos::rcpFromPtr(e));
 
   // grab pointers for convenience
   auto Bptr = Teuchos::Ptr<const MVAdapter>(B.ptr());
@@ -382,10 +380,15 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
           do_get(    initialize_data, Xptr, X_view, ldx, CONTIGUOUS_AND_ROOTED, rowIndexBase);
       }
+    }
+    if (this->root_) {
+      #ifdef HAVE_AMESOS2_TIMERS
+      Teuchos::TimeMonitor LocalTimer1(timers_.solveTimeIR_);
+      #endif
       Kokkos::resize(R_view, ldr, nrhs);
       Kokkos::resize(E_view, lde, nrhs);
+      static_cast<const solver_type*>(this)->solve_view(X_view, B_view);
     }
-    static_cast<const solver_type*>(this)->solve_view(X_view, B_view);
   }
 
   host_magni_view x0norms("x0norms", nrhs);
@@ -423,6 +426,9 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
   // ** Iterative Refinement **
   int numIters = 0;
   int converged = 0; // 0 = has not converged, 1 = converged
+  if (!distributed_solver && !this->root_) {
+    converged = 1;
+  }
   for (numIters = 0; numIters < maxNumIters && converged == 0; ++numIters) {
     // r = b - Ax (on rank-0)
     {
@@ -466,8 +472,13 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         Util::put_1d_data_helper_kokkos_view<MVAdapter, host_mvector_t>::
           do_put(Rptr, R_view, ldr, CONTIGUOUS_AND_ROOTED, rowIndexBase);
       }
-      // Call solve
-      static_cast<const solver_type*>(this)->solve_impl(Teuchos::outArg(*E), Teuchos::ptrInArg(*R));
+      {
+        // Call solve
+        #ifdef HAVE_AMESOS2_TIMERS
+        Teuchos::TimeMonitor LocalTimer1(timers_.solveTimeIR_);
+        #endif
+        static_cast<const solver_type*>(this)->solve_impl(Teuchos::outArg(*E), Teuchos::ptrInArg(*R));
+      }
       {
         // Gather solution back
         #ifdef HAVE_AMESOS2_TIMERS
@@ -477,6 +488,9 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
           do_get(initialize_data, Eptr, E_view, lde, CONTIGUOUS_AND_ROOTED, rowIndexBase);
       }
     } else {
+      #ifdef HAVE_AMESOS2_TIMERS
+      Teuchos::TimeMonitor LocalTimer1(timers_.solveTimeIR_);
+      #endif
       static_cast<const solver_type*>(this)->solve_view(E_view, R_view);
     }
 
@@ -499,9 +513,10 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         }
       }
     }
-
-    // broadcast "converged"
-    Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &converged);
+    if (distributed_solver) {
+      // broadcast "converged"
+      Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &converged);
+    }
   } // end of for-loop for IR iteration
 
   if (verbose && this->root_) {
