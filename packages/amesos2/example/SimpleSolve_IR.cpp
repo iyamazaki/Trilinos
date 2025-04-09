@@ -64,8 +64,8 @@ int main(int argc, char *argv[]) {
   bool solveIR         = false;
   int  mc64_job        = 1;
   int  numIRs          = 5;
-  bool verboseIR       = true;
-  bool verbose         = true;
+  bool verboseIR       = false;
+  bool verbose         = false;
   std::string solverName("SuperLUDist");
   std::string rowPerm("NOROWPERM");
   std::string filename("arc130.mtx");
