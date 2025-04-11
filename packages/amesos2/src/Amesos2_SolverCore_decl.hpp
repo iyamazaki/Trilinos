@@ -503,6 +503,9 @@ namespace Amesos2 {
     /// Use Custom gather of vectors/matrix
     bool use_gather_;
 
+    /// Use Custom gather of vectors/matrix
+    bool skip_compute_;
+
     /// Contiguous GID map for reindex
     typedef Tpetra::Map<local_ordinal_type,
                         global_ordinal_type,

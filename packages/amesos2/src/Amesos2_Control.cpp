@@ -66,8 +66,11 @@ void Control::setControlParameters(
   if( parameterList->isType<int>("Number of iterative refinements") ){
     maxNumIterRefines_ = parameterList->get<int>("Number of iterative refinements");
   }
-  if( parameterList->isType<bool>("Verboes for iterative refinement") ){
-    verboseIterRefine_ = parameterList->get<bool>("Verboes for iterative refinement");
+  if( parameterList->isType<bool>("Verbose for iterative refinement") ){
+    verboseIterRefine_ = parameterList->get<bool>("Verbose for iterative refinement");
+  }
+  if( parameterList->isType<bool>("Use Residual Norm for refinement check") ){
+    resCheckIterRefine_ = parameterList->get<bool>("Use Residual Norm for refinement check");
   }
 
   // Add this value to all diagonal elements which are structurally
