@@ -64,6 +64,7 @@ int main(int argc, char *argv[]) {
   bool solveIR         = false;
   int  mc64_job        = 1;
   int  numIRs          = 5;
+  bool checkResNrmIR   = false;
   bool verboseIR       = false;
   bool verbose         = false;
   std::string solverName("SuperLUDist");
@@ -79,7 +80,9 @@ int main(int argc, char *argv[]) {
   cmdp.setOption("job",&mc64_job,"Option for MC64.");
   cmdp.setOption("tinyPivot","noTinyPivot",&tinyPivot,"Replace tiny pivot.");
   cmdp.setOption("multiSolves","noMultiSolves",&multiSolves,"Do numerical factor and solve twice.");
+  cmdp.setOption("verboseIR","quietIR",&verboseIR,"Print messages and results for IR.");
   cmdp.setOption("solveIR","noSolveIR",&solveIR,"Solve with IR.");
+  cmdp.setOption("checkResNrmIR","checkErrNrmIR",&checkResNrmIR,"Convergece check for IR.");
   cmdp.setOption("numIRs",&numIRs,"Number of refinements.");
   cmdp.setOption("solver",&solverName,"Solver name");
   cmdp.setOption("filename",&filename,"Filename for Matrix-Market test matrix.");
@@ -136,7 +139,8 @@ int main(int argc, char *argv[]) {
   if (solveIR) {
     amesos2_params.set("Iterative refinement", true);
     amesos2_params.set("Number of iterative refinements", numIRs);
-    amesos2_params.set("Verboes for iterative refinement", verboseIR);
+    amesos2_params.set("Verbose for iterative refinement", verboseIR);
+    amesos2_params.set("Use Residual Norm for refinement check", checkResNrmIR);
   }
   solver->setParameters( rcpFromRef(amesos2_params) );
   if (xml_filename != "") {
@@ -148,7 +152,7 @@ int main(int argc, char *argv[]) {
 
   RCP<Teuchos::StackedTimer> stackedTimer;
   if(useStackedTimer) {
-    stackedTimer = rcp(new Teuchos::StackedTimer("Amesos2 SimpleSolve-File"));
+    stackedTimer = rcp(new Teuchos::StackedTimer("Amesos2 SimpleSolve-IR"));
     Teuchos::TimeMonitor::setStackedTimer(stackedTimer);
   }
   solver->symbolicFactorization(); comm->barrier();
