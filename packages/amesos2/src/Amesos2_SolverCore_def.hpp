@@ -49,6 +49,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::SolverCore(
   , root_(rank_ == 0)
   , nprocs_(Teuchos::size(*this->getComm()))
   , use_gather_(true)
+  , skip_compute_(false)
 {
     TEUCHOS_TEST_FOR_EXCEPTION(
     !matrixShapeOK(),
@@ -132,7 +133,11 @@ SolverCore<ConcreteSolver,Matrix,Vector>::numericFactorization()
       loadA(NUMFACT);
     }
 
-    int error_code = static_cast<solver_type*>(this)->numericFactorization_impl();
+    int error_code = EXIT_SUCCESS;
+    if (!skip_compute_) {
+      error_code = static_cast<solver_type*>(this)->numericFactorization_impl();
+    }
+
     if (error_code == EXIT_SUCCESS){
       ++status_.numNumericFact_;
       status_.last_phase_ = NUMFACT;
@@ -163,6 +168,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve(const Teuchos::Ptr<Vector> X,
   B.assert_not_null();
 
   if (control_.useIterRefine_) {
+    // TODO : if resnorm_check & refactor, then should we just call solve (not solve_ir) ?
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor LocalTimer2(timers_.coreIRTime_);
 #endif
@@ -259,10 +265,17 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
   const impl_scalar_type mone = impl_scalar_type(-one);
   const magni_type eps = KAT::eps ();
 
+  // TODO: only tested with ShyLUBasker for now
   bool distributed_solver = (name() != "ShyLUBasker");
   bool use_gather = use_gather_;
   use_gather = (use_gather && this->matrixA_->getComm()->getSize() > 1); // only with multiple MPIs
   use_gather = (use_gather && (std::is_same<scalar_type, float>::value || std::is_same<scalar_type, double>::value)); // only for double or float
+
+  // TODO: tol should be user-specifiable parameter
+  magni_type tol = 0.000000001;
+  magni_type expected_niters = 3.0;
+  magni_type refactor_tol = pow(10.0, (log10(tol)/expected_niters));
+  bool resnorm_check = control_.resCheckIterRefine_;
   if (verbose && this->root_) {
     std::cout << std::endl <<  " RUNNING IR with " << name() << std::endl << std::endl;
   }
@@ -391,33 +404,35 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
     }
   }
 
-  host_magni_view x0norms("x0norms", nrhs);
-  host_magni_view bnorms("bnorms", nrhs);
-  host_magni_view enorms("enorms", nrhs);
+  host_magni_view norms_0("norms_0", nrhs);
   if (this->root_) {
-    // compute initial solution norms (used for stopping criteria)
-    for (size_t j = 0; j < nrhs; j++) { 
-      auto x_subview = Kokkos::subview(X_view, Kokkos::ALL(), j);
-      host_vector_t x_1d (const_cast<impl_scalar_type*>(x_subview.data()), x_subview.extent(0));
-      x0norms(j) = KokkosBlas::nrm2(x_1d);
-    }
-    if (verbose) {
-      std::cout << std::endl
-                << " SolverCore :: solve_ir (maxNumIters = " << maxNumIters
-                << ", tol = " << x0norms(0) << " * " << eps << " = " << x0norms(0)*eps
-                << ")" << std::endl;
-    }
-
-    // compute residual norm
-    if (verbose) {
-      std::cout << " bnorm = ";
+    // compute initial norms (used for stopping criteria)
+    if (resnorm_check) {
+      // norm(B)
       for (size_t j = 0; j < nrhs; j++) { 
         auto b_subview = Kokkos::subview(B_view, Kokkos::ALL(), j);
         host_vector_t b_1d (const_cast<impl_scalar_type*>(b_subview.data()), b_subview.extent(0));
-        bnorms(j) = KokkosBlas::nrm2(b_1d);
-        std::cout << bnorms(j) << ", ";
+        norms_0(j) = KokkosBlas::nrm2(b_1d);
       }
-      std::cout << std::endl;
+    } else {
+      // norm(X0)
+      for (size_t j = 0; j < nrhs; j++) { 
+        auto x_subview = Kokkos::subview(X_view, Kokkos::ALL(), j);
+        host_vector_t x_1d (const_cast<impl_scalar_type*>(x_subview.data()), x_subview.extent(0));
+        norms_0(j) = KokkosBlas::nrm2(x_1d);
+      }
+    }
+    if (verbose) {
+      magni_type convergence_tol = (resnorm_check ? tol : eps);
+      std::cout << std::endl
+                << " SolverCore :: solve_ir (maxNumIters = " << maxNumIters
+                << ", tol = " << norms_0(0) << " * " << convergence_tol << " = " << norms_0(0)*convergence_tol
+                << ") using relative " << (resnorm_check ? " resnorms" : "errnorms")
+                << (use_gather ? " and custom gather, " : " and original gather ") << std::endl;
+      if (resnorm_check) {
+        std::cout << "   with expect num iterations = " << int(expected_niters)
+                  << " and refactor tolerance = " << refactor_tol << std::endl;
+      }
     }
   }
 
@@ -425,10 +440,11 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
   //
   // ** Iterative Refinement **
   int numIters = 0;
-  int converged = 0; // 0 = has not converged, 1 = converged
+  int converged = 0;
   if (!distributed_solver && !this->root_) {
     converged = 1;
   }
+  int refactor = 0;
   for (numIters = 0; numIters < maxNumIters && converged == 0; ++numIters) {
     // r = b - Ax (on rank-0)
     {
@@ -447,19 +463,36 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         static_cast<const solver_type*>(this)->local_spmv(mone, X_view, one, R_view);
       }
     }
-    if (verbose && this->root_) {
-      // compute residual norm
-      std::cout << " > " << numIters << " : norm(r,x,e) = ";
+    if (resnorm_check && this->root_) {
+      // convergence check
+      converged = 1;
+      if (verbose) std::cout << " > " << numIters << " : norm(r) = ";
       for (size_t j = 0; j < nrhs; j++) { 
         auto r_subview = Kokkos::subview(R_view, Kokkos::ALL(), j);
-        auto x_subview = Kokkos::subview(X_view, Kokkos::ALL(), j);
         host_vector_t r_1d (const_cast<impl_scalar_type*>(r_subview.data()), r_subview.extent(0));
-        host_vector_t x_1d (const_cast<impl_scalar_type*>(x_subview.data()), x_subview.extent(0));
-        impl_scalar_type rnorm = KokkosBlas::nrm2(r_1d);
-        impl_scalar_type xnorm = KokkosBlas::nrm2(x_1d);
-        std::cout << rnorm << " -> " << rnorm/bnorms(j) << " " << xnorm << " " << enorms(j) << ", ";
+        magni_type norm_j = KokkosBlas::nrm2(r_1d);
+        if (norm_j > tol * norms_0(j)) {
+          converged = 0;
+        }
+        if (norm_j > refactor_tol * norms_0(j)) {
+          refactor = 1;
+        }
+        if (verbose) std::cout << norm_j << " ";
       }
-      std::cout << std::endl;
+      if (verbose) std::cout << std::endl;
+      if (refactor == 1 && numIters == 0) {
+        // break out of loop so that we can call compute and solve
+        if (verbose) {
+          std::cout << " * refactor * " << std::endl;
+        }
+      } else {
+        refactor = 0;
+      }
+      // break if converged
+      if (verbose && converged == 1) {
+        std::cout << " converged " << std::endl;
+      }
+      if (converged == 1) break;
     }
 
     // e = A^{-1} r 
@@ -497,18 +530,25 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
     // x = x + e (on rank-0)
     if (this->root_) {
       KokkosBlas::axpy(one, E_view, X_view);
+    }
+    if (!resnorm_check && this->root_) {
+      // convergence check
+      KokkosBlas::axpy(one, E_view, X_view);
       if (numIters < maxNumIters-1) {
         // compute norm of corrections for "convergence" check
         converged = 1;
+        if (verbose) std::cout << " > " << numIters << " : norm(e) = ";
         for (size_t j = 0; j < nrhs; j++) { 
           auto e_subview = Kokkos::subview(E_view, Kokkos::ALL(), j);
           host_vector_t e_1d (const_cast<impl_scalar_type*>(e_subview.data()), e_subview.extent(0));
-          enorms(j) = KokkosBlas::nrm2(e_1d);
-          if (enorms(j) > eps * x0norms(j)) {
+          magni_type norm_j = KokkosBlas::nrm2(e_1d);
+          if (verbose) std::cout << norm_j << ", " << norm_j / norms_0(j);
+          if (norm_j > eps * norms_0(j)) {
             converged = 0;
           }
         }
-        if (verbose && converged) {
+        if (verbose) std::cout << std::endl;
+        if (verbose && converged == 1) {
           std::cout << " converged " << std::endl;
         }
       }
@@ -518,6 +558,12 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
       Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &converged);
     }
   } // end of for-loop for IR iteration
+
+  // broadcast "refactor"
+  Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &refactor);
+  if (refactor == 1) {
+    // call compute and solve_impl (not solve_ir)
+  }
 
   if (verbose && this->root_) {
     // r = b - Ax
@@ -533,7 +579,9 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
       auto r_subview = Kokkos::subview(R_view, Kokkos::ALL(), j);
       host_vector_t r_1d (const_cast<impl_scalar_type*>(r_subview.data()), r_subview.extent(0));
       scalar_type rnorm = KokkosBlas::nrm2(r_1d);
-      std::cout << rnorm << " -> " << rnorm/bnorms(j) << ", ";
+      std::cout << rnorm;
+      if (resnorm_check) std::cout << " -> " << rnorm << "/" << norms_0(j) << " = " << rnorm/norms_0(j);
+      std::cout << ", ";
     }
     std::cout << std::endl << std::endl;
   }
@@ -661,7 +709,8 @@ SolverCore<ConcreteSolver,Matrix,Vector>::getValidParameters() const
   control_params->set("Transpose", false, "Whether to solve with the matrix transpose");
   control_params->set("Iterative refinement", false, "Whether to solve with iterative refinement");
   control_params->set("Number of iterative refinements", 2, "Number of iterative refinements");
-  control_params->set("Verboes for iterative refinement", false, "Verbosity for iterative refinements");
+  control_params->set("Verbose for iterative refinement", false, "Verbosity for iterative refinements");
+  control_params->set("Use Residual Norm for refinement check", true, "Check for refinements convergence");
   //  control_params->set("AddToDiag", "");
   //  control_params->set("AddZeroToDiag", false);
   //  control_params->set("MatrixProperty", "general");

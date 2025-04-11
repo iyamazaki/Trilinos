@@ -158,7 +158,7 @@ ShyLUBasker<Matrix,Vector>::symbolicFactorization_impl()
           sp_rowptr.data(),
           sp_colind.data(),
           sp_values,
-          true);
+          true); // true = _crs_transpose_needed
 
       TEUCHOS_TEST_FOR_EXCEPTION(info != 0,
           std::runtime_error, "Error in ShyLUBasker Symbolic");
@@ -399,11 +399,28 @@ ShyLUBasker<Matrix,Vector>::local_spmv(
 
   if ( this->root_ ) { // do solve
     const int nrows = this->matrixA_->getGlobalNumRows();
-    host_graph_t  static_graph (rowind_view_, colptr_view_);
-    host_crsmat_t crsmat ("CrsMatrix", nrows, nzvals_view_, static_graph);
+    if ( single_proc_optimization() ) {
+      host_ordinal_type_array sp_rowptr;
+      host_ordinal_type_array sp_colind;
+      host_value_type_array   sp_values;
 
-    // Transpose because ShyLU-Basker stores its matrix in column-majore
-    KokkosSparse::spmv("T", alpha, crsmat, Xview, beta, Bview);
+      this->matrixA_->returnRowPtr_kokkos_view(sp_rowptr);
+      this->matrixA_->returnColInd_kokkos_view(sp_colind);
+      this->matrixA_->returnValues_kokkos_view(sp_values);
+
+      host_graph_t  static_graph (sp_colind, sp_rowptr);
+      host_crsmat_t crsmat ("CrsMatrix", nrows, sp_values, static_graph);
+
+      // The input matrix is row-major
+      //  (then ShyLU-Basker transpose internally)
+      KokkosSparse::spmv("N", alpha, crsmat, Xview, beta, Bview);
+    } else {
+      host_graph_t  static_graph (rowind_view_, colptr_view_);
+      host_crsmat_t crsmat ("CrsMatrix", nrows, nzvals_view_, static_graph);
+
+      // Transpose because ShyLU-Basker stores its matrix in column-majore
+      KokkosSparse::spmv("T", alpha, crsmat, Xview, beta, Bview);
+    }
   }
   return ierr;
 }
@@ -436,6 +453,11 @@ ShyLUBasker<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::Param
   if(parameterList->isParameter("UseCustomGather"))
     {
       this->use_gather_ = parameterList->get<bool>("UseCustomGather");
+    }
+
+  if(parameterList->isParameter("SkipCompute"))
+    {
+      this->skip_compute_ = parameterList->get<bool>("SkipCompute");
     }
 
   if(parameterList->isParameter("num_threads"))
@@ -563,6 +585,8 @@ ShyLUBasker<Matrix,Vector>::getValidParameters_impl() const
               "Are GIDs contiguous");
       pl->set("UseCustomGather", true, 
               "Use Matrix-gather routine");
+      pl->set("SkipCompute", false, 
+              "Skip Numeric Factorization");
       pl->set("num_threads", 1, 
               "Number of threads");
       pl->set("pivot", false,

@@ -32,6 +32,7 @@ struct Control {
     , useIterRefine_(false)
     , maxNumIterRefines_(2)
     , verboseIterRefine_(false)
+    , resCheckIterRefine_(true)
     , addToDiag_("0.0")
     , addZeroToDiag_(false)
     , matrixProperty_(0)
@@ -69,6 +70,9 @@ struct Control {
 
   /// Verbosity for iterative refinement
   bool verboseIterRefine_;
+
+  /// Convergence check for iterative refinement
+  bool resCheckIterRefine_;
 
   /**
    * \brief Add this value to the diagonal.
