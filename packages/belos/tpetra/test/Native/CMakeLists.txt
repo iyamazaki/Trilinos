@@ -160,3 +160,18 @@ TRIBITS_ADD_TEST(
   COMM serial mpi
   STANDARD_PASS_OUTPUT
   )
+
+# new tester
+TRIBITS_ADD_EXECUTABLE(
+  Tpetra_Native_solvers_nonsymm_matrix_v2
+  SOURCES nonsymm_matrix_v2.cpp
+  COMM serial mpi
+  )
+
+TRIBITS_ADD_TEST(
+  Tpetra_Native_solvers_nonsymm_matrix_v2
+  NAME Tpetra_Native_GMRES_S_STEP_nonsymm_matrix_v2_step5_cholqr2
+  ARGS "--solver=\"TPETRA GMRES S-STEP\" --restartLength=10 --stepSize=5 --useCholQR2"
+  COMM serial mpi
+  STANDARD_PASS_OUTPUT
+  )
