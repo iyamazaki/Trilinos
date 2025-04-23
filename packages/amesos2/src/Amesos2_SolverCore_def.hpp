@@ -50,6 +50,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::SolverCore(
   , nprocs_(Teuchos::size(*this->getComm()))
   , use_gather_(true)
   , skip_compute_(false)
+  , numIRcalled_(0)
 {
     TEUCHOS_TEST_FOR_EXCEPTION(
     !matrixShapeOK(),
@@ -134,7 +135,10 @@ SolverCore<ConcreteSolver,Matrix,Vector>::numericFactorization()
     }
 
     int error_code = EXIT_SUCCESS;
-    if (!skip_compute_) {
+    if (!skip_compute_ && (!control_.useIterRefine_ || numIRcalled_ == 0)) {
+      if (this->root_ && control_.useIterRefine_ && control_.verboseIterRefine_) {
+        std::cout << std::endl <<  " ReFactoring for IR with " << name() << " (" << numIRcalled_ << ")" << std::endl << std::endl;
+      }
       error_code = static_cast<solver_type*>(this)->numericFactorization_impl();
     }
 
@@ -168,12 +172,22 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve(const Teuchos::Ptr<Vector> X,
   B.assert_not_null();
 
   if (control_.useIterRefine_) {
-    // TODO : if resnorm_check & refactor, then should we just call solve (not solve_ir) ?
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor LocalTimer2(timers_.coreIRTime_);
 #endif
-    solve_ir(X, B, control_.maxNumIterRefines_, control_.verboseIterRefine_);
-    return;
+    if (control_.useIterRefine_ && control_.maxNumIterRefines_ > 1 &&
+        control_.expNumIterRefines_ > 1 && numIRcalled_ > 0) {
+      solve_ir(X, B, control_.maxNumIterRefines_, control_.verboseIterRefine_);
+      return;
+    } else {
+      // if IR is expected to converge in one iterations or
+      // if the matrix is just refactored, then just call solve (not solve_ir)
+      if (this->root_ && control_.useIterRefine_ && control_.verboseIterRefine_) {
+        std::cout << std::endl <<  " Calling solve instead of IR with " << name()
+                  << " (" << numIRcalled_ << ")" << std::endl << std::endl;
+      }
+      numIRcalled_ ++;
+    }
   }
 
   const Teuchos::RCP<MultiVecAdapter<Vector> > x =
@@ -273,11 +287,11 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
 
   // TODO: tol should be user-specifiable parameter
   magni_type tol = 0.000000001;
-  magni_type expected_niters = 3.0;
+  magni_type expected_niters = magni_type(control_.expNumIterRefines_);
   magni_type refactor_tol = pow(10.0, (log10(tol)/expected_niters));
   bool resnorm_check = control_.resCheckIterRefine_;
   if (verbose && this->root_) {
-    std::cout << std::endl <<  " RUNNING IR with " << name() << std::endl << std::endl;
+    std::cout << std::endl <<  " RUNNING IR (" << numIRcalled_ << ") with " << name() << std::endl << std::endl;
   }
   global_size_type rowIndexBase = this->rowIndexBase_;
 
@@ -477,7 +491,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         if (norm_j > refactor_tol * norms_0(j)) {
           refactor = 1;
         }
-        if (verbose) std::cout << norm_j << " ";
+        if (verbose) std::cout << norm_j << " / " << norms_0(j) << " = " << norm_j/norms_0(j) << " ";
       }
       if (verbose) std::cout << std::endl;
       if (refactor == 1 && numIters == 0) {
@@ -485,6 +499,9 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         if (verbose) {
           std::cout << " * refactor * " << std::endl;
         }
+        // reset to perform numerical factorization
+        this->numIRcalled_ = 0;
+        break;
       } else {
         refactor = 0;
       }
@@ -562,7 +579,14 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
   // broadcast "refactor"
   Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &refactor);
   if (refactor == 1) {
-    // call compute and solve_impl (not solve_ir)
+    if (verbose && this->root_) {
+      std::cout << std::endl << " ** Re-factor && Re-solve ** " << std::endl << std::endl;
+    }
+    // re-compute factor (NOTE: can we skip loadA?)
+    const_cast<type&>(*this).numericFactorization();
+    // solve (NOTE: can we call solve without IR)
+    solve(x, b);
+    return 0;
   }
 
   if (verbose && this->root_) {

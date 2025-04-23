@@ -30,7 +30,8 @@ struct Control {
     , debug_(0)
     , useTranspose_(false)
     , useIterRefine_(false)
-    , maxNumIterRefines_(2)
+    , maxNumIterRefines_(3)
+    , expNumIterRefines_(3)
     , verboseIterRefine_(false)
     , resCheckIterRefine_(true)
     , addToDiag_("0.0")
@@ -67,6 +68,9 @@ struct Control {
 
   /// How many iterative refinements to perform
   int maxNumIterRefines_;
+
+  /// How many iterative refinements expected to perform
+  int expNumIterRefines_;
 
   /// Verbosity for iterative refinement
   bool verboseIterRefine_;
