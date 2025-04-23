@@ -506,6 +506,9 @@ namespace Amesos2 {
     /// Use Custom gather of vectors/matrix
     bool skip_compute_;
 
+    /// Number of times solve_ir is called with the current factors
+    mutable int numIRcalled_;
+
     /// Contiguous GID map for reindex
     typedef Tpetra::Map<local_ordinal_type,
                         global_ordinal_type,

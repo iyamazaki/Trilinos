@@ -66,6 +66,9 @@ void Control::setControlParameters(
   if( parameterList->isType<int>("Number of iterative refinements") ){
     maxNumIterRefines_ = parameterList->get<int>("Number of iterative refinements");
   }
+  if( parameterList->isType<int>("Expected number of iterative refinements") ){
+    expNumIterRefines_ = parameterList->get<int>("Expected number of iterative refinements");
+  }
   if( parameterList->isType<bool>("Verbose for iterative refinement") ){
     verboseIterRefine_ = parameterList->get<bool>("Verbose for iterative refinement");
   }
