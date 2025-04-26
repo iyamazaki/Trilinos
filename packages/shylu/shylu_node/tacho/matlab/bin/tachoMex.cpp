@@ -1,9 +1,10 @@
+// clang-format off
 // @HEADER
 // *****************************************************************************
-//        MueLu: A package for multigrid based preconditioning
+//                            Tacho package
 //
-// Copyright 2012 NTESS and the MueLu contributors.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2022 NTESS and the Tacho contributors.
+// SPDX-License-Identifier: BSD-2-Clause
 // *****************************************************************************
 // @HEADER
 
