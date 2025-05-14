@@ -262,18 +262,13 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
                                                    const int maxNumIters,
                                                    const bool verbose) const
 {
-  using KAT              = Kokkos::ArithTraits<scalar_type>;
-  using impl_scalar_type = typename KAT::val_type;
-  using magni_type       = typename KAT::mag_type;
-  using host_execution_space = Kokkos::DefaultHostExecutionSpace;
-  using host_crsmat_t    = KokkosSparse::CrsMatrix<impl_scalar_type, int, host_execution_space, void, int>;
+  using host_crsmat_t    = KokkosSparse::CrsMatrix<impl_scalar_type, int, HostExecSpaceType, void, int>;
   using host_graph_t     = typename host_crsmat_t::StaticCrsGraphType;
   using host_values_t    = typename host_crsmat_t::values_type::non_const_type;
   using host_row_map_t   = typename host_graph_t::row_map_type::non_const_type;
   using host_colinds_t   = typename host_graph_t::entries_type::non_const_type;
-  using host_mvector_t   = Kokkos::View<impl_scalar_type **, Kokkos::LayoutLeft, host_execution_space>;
-  using host_vector_t    = Kokkos::View<impl_scalar_type *,  Kokkos::LayoutLeft, host_execution_space>;
-  using host_magni_view  = Kokkos::View<magni_type  *,  Kokkos::LayoutLeft, host_execution_space>;
+  using host_vector_t    = Kokkos::View<impl_scalar_type *,  Kokkos::LayoutLeft, HostExecSpaceType>;
+  using host_magni_view  = Kokkos::View<magni_type  *,  Kokkos::LayoutLeft, HostExecSpaceType>;
 
   const impl_scalar_type one(1.0);
   const impl_scalar_type mone = impl_scalar_type(-one);
@@ -364,10 +359,10 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
   const int lde = ldx;
   const bool     initialize_data = true;
   const bool not_initialize_data = true;
-  host_mvector_t X_view;
-  host_mvector_t B_view;
-  host_mvector_t R_view;
-  host_mvector_t E_view;
+  host_scalar_view_t X_view;
+  host_scalar_view_t B_view;
+  host_scalar_view_t R_view;
+  host_scalar_view_t E_view;
 
   //
   // ** First Solve **
@@ -377,13 +372,13 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
       #ifdef HAVE_AMESOS2_TIMERS
       Teuchos::TimeMonitor LocalTimer1(timers_.vecConvTimeIR_);
       #endif
-      Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
+      Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
         do_get(    initialize_data, Bptr, B_view, ldb, CONTIGUOUS_AND_ROOTED, rowIndexBase);
-      Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
+      Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
         do_get(    initialize_data, Xptr, X_view, ldx, CONTIGUOUS_AND_ROOTED, rowIndexBase);
-      Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
+      Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
         do_get(not_initialize_data, Rptr, R_view, ldr, CONTIGUOUS_AND_ROOTED, rowIndexBase);
-      Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
+      Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
         do_get(not_initialize_data, Eptr, E_view, lde, CONTIGUOUS_AND_ROOTED, rowIndexBase);
     }
   } else {
@@ -402,9 +397,9 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         }
       }
       if (!use_gather) {
-        Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
+        Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
           do_get(    initialize_data, Bptr, B_view, ldb, CONTIGUOUS_AND_ROOTED, rowIndexBase);
-        Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
+        Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
           do_get(    initialize_data, Xptr, X_view, ldx, CONTIGUOUS_AND_ROOTED, rowIndexBase);
       }
     }
@@ -519,7 +514,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         #ifdef HAVE_AMESOS2_TIMERS
         Teuchos::TimeMonitor LocalTimer1(timers_.vecCopyTimeIR_);
         #endif
-        Util::put_1d_data_helper_kokkos_view<MVAdapter, host_mvector_t>::
+        Util::put_1d_data_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
           do_put(Rptr, R_view, ldr, CONTIGUOUS_AND_ROOTED, rowIndexBase);
       }
       {
@@ -534,7 +529,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         #ifdef HAVE_AMESOS2_TIMERS
         Teuchos::TimeMonitor LocalTimer1(timers_.vecCopyTimeIR_);
         #endif
-        Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_mvector_t>::
+        Util::get_1d_copy_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
           do_get(initialize_data, Eptr, E_view, lde, CONTIGUOUS_AND_ROOTED, rowIndexBase);
       }
     } else {
@@ -598,16 +593,25 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
     } else {
       static_cast<const solver_type*>(this)->local_spmv(mone, X_view, one, R_view);
     }
+    converged = 1;
     std::cout << " > final residual norm = ";
     for (size_t j = 0; j < nrhs; j++) { 
       auto r_subview = Kokkos::subview(R_view, Kokkos::ALL(), j);
       host_vector_t r_1d (const_cast<impl_scalar_type*>(r_subview.data()), r_subview.extent(0));
-      scalar_type rnorm = KokkosBlas::nrm2(r_1d);
+      magni_type rnorm = KokkosBlas::nrm2(r_1d);
+      if (rnorm > tol * norms_0(j)) {
+        converged = 0;
+      }
       std::cout << rnorm;
       if (resnorm_check) std::cout << " -> " << rnorm << "/" << norms_0(j) << " = " << rnorm/norms_0(j);
       std::cout << ", ";
     }
-    std::cout << std::endl << std::endl;
+    if (converged == 1) {
+      std::cout << " !! IR converged !!" << std::endl;
+    } else {
+      std::cout << " !! IR ** failed ** to converged !!" << std::endl;
+    }
+    std::cout << std::endl;
   }
   // put/scatter X for output
   {
@@ -620,7 +624,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
       if (rval != 0) use_gather = false;
     }
     if (!use_gather) {
-      Util::put_1d_data_helper_kokkos_view<MVAdapter, host_mvector_t>::
+      Util::put_1d_data_helper_kokkos_view<MVAdapter, host_scalar_view_t>::
         do_put(Xptr, X_view, ldx, CONTIGUOUS_AND_ROOTED, rowIndexBase);
     }
   }

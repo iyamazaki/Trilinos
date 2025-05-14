@@ -361,11 +361,23 @@ ShyLUBasker<Matrix,Vector>::solve_impl(
   return(ierr);
 }
 
+
+
 template <class Matrix, class Vector>
 int
 ShyLUBasker<Matrix,Vector>::solve_view(
- host_solve_array_t Xview,
- host_solve_array_t Bview) const
+ host_scalar_view_t Xview,
+ host_scalar_view_t Bview) const
+{
+  return this->solve_view_impl(Xview, Bview);
+}
+
+template <class Matrix, class Vector>
+template <typename KV>
+int
+ShyLUBasker<Matrix,Vector>::solve_view_impl(
+ /*host_solve_array_t*/ KV Xview,
+ /*host_solve_array_t*/ KV Bview) const
 {
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor solveTimer(this->timers_.solveTime_);
@@ -389,8 +401,17 @@ ShyLUBasker<Matrix,Vector>::solve_view(
 template <class Matrix, class Vector>
 int
 ShyLUBasker<Matrix,Vector>::local_spmv(
-     shylubasker_type alpha, host_solve_array_t Xview,
-     shylubasker_type beta,  host_solve_array_t Bview) const {
+     impl_scalar_type alpha, host_scalar_view_t Xview,
+     impl_scalar_type beta,  host_scalar_view_t Bview) const {
+  return this->local_spmv_impl(alpha, Xview, beta, Bview);
+}
+
+template <class Matrix, class Vector>
+template <typename SC, typename KV>
+int
+ShyLUBasker<Matrix,Vector>::local_spmv_impl(
+     /*shylubasker_type*/ SC alpha, /*host_solve_array_t*/ KV Xview,
+     /*shylubasker_type*/ SC beta,  /*host_solve_array_t*/ KV Bview) const {
 
   int ierr = 0; // returned error code
   using host_crsmat_t = KokkosSparse::CrsMatrix<shylubasker_type, local_ordinal_type, HostExecSpaceType, void, local_ordinal_type>;
