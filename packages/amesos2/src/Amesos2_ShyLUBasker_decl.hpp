@@ -56,10 +56,13 @@ public:
 
   // Since typedef's are not inheritted, go grab them
   typedef typename super_type::scalar_type                     scalar_type;
+  typedef typename super_type::impl_scalar_type                impl_scalar_type;
   typedef typename super_type::local_ordinal_type              local_ordinal_type;
   typedef typename super_type::global_ordinal_type             global_ordinal_type;
   typedef typename super_type::global_size_type                global_size_type;
   typedef typename super_type::node_type                       node_type;
+  typedef typename super_type::HostExecSpaceType               HostExecSpaceType;
+  typedef typename super_type::host_scalar_view_t              host_scalar_view_t;
 
   typedef TypeMap<Amesos2::ShyLUBasker,scalar_type>            type_map;
   typedef typename type_map::type                              shylubasker_type;
@@ -72,8 +75,6 @@ public:
   typedef Matrix                                               matrix_type;
   typedef MatrixAdapter<matrix_type>                           matrix_adapter_type;
 
-  typedef Kokkos::DefaultHostExecutionSpace                    HostExecSpaceType;
-//  typedef Kokkos::View<local_ordinal_type*, HostExecSpaceType> host_size_type_array;
   typedef Kokkos::View<local_ordinal_type*, HostExecSpaceType> host_ordinal_type_array;
   typedef Kokkos::View<shylubasker_type*, HostExecSpaceType>   host_value_type_array;
 
@@ -129,11 +130,19 @@ private:
   int solve_impl(const Teuchos::Ptr<MultiVecAdapter<Vector> >       X,
                  const Teuchos::Ptr<const MultiVecAdapter<Vector> > B) const;
 
-  int solve_view(host_solve_array_t X,
-                 host_solve_array_t B) const;
+  int solve_view(host_scalar_view_t X,
+                 host_scalar_view_t B) const;
 
-  int local_spmv(shylubasker_type alpha, host_solve_array_t X,
-                 shylubasker_type beta,  host_solve_array_t B) const;
+  template <typename KV>
+  int solve_view_impl(/*host_solve_array_t*/ KV X,
+                      /*host_solve_array_t*/ KV B) const;
+
+  int local_spmv(impl_scalar_type alpha, host_scalar_view_t X,
+                 impl_scalar_type beta,  host_scalar_view_t B) const;
+
+  template <typename SC, typename KV>
+  int local_spmv_impl(/*shylubasker_type*/ SC alpha, /*host_solve_array_t*/ KV X,
+                      /*shylubasker_type*/ SC beta,  /*host_solve_array_t*/ KV B) const;
 
   /**
    * \brief Determines whether the shape of the matrix is OK for this solver.

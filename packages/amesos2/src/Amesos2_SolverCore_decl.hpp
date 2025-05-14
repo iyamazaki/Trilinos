@@ -84,9 +84,15 @@ namespace Amesos2 {
     typedef typename MatrixAdapter<matrix_type>::global_size_t      global_size_type;
     typedef typename MatrixAdapter<matrix_type>::node_t             node_type;
 
-    typedef Kokkos::DefaultHostExecutionSpace                               HostExecSpaceType;
+    typedef Kokkos::DefaultHostExecutionSpace                       HostExecSpaceType;
     typedef typename Kokkos::View<scalar_type**, Kokkos::LayoutLeft,
                                   typename HostExecSpaceType::memory_space> host_solve_array_t;
+
+    typedef Kokkos::ArithTraits<scalar_type> KAT;
+    typedef typename KAT::val_type                                  impl_scalar_type;
+    typedef typename KAT::mag_type                                  magni_type;
+    typedef typename Kokkos::View<impl_scalar_type **, Kokkos::LayoutLeft,
+                                  HostExecSpaceType>                        host_scalar_view_t;
 
     /// \name Constructor/Destructor methods
     //@{
@@ -422,15 +428,15 @@ namespace Amesos2 {
     void setNnzLU(size_t nnz){ status_.lu_nnz_ = nnz; }
 
     virtual
-    int solve_view(host_solve_array_t X,
-                   host_solve_array_t B) const {
+    int solve_view(host_scalar_view_t X,
+                   host_scalar_view_t B) const {
       TEUCHOS_TEST_FOR_EXCEPTION( true, std::runtime_error, "solve_view not implemented.");
       return -1;
     }
 
     virtual
-    int local_spmv(scalar_type alpha, host_solve_array_t X,
-                   scalar_type beta,  host_solve_array_t B) const {
+    int local_spmv(impl_scalar_type alpha, host_scalar_view_t X,
+                   impl_scalar_type beta,  host_scalar_view_t B) const {
       TEUCHOS_TEST_FOR_EXCEPTION( true, std::runtime_error, "local_spmv not implemented.");
       return -1;
     }
