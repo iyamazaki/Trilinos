@@ -56,7 +56,7 @@ ShyLUBasker<Matrix,Vector>::ShyLUBasker(
   ShyLUbasker->Options.verbose        = BASKER_FALSE;
   ShyLUbasker->Options.prune          = BASKER_TRUE;
   ShyLUbasker->Options.btf_matching   = 2; // use cardinary matching from Trilinos, globally
-  ShyLUbasker->Options.blk_matching   = 1; // use max-weight matching from Basker on each diagonal block
+  ShyLUbasker->Options.blk_matching   = 0; // NOT use max-weight matching from Basker on each diagonal block
   ShyLUbasker->Options.matrix_scaling = 0; // use matrix scaling on a big A block
   ShyLUbasker->Options.min_block_size = 0; // no merging small blocks
   ShyLUbasker->Options.amd_dom           = BASKER_TRUE;  // use block-wise AMD
@@ -625,7 +625,7 @@ ShyLUBasker<Matrix,Vector>::getValidParameters_impl() const
               "Use prune on BTF blocks (Not Supported)");
       pl->set("btf_matching",  2, 
               "Matching option for BTF: 0 = none, 1 = Basker, 2 = Trilinos (default), (3 = MC64 if enabled)");
-      pl->set("blk_matching", 1, 
+      pl->set("blk_matching", 0,
               "Matching optioon for block: 0 = none, 1 or anything else = Basker (default), (2 = MC64 if enabled)");
       pl->set("matrix_scaling", 0, 
               "Use matrix scaling to biig A BTF block: 0 = no-scaling, 1 = symmetric diagonal scaling, 2 = row-max, and then col-max scaling");
