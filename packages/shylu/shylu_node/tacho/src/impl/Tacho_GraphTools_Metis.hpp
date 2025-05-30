@@ -19,6 +19,7 @@
 #include "Tacho_Graph.hpp"
 
 #include "trilinos_amd.h"
+#include "trilinos_btf_decl.h"
 #if defined(TACHO_HAVE_METIS)
  #include "metis.h"
 #endif
@@ -75,6 +76,12 @@ public:
                                            const ordering_type *adjncy,
                           ordering_type *perm,
                           double *control, double *info);
+
+  template <typename ordering_type>
+  ordering_type maxtrans (ordering_type n, ordering_type m,
+                          ordering_type *xadj,
+                          ordering_type *adjncy,
+                          ordering_type *order);
 
   ///
   /// reorder by metis

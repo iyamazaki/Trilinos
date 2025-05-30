@@ -86,6 +86,28 @@ ordering_type GraphTools_Metis::amd_order (ordering_type n, const ordering_type 
 }
 
 ///
+/// reorder for max cardinarity matching
+///
+template <typename ordering_type>
+ordering_type GraphTools_Metis::maxtrans (ordering_type n, ordering_type m, ordering_type *xadj, ordering_type *adjncy, ordering_type *order) {
+  double maxwork = 0.0;
+  double work;
+  idx_t_array iwork("iwork", 5*n);
+  if constexpr (std::is_same_v<ordering_type, long>) {
+    // trilinos_amd_l_order requires integral type UF_long==long
+    return trilinos_btf_l_maxtrans(n, m, xadj, adjncy, maxwork, &work, order, iwork.data());
+  }
+  else if constexpr (std::is_same_v<ordering_type, int>) {
+    // trilinos_amd_order requires integral type int
+    return trilinos_btf_maxtrans(n, m, xadj, adjncy, maxwork, &work, order, iwork.data());
+  }
+  else {
+    // integral types different from int and long are not currently supported
+    return TRILINOS_AMD_INVALID;
+  }
+}
+
+///
 /// reorder by metis or amd
 ///
 

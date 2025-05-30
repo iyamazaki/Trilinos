@@ -60,6 +60,7 @@ class TachoSystem
   bool verbose() { return _verbose; };
  private:
   bool _verbose;
+  bool _max_match;
   int _dofs_per_node;
   CrsMatrixBaseTypeHost A;
   Tacho::Driver<value_type, host_device_type> solver;

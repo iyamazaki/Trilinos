@@ -43,18 +43,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
       /// factorize LDL
       // TODO: move this to symbolic init
       Kokkos::View<value_type **, Kokkos::LayoutLeft, typename ViewTypeA::execution_space> Wk("WRK",m,2);
-      //printf( "\ m = %d => (%d,%d)\n",m,Wk.stride_0(),Wk.stride_1() );
-      #if 1
-      /*printf("A=[\n");
-      for (ordinal_type i=0; i < m; i++) {
-        for (ordinal_type j=0; j < m; j++) {
-          printf( "%e ",A(i,j) );
-        }
-        printf("\n");
-      }
-      printf("];\n");*/
       for (ordinal_type j=0; j < m; j+=2) {
-        //printf( " == j = %d/%d ==\n",j,m );
         // factorize j:j+1 th columns
         auto Aj = Kokkos::subview(A, range_type(j,m), range_type(j,j+2));   
         if (j > 0) {
@@ -66,39 +55,13 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
             auto T = Kokkos::subview(A, range_type(k,k+2), range_type(k,k+2));
             Wk(k,0)   = -T(1,0) * Li(0,k+1); Wk(k,1)   = -T(1,0) * Li(1,k+1); 
             Wk(k+1,0) =  T(1,0) * Li(0,k);   Wk(k+1,1) =  T(1,0) * Li(1,k);
-            //printf( " %e * %e, %e * %e = %e, %e\n",-T(0,1),Li(0,k+1),-T(0,1),Li(1,k+1),Wk(k,0),Wk(k,1) );
-            //printf( " %e * %e, %e * %e = %e, %e\n\n",T(1,0),Li(0,k),T(1,0),Li(1,k),Wk(k+1,0),Wk(k+1,1) );
           }
           //  1.2) A(j:end, j:j+1) -= L(j:end, 
           auto Lp = Kokkos::subview(A, range_type(j,m), range_type(0,j));   
-          /*printf( " GEMM(%d,%d,%d : %d,%d,%d\n",m-j,2,j, Lp.stride_1(),Wk.stride_1(),Aj.stride_1());
-          printf(" Aj=[\n" );
-          for (int i=0; i<m-j; i++) {
-            printf("%e %e\n",Aj(i,0),Aj(i,1));
-          }
-          printf("];\n" );
-          printf(" Lp=[\n" );
-          for (int i=0; i<m-j; i++) {
-            for (int k=0; k<j; k++) {
-              printf("%e ",Lp(i,k));
-            }
-            printf("\n");
-          }
-          printf("];\n" );
-          printf(" Wk=[\n" );
-          for (int i=0; i<j; i++) {
-            printf("%e %e\n",Wk(i,0),Wk(i,1));
-          }
-          printf("];\n" );*/
           Blas<value_type>::gemm('N','N',m-j, 2, j,
                                   minus_one, Lp.data(), Lp.stride_1(),
                                              Wk.data(), Wk.stride_1(),
                                         one, Aj.data(), Aj.stride_1());
-          /*printf(" => [\n" );
-          for (int i=0; i<m-j; i++) {
-            printf("%e %e\n",Aj(i,0),Aj(i,1));
-          }
-          printf("];\n" );*/
         }
 
         // -----------------------------------
@@ -116,7 +79,6 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
         ordinal_type mj = m-j;
         for (ordinal_type i=2; i<mj; i++) {
           Wk(i,0) = - Aj(i,1) / piv;
-          //printf( "A(%d,%d) = %e / %e = %e\n",i,j,Aj(i,1),-piv,Wk(i,0) );
         }
         // 3.2) j+1 th column
         for (ordinal_type i=2; i<mj; i++) {
@@ -127,17 +89,6 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           Aj(i,0) = Wk(i,0);
         }
       }
-      /*printf("L=[\n");
-      for (ordinal_type i=0; i < m; i++) {
-        for (ordinal_type j=0; j < m; j++) {
-          printf( "%e ",A(i,j) );
-        }
-        printf("\n");
-      }
-      printf("];\n");*/
-      #else
-      //Lapack<value_type>::sytrf('L', m, A.data(), A.stride_1(), P.data(), W.data(), W.extent(0), &r_val);
-      #endif
     }
     return r_val;
   }
@@ -178,14 +129,12 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
               D(i, 0) = zero; //A(i, i);
               D(i, 1) = -A(i + 1, i); /// skew symmetric
               A(i, i) = one;
-              //printf( " A(%d,%d) = %e\n",i,i,A(i,i) );
             }
             {
               // second pivot
               i++;
               const ordinal_type fla_pivot = -ipiv[i] - i - 1;
               fpiv[i] = fla_pivot;
-              //printf( " ipiv[%d] = %d -> %d\n",i,ipiv[i],fla_pivot );
               if (fla_pivot) {
                 value_type *KOKKOS_RESTRICT src = Aptr + i;
                 value_type *KOKKOS_RESTRICT tgt = src + fla_pivot;
@@ -199,7 +148,6 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
               D(i, 1) = zero; //A(i, i);
               A(i, i - 1) = zero;
               A(i, i) = one;
-              //printf( " A(%d,%d) = %e\n",i,i,A(i,i) );
             }
           } else {
             const ordinal_type fla_pivot = ipiv[i] - i - 1;
