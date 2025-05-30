@@ -22,6 +22,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   bool verbose = false;
   bool sanitize = false;
   bool duplicate = false;
+  bool max_match = false;
   std::string file = "test.mtx";
   std::string graph_file = "";
   std::string weight_file = "";
@@ -47,6 +48,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   opts.set_option<bool>("verbose", "Flag for verbose printing", &verbose);
   opts.set_option<bool>("sanitize", "Flag to sanitize input matrix (remove zeros)", &sanitize);
   opts.set_option<bool>("duplicate", "Flag to duplicate input graph in the solver", &duplicate);
+  opts.set_option<bool>("max-match", "Flag to apply max cardinarity matching", &max_match);
   opts.set_option<std::string>("file", "Input file (MatrixMarket SPD matrix)", &file);
   opts.set_option<std::string>("graph", "Input condensed graph", &graph_file);
   opts.set_option<std::string>("weight", "Input condensed graph weight", &weight_file);
@@ -198,7 +200,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
       solver.analyze(A.NumRows(), A.RowPtr(), A.Cols(), m_graph, ap_graph, aj_graph, aw_graph);
     else if (dofs_per_node > 1) {
       if (verbose) std::cout << " > DoFs / node = " << dofs_per_node << std::endl;
-      solver.analyze(A.NumRows(), dofs_per_node, A.RowPtr(), A.Cols());
+      solver.analyze(A.NumRows(), dofs_per_node, A.RowPtr(), A.Cols(), max_match);
     } else
       solver.analyze(A.NumRows(), A.RowPtr(), A.Cols());
 

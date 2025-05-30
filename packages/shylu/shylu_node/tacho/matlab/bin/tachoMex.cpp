@@ -25,7 +25,8 @@ namespace Tacho {
 template <>
 TachoSystem<double>::TachoSystem() :
  _verbose(false),
- _dofs_per_node(1)
+ _dofs_per_node(1),
+ _max_match(false)
 {}
 template <>
 TachoSystem<double>::~TachoSystem() {}
@@ -63,6 +64,9 @@ int TachoSystem<Scalar>::option(const mxArray** mx) {
     int small_problem_thres = loadDataFromMatlab<int>(mx[1]);
     if (_verbose) printf( " > option(small-problem-thres=%d)\n",small_problem_thres );
     solver.setSmallProblemThresholdsize(small_problem_thres);
+  } else if (option_name == "max-match") {
+    if (_verbose) printf( " > option(max-match = true)\n" );
+    _max_match = true;
   }
   return IS_TRUE;
 }
@@ -75,7 +79,7 @@ int TachoSystem<Scalar>::setup(const mxArray* mx) {
   try {
     if (_verbose) printf( " solver.analyze\n" );
     if (_dofs_per_node > 1) {
-      solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols());
+      solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols(), _max_match);
     } else {
       solver.analyze(A.NumRows(), A.RowPtr(), A.Cols());
     }
