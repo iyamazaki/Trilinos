@@ -408,12 +408,17 @@ public:
               const bool max_match = false, const bool duplicate = false) {
 
     int rval = 0;
+    Kokkos::Timer timer;
+    //printf( "\n >> in analyze (%d%s)<<\n",blk_size,(max_match ? ", match" : "") ); fflush(stdout);
     if (blk_size > 1) {
+      double t_shrink = 0.0;
+      double t_match  = 0.0;
       if (max_match) {
         _h_ap = Kokkos::create_mirror_view(host_memory_space(), ap);
         _h_aj = Kokkos::create_mirror_view(host_memory_space(), aj);
         Kokkos::deep_copy(_h_ap, ap);
         Kokkos::deep_copy(_h_aj, aj);
+        int num_match = -1;
         double maxwork = 0.0;
         double work;
         size_type_array iwork("iwork", 5*m);
@@ -499,6 +504,8 @@ public:
               for (int i=m/2-1; i>0; i--) h_ap_odd(i) = h_ap_odd(i-1);
               h_ap_odd(0) = 0;
             }
+            t_shrink = timer.seconds();;
+            timer.reset();
             //printf( " calling maxtrans\n" ); fflush(stdout);
             /*{
               printf("A=[\n");
@@ -511,10 +518,17 @@ public:
               for (int i=0; i<m/2; i++) for (int k=h_ap_odd(i); k<h_ap_odd(i+1); k++) printf("%d %d\n",i,h_aj_odd(k));
               printf("];\n"); fflush(stdout);
             }*/
-            // compute max cardinarity imatchng
+            // compute max cardinarity matching
             size_type_array match_odd("match_odd",m/2);
-            int num_match = trilinos_btf_maxtrans (m/2, m/2, h_ap_odd.data(), h_aj_odd.data(), maxwork, &work, match_odd.data(), iwork.data());
-            //printf( " > num_match = %d, m = %d\n",num_match,m/2 );
+            num_match = trilinos_btf_maxtrans (m/2, m/2, h_ap_odd.data(), h_aj_odd.data(), maxwork, &work, match_odd.data(), iwork.data());
+            t_match = timer.seconds();;
+            //printf( " > num_match = %d, m = %d <\n",num_match,m/2 );
+            /*{
+              printf("p=[\n");
+              for (int i=0; i<m/2; i++) printf("%d %d\n",i,match_odd(i));
+              printf("];\n");
+            }*/
+            // expand matching to full matrix
             Kokkos::resize(_h_match, m);
             Kokkos::resize(_h_imatch, m);
             for (int i=0; i<m; i++) {
@@ -527,14 +541,17 @@ public:
               _h_imatch(_h_match(i)) = i;
             }
             /*{
-              printf("p=[\n");
-              for (int i=0; i<m/2; i++) printf("%d %d\n",i,match_odd(i));
-              printf("];\n");
               printf("T=[\n");
               for (int i=0; i<m; i++) for (int k=_h_ap(_h_match(i)); k<_h_ap(_h_match(i)+1); k++) printf("%d %d\n",i,_h_imatch(_h_aj(k)));
               printf("];\n");
             }*/
             //printf( " calling maxtrans, done\n" ); fflush(stdout);
+        }
+        if (_verbose) {
+          printf("===========================\n");
+          printf("  Time for matching (num_match = %d)\n",num_match);
+          printf("             time to compress: %10.6f s\n", t_shrink);
+          printf("             time to match   : %10.6f s\n", t_match);
         }
         /*{
           printf("q=[\n");
@@ -543,6 +560,7 @@ public:
         }*/
       } // end of max match
 
+      timer.reset();
       const size_type nnz = ap(m);
       ordinal_type m_graph = m / blk_size;
 
@@ -561,14 +579,17 @@ public:
         Kokkos::resize(aj_graph, nnz_graph);
 
         // condense the graph
-        size_type_array_host col_graph
-          (Kokkos::ViewAllocateWithoutInitializing("col_graph"), m_graph);
+        //printf( " condensing graph\n" ); fflush(stdout);
+        size_type_array_host col_graph("col_graph", m_graph);
         nnz_graph = 0;
         ap_graph(0) = 0;
         for (ordinal_type b = 0; b < m; b += blk_size) {
-          // TODO: zero out using ap_graph & aj_graph
-          for (ordinal_type i = 0; i < m_graph; i++) {
-            col_graph(i) = 0;
+          ordinal_type bi = b/blk_size;
+          if (b > 0) {
+            // zero out check
+            for (ordinal_type i = ap_graph(bi-1); i < ap_graph(bi); i++) {
+              col_graph(aj_graph(i)) = 0;
+            }
           }
           for (ordinal_type i = b; i < b+blk_size; i++) {
             ordinal_type row = (max_match ? _h_match(i) : i);
@@ -582,8 +603,8 @@ public:
               }
             }
           }
-          aw_graph(b/blk_size) = blk_size;
-          ap_graph((b/blk_size)+1) = nnz_graph;
+          aw_graph(bi) = blk_size;
+          ap_graph(bi+1) = nnz_graph;
         }
         Kokkos::resize(aj_graph, nnz_graph);
       } else {
@@ -607,6 +628,13 @@ public:
         }
         TACHO_TEST_FOR_EXCEPTION((nnz != size_type(blk_size*blk_size) * nnz_graph),
           std::logic_error, "Failed to condense graph");
+      }
+      //printf( " graph condensed\n" ); fflush(stdout);
+      double t_compress = timer.seconds();
+      if (_verbose) {
+        printf("===========================\n");
+        printf("  Time for Condensation(blk_size = %d%s): %10.6f s\n",blk_size,t_compress,(explicit_zeros ? " with explicit zeros" : ""));
+        printf("\n");
       }
       /*{
         printf("a=[\n");
