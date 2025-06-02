@@ -110,7 +110,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           value_type piv = Aj(1,0);
           P(j) = P(j+1) = -(j+2);
           ordinal_type mj = m-j;
-          if (true)
+          if (false)
           {
             for (ordinal_type k=3; k<mj; k+=2) {
               if (abs(piv) < abs(Aj(k,0))) {
