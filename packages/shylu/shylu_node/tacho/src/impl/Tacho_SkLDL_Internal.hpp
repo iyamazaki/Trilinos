@@ -42,53 +42,172 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
     if (m > 0) {
       /// factorize LDL
       // TODO: move this to symbolic init
-      Kokkos::View<value_type **, Kokkos::LayoutLeft, typename ViewTypeA::execution_space> Wk("WRK",m,2);
-      for (ordinal_type j=0; j < m; j+=2) {
-        // factorize j:j+1 th columns
-        auto Aj = Kokkos::subview(A, range_type(j,m), range_type(j,j+2));   
-        if (j > 0) {
-          // -----------------------------------
-          // 1) update using previous columns : A(j:end, j:j+1) - L(j:end, 0:j-1) * T(0:j-1, 0:j-1) * L(j:j+1, 0:j-1)'
-          //  1.1) compute W = L(j:end, 0:j-1) * T(0:j-1, 0:j-1) * L(j:j+1, 0:j-1)'
-          auto Li = Kokkos::subview(A, range_type(j,j+2), range_type(0,j));   
-          for (ordinal_type k=0; k < j-1; k+= 2) {
-            auto T = Kokkos::subview(A, range_type(k,k+2), range_type(k,k+2));
-            Wk(k,0)   = -T(1,0) * Li(0,k+1); Wk(k,1)   = -T(1,0) * Li(1,k+1); 
-            Wk(k+1,0) =  T(1,0) * Li(0,k);   Wk(k+1,1) =  T(1,0) * Li(1,k);
+      Kokkos::View<value_type **, Kokkos::LayoutLeft, typename ViewTypeA::execution_space> Wk("WK",m,2);
+
+      /*printf( "\n\n A=[\n" );
+      for (int i=0; i<m; i++) {
+        for (int j=0; j<m; j++) printf("%e ",A(i,j));
+        printf("\n");
+      }
+      printf( "];\n" );*/
+      bool left_look = false;
+      if (left_look) {
+        // no easy way to pivot..
+        for (ordinal_type j=0; j < m; j+=2) {
+          // factorize j:j+1 th columns
+          auto Aj = Kokkos::subview(A, range_type(j,m), range_type(j,j+2));   
+          if (j > 0) {
+            // -----------------------------------
+            // 1) update using previous columns : A(j:end, j:j+1) - L(j:end, 0:j-1) * T(0:j-1, 0:j-1) * L(j:j+1, 0:j-1)'
+            //  1.1) compute W = L(j:end, 0:j-1) * T(0:j-1, 0:j-1) * L(j:j+1, 0:j-1)'
+            auto Li = Kokkos::subview(A, range_type(j,j+2), range_type(0,j));   
+            for (ordinal_type k=0; k < j-1; k+= 2) {
+              auto T = Kokkos::subview(A, range_type(k,k+2), range_type(k,k+2));
+              Wk(k,0)   = -T(1,0) * Li(0,k+1); Wk(k,1)   = -T(1,0) * Li(1,k+1); 
+              Wk(k+1,0) =  T(1,0) * Li(0,k);   Wk(k+1,1) =  T(1,0) * Li(1,k);
+            }
+            //  1.2) A(j:end, j:j+1) -= L(j:end,0:j) * W 
+            auto Lp = Kokkos::subview(A, range_type(j,m), range_type(0,j));   
+            Blas<value_type>::gemm('N','N',m-j, 2, j,
+                                    minus_one, Lp.data(), Lp.stride_1(),
+                                               Wk.data(), Wk.stride_1(),
+                                          one, Aj.data(), Aj.stride_1());
           }
-          //  1.2) A(j:end, j:j+1) -= L(j:end, 
-          auto Lp = Kokkos::subview(A, range_type(j,m), range_type(0,j));   
-          Blas<value_type>::gemm('N','N',m-j, 2, j,
-                                  minus_one, Lp.data(), Lp.stride_1(),
-                                             Wk.data(), Wk.stride_1(),
-                                        one, Aj.data(), Aj.stride_1());
-        }
 
-        // -----------------------------------
-        // 2) pick 2-by-2 pivot
-        // TODO: No piv for now
-        value_type piv = Aj(1,0);
-        P(j) = P(j+1) = -(j+2);
-        if (piv == zero) {
-          TACHO_TEST_FOR_ABORT(true, ">> zero pivot during Skewed LDLt.");
-        }
+          // -----------------------------------
+          // 2) pick 2-by-2 pivot
+          // TODO: No piv for now
+          value_type piv = Aj(1,0);
+          P(j) = P(j+1) = -(j+2);
+          if (piv == zero) {
+            TACHO_TEST_FOR_ABORT(true, ">> zero pivot during Skewed LDLt.");
+          }
 
-        // -----------------------------------
-        // 3) scale with 2-by-2 pivot
-        // 3.1) jth column
-        ordinal_type mj = m-j;
-        for (ordinal_type i=2; i<mj; i++) {
-          Wk(i,0) = - Aj(i,1) / piv;
+          // -----------------------------------
+          // 3) scale with 2-by-2 pivot
+          // 3.1) jth column
+          ordinal_type mj = m-j;
+          for (ordinal_type i=2; i<mj; i++) {
+            Wk(i,0) = - Aj(i,1) / piv;
+          }
+          // 3.2) j+1 th column
+          for (ordinal_type i=2; i<mj; i++) {
+            Aj(i,1) = Aj(i,0) / piv;
+          }
+          // 3.2) copy back jth column
+          for (ordinal_type i=2; i<mj; i++) {
+            Aj(i,0) = Wk(i,0);
+          }
         }
-        // 3.2) j+1 th column
-        for (ordinal_type i=2; i<mj; i++) {
-          Aj(i,1) = Aj(i,0) / piv;
-        }
-        // 3.2) copy back jth column
-        for (ordinal_type i=2; i<mj; i++) {
-          Aj(i,0) = Wk(i,0);
+      } else {
+        Kokkos::View<value_type **, Kokkos::LayoutLeft, typename ViewTypeA::execution_space> Ak("Ak",m,2);
+        for (ordinal_type j=0; j < m; j+=2) {
+          // factorize j:j+1 th columns
+          auto Aj = Kokkos::subview(A, range_type(j,m), range_type(j,j+2));   
+
+          // -----------------------------------
+          // 1) pick 2-by-2 pivot
+          value_type piv = Aj(1,0);
+          P(j) = P(j+1) = -(j+2);
+          ordinal_type mj = m-j;
+          if (true)
+          {
+            for (ordinal_type k=3; k<mj; k+=2) {
+              if (abs(piv) < abs(Aj(k,0))) {
+                piv = Aj(k,0);
+                P(j) = P(j+1) = -(j+k+1);
+              }
+            }
+          }
+          if (piv == zero) {
+            /*if (true) {
+              using arith_traits = ArithTraits<value_type>;
+              piv = arith_traits::epsilon();
+              P(j) = P(j+1) = -(j+2);
+	      A(j+1,j) = piv;
+	      A(j,j+1) = -piv;
+	    } else */
+	    {
+              TACHO_TEST_FOR_ABORT(true, ">> zero pivot during Skewed LDLt.");
+            }
+          }
+          if (P(j) != -(j+2)) {
+            // pivot id
+            ordinal_type j2 = -P(j)-1;
+
+            //printf( " Pivot %d <=> %d -> %d\n",j+1,P(j),j2 );
+            /*printf( "A0=[\n" );
+            for (int i=0; i<m; i++) {
+              for (int k=0; k<m; k++) printf("%e ",A(i,k));
+              printf("\n");
+            }
+            printf( "];\n" );*/
+
+            // row-swap (only to this and remaining columns)
+            for (ordinal_type k=j; k<m; k++) {
+              value_type val = A(j+1, k);
+              A(j+1, k) = A(j2, k);
+              A(j2, k)  = val;
+            }
+
+            // col-swap (only to this and remaining rows)
+            for (ordinal_type k=j; k<m; k++) {
+              value_type val = A(k, j+1);
+              A(k, j+1) = A(k, j2);
+              A(k, j2)  = val;
+            }
+
+            /*printf( "A1=[\n" );
+            for (int i=0; i<m; i++) {
+              for (int k=0; k<m; k++) printf("%e ",A(i,k));
+              printf("\n");
+            }
+            printf( "];\n" );*/
+          }
+
+          // -----------------------------------
+          // 2) scale with 2-by-2 pivot
+          // 2.1) jth column
+          for (ordinal_type i=2; i<mj; i++) {
+            Wk(i,0) = - Aj(i,1) / piv;
+          }
+          // 2.2) j+1 th column
+          for (ordinal_type i=2; i<mj; i++) {
+            Aj(i,1) = Aj(i,0) / piv;
+          }
+          // 2.3) copy back jth column
+          for (ordinal_type i=2; i<mj; i++) {
+            Aj(i,0) = Wk(i,0);
+          }
+
+          if (j < m-2) {
+            // -----------------------------------
+            // 3) update using previous columns : A(j+2:end, j+1:end) - L(j+2:end, j:j+2) * T(j:j+2, j:j+2) * L(j+2:end, j:j+2)'
+            auto Up = Kokkos::subview(A, range_type(j,j+2), range_type(j+2,m));   
+            auto Lp = Kokkos::subview(A, range_type(j+2,m), range_type(j,j+2));   
+            auto Ap = Kokkos::subview(A, range_type(j+2,m), range_type(j+2,m));   
+            Blas<value_type>::gemm('N','N',mj-2, mj-2, 2,
+                                    minus_one, Lp.data(), Lp.stride_1(),
+                                               Up.data(), Up.stride_1(),
+                                          one, Ap.data(), Ap.stride_1());
+	  }
+
+	  // ------------------------------------------------------------
+          // expand to upper (after original used for right-look update)
+          for (ordinal_type k=j+1; k<m; k++) {
+            A(j, k) = -A(k, j);
+          }
+          for (ordinal_type k=j+2; k<m; k++) {
+            A(j+1, k) = -A(k, j+1);
+          }
         }
       }
+      /*printf( "\n LU=[\n" );
+      for (int i=0; i<m; i++) {
+        for (int j=0; j<m; j++) printf("%e ",A(i,j));
+        printf("\n");
+      }
+      printf( "];\n" );*/
     }
     return r_val;
   }
@@ -121,6 +240,9 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           perm[i] = i;
         for (ordinal_type i = 0; i < m; ++i) {
           if (ipiv[i] < 0) {
+            // symm pivots have been already applied to this and remaining part
+            // * just extract diagonal !!
+            // * apply pivoting to previous columns, if needed
             {
               // first pivot
               ipiv[i] = 0; /// invalidate this pivot
@@ -160,7 +282,6 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
                 swap(src[idx], tgt[idx]);
               }
             }
-
             D(i, 0) = A(i, i);
             A(i, i) = one;
           }

@@ -98,9 +98,6 @@ private:
   ordinal_type_array _aj;
   ordinal_type_array_host _h_aj;
 
-  // ** max cardinarity imatchng
-  ordinal_type_array_host _h_match;
-  ordinal_type_array_host _h_imatch;
   // ** fill-reducing perm
   ordinal_type_array _perm;
   ordinal_type_array_host _h_perm;
@@ -264,7 +261,6 @@ public:
       _h_aj = Kokkos::create_mirror_view(host_memory_space(), aj);
       Kokkos::deep_copy(_h_aj, aj);
     }
-    _h_match = ordinal_type_array_host();
 
     _h_perm = ordinal_type_array_host();
     _h_peri = ordinal_type_array_host();
@@ -405,6 +401,10 @@ public:
     if (blk_size > 1) {
       double t_shrink = 0.0;
       double t_match  = 0.0;
+
+      // ** max cardinarity matchng
+      ordinal_type_array_host h_match("h_match",0);
+      ordinal_type_array_host h_imatch("h_imatch",0);
       if (max_match) {
         _h_ap = Kokkos::create_mirror_view(host_memory_space(), ap);
         _h_aj = Kokkos::create_mirror_view(host_memory_space(), aj);
@@ -513,41 +513,67 @@ public:
             // compute max cardinarity matching
             size_type_array match_odd("match_odd",m/2);
             num_match = trilinos_btf_maxtrans (m/2, m/2, h_ap_odd.data(), h_aj_odd.data(), maxwork, &work, match_odd.data(), iwork.data());
-            t_match = timer.seconds();;
-            //printf( " > num_match = %d, m = %d <\n",num_match,m/2 );
+            t_match = timer.seconds();
+            if (num_match < m/2) {
+              printf( "\n ** WARNING : num_match = %d, m = %d **\n\n",num_match,m/2 );
+              ordinal_type_array_host h_match_check("h_match_check",m/2);
+              ordinal_type_array_host h_match_not("h_match_check",m/2 - num_match);
+              int not_match = 0;
+              for (int i=0; i<m/2; i++) {
+                if (match_odd(i) < 0) {
+                  h_match_not(not_match) = i;
+                  not_match ++;
+                } else {
+                  h_match_check(match_odd(i)) = 1;
+                }
+              }
+              not_match = 0;
+              for (int i=0; i<m/2; i++) {
+                if (h_match_check(i) == 0) {
+                  //printf( " > match_odd(%d)) = %d -> %d\n",h_match_not(not_match),match_odd(h_match_not(not_match)), -i );
+                  match_odd(h_match_not(not_match)) = -i;
+                  not_match ++;
+                }
+              }
+            }
             /*{
               printf("p=[\n");
               for (int i=0; i<m/2; i++) printf("%d %d\n",i,match_odd(i));
               printf("];\n");
             }*/
             // expand matching to full matrix
-            Kokkos::resize(_h_match, m);
-            Kokkos::resize(_h_imatch, m);
+            Kokkos::resize(h_match, m);
+            Kokkos::resize(h_imatch, m);
             for (int i=0; i<m; i++) {
               if (i%2 == 0) {
-                _h_match(i) = i;
+                h_match(i) = i;
               } else {
                 int match = match_odd((i-1)/2);
-                _h_match(i) = 2*match+1;
+                if (match >= 0) {
+                  h_match(i) = 2*match+1;
+                } else {
+                  match = -match;
+                  h_match(i) = -(2*match+1);
+                }
               }
-              _h_imatch(_h_match(i)) = i;
+              h_imatch(abs(h_match(i))) = i;
             }
             /*{
               printf("T=[\n");
-              for (int i=0; i<m; i++) for (int k=_h_ap(_h_match(i)); k<_h_ap(_h_match(i)+1); k++) printf("%d %d\n",i,_h_imatch(_h_aj(k)));
+              for (int i=0; i<m; i++) for (int k=_h_ap(h_match(i)); k<_h_ap(h_match(i)+1); k++) printf("%d %d\n",i,h_imatch(_h_aj(k)));
               printf("];\n");
             }*/
             //printf( " calling maxtrans, done\n" ); fflush(stdout);
         }
         if (_verbose) {
           printf("===========================\n");
-          printf("  Time for matching (num_match = %d)\n",num_match);
+          printf("  Time for matching (num_match = %d, n = %d)\n",num_match,m/2);
           printf("             time to compress: %10.6f s\n", t_shrink);
           printf("             time to match   : %10.6f s\n", t_match);
         }
         /*{
           printf("q=[\n");
-          for (int i=0; i<m; i++) printf("%d %d\n",i,_h_match(i));
+          for (int i=0; i<m; i++) printf("%d %d\n",i,h_match(i));
           printf("];\n"); fflush(stdout);
         }*/
       } // end of max match
@@ -584,9 +610,12 @@ public:
             }
           }
           for (ordinal_type i = b; i < b+blk_size; i++) {
-            ordinal_type row = (max_match ? _h_match(i) : i);
+            ordinal_type row = (max_match ? h_match(i) : i);
+            if (row < 0) {
+              row = -row;
+            }
             for (size_type k = ap(row); k < ap(row+1); k++) {
-              ordinal_type col = (max_match ? _h_imatch(aj(k)) : aj(k));
+              ordinal_type col = (max_match ? h_imatch(aj(k)) : aj(k));
               size_t bj = col/blk_size;
               if (col_graph(bj) == 0) {
                 aj_graph(nnz_graph) = bj;
@@ -639,7 +668,7 @@ public:
         //for (int i=0; i<m; i++) printf("%d %d\n",_h_perm(i),_h_peri(i));
         //printf("];\n");
         size_type_array perm("perm",m);
-        for (int i=0; i<m; i++) perm(i) = _h_match(_h_perm(i));
+        for (int i=0; i<m; i++) perm(i) = h_match(_h_perm(i));
         for (int i=0; i<m; i++) {
           _h_perm(i) = perm(i);
           _h_peri(perm(i)) = i;
