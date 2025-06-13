@@ -863,6 +863,7 @@ namespace BaskerNS
       #ifdef BASKER_DETAILED_TIMER
       timer1.reset();
       #endif
+      // for each row of remainng L, apply the inverse with the k-th column of U
       for(Int blk_row = 1; blk_row < LL_size(b); ++blk_row)
       {
         //Do back solve of off-diag blocks
@@ -915,7 +916,7 @@ namespace BaskerNS
     #ifdef BASKER_DETAILED_TIMER
     {
       double time_facto_k = timer.seconds();
-      printf( " > %d: Time : %lf (%lf %lf %lf %lf %lf %lf), %d %d, %d %d\n", kid, time_facto_k,time1,time2,time3,time4,time5,time6, lnnz,unnz,npivots,flops );
+      printf( " > %d: Time : %lf (%lf %lf %lf %lf %lf %lf), %d %d, %d %d\n", int(kid), time_facto_k,time1,time2,time3,time4,time5,time6, int(lnnz),int(unnz),int(npivots),int(flops) );
     }
     #endif
 
@@ -1064,7 +1065,7 @@ namespace BaskerNS
               {
                 //advance top ptr
                 //printf("adv head(%d) %d %d \n",
-                //phead+1, 
+                //           phead+1,
                 //           i+L.srow,
                 //           gperm(i+L.srow));
                 phead++;

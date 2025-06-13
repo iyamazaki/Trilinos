@@ -286,7 +286,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
   magni_type refactor_tol = pow(10.0, (log10(tol)/expected_niters));
   bool resnorm_check = control_.resCheckIterRefine_;
   if (verbose && this->root_) {
-    std::cout << std::endl <<  " RUNNING IR (" << numIRcalled_ << ") with " << name() << std::endl << std::endl;
+    std::cout << std::endl <<  " RUNNING IR (" << numIRcalled_ << ") with " << name() << std::endl;
   }
   global_size_type rowIndexBase = this->rowIndexBase_;
 
@@ -442,6 +442,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         std::cout << "   with expect num iterations = " << int(expected_niters)
                   << " and refactor tolerance = " << refactor_tol << std::endl;
       }
+      std::cout << std::flush;
     }
   }
 
@@ -488,21 +489,19 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
         }
         if (verbose) std::cout << norm_j << " / " << norms_0(j) << " = " << norm_j/norms_0(j) << " ";
       }
-      if (verbose) std::cout << std::endl;
+      if (verbose) std::cout << std::endl << std::flush;
       if (refactor == 1 && numIters == 0) {
         // break out of loop so that we can call compute and solve
         if (verbose) {
           std::cout << " * refactor * " << std::endl;
         }
-        // reset to perform numerical factorization
-        this->numIRcalled_ = 0;
         break;
       } else {
         refactor = 0;
       }
       // break if converged
       if (verbose && converged == 1) {
-        std::cout << " converged " << std::endl;
+        std::cout << " converged " << std::endl << std::flush;
       }
       if (converged == 1) break;
     }
@@ -574,8 +573,10 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
   // broadcast "refactor"
   Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &refactor);
   if (refactor == 1) {
+    // reset to perform numerical factorization
+    this->numIRcalled_ = 0;
     if (verbose && this->root_) {
-      std::cout << std::endl << " ** Re-factor && Re-solve ** " << std::endl << std::endl;
+      std::cout << std::endl << " ** Re-factor && Re-solve ** " << std::endl << std::endl << std::flush;
     }
     // re-compute factor (NOTE: can we skip loadA?)
     const_cast<type&>(*this).numericFactorization();
@@ -611,7 +612,7 @@ SolverCore<ConcreteSolver,Matrix,Vector>::solve_ir(const Teuchos::Ptr<      Vect
     } else {
       std::cout << " !! IR ** failed ** to converged !!" << std::endl;
     }
-    std::cout << std::endl;
+    std::cout << std::endl << std::flush;
   }
   // put/scatter X for output
   {
