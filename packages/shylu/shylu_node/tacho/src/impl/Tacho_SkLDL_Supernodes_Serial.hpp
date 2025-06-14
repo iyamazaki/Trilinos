@@ -57,7 +57,7 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
     using FactAlgoType = typename LDL_Algorithm::type;
     using TrsmAlgoType = typename TrsmAlgorithm::type;
     using GemmAlgoType = typename GemmAlgorithm::type;
-    //printf( "\n SkLDL_Supernodes::factorize\n" );
+    //printf( "\n SkLDL_Supernodes::factorize (sid = %d)\n",sid );
 
     // get current supernode
     const auto &s = info.supernodes(sid);
@@ -84,8 +84,6 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       }
       printf( " ]\n" );*/
       SkLDL<Uplo::Lower, Algo::Internal>::modify(member, ATL, P, D);
-      //LDL<Uplo::Lower, Algo::Internal>::invoke(member, ATL, P, W);
-      //LDL<Uplo::Lower, FactAlgoType>::modify(member, ATL, P, D);
       //printf( " D = [\n" );
       //for (int i=0; i < m; i++) printf( "%e %e\n",D(i,0),D(i,1) );
       //printf( " ]\n" );
@@ -246,9 +244,23 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
     using value_type_matrix = typename supernode_info_type::value_type_matrix;
     using ordinal_type_array = typename supernode_info_type::ordinal_type_array;
 
-    //printf( " * factorize_recursive_serial\n" );
     const auto &s = info.supernodes(sid);
+    //printf( " > actorize_recursive_serial (sid = %d) <\n",sid );
+    /*{
+      const auto &t = info.supernodes(60154);
+      value_type *ptr = t.u_buf;
+      const ordinal_type m = t.m;
+      printf( " check (sid = 60154) : m = %d\n",m );
+      UnmanagedViewType<value_type_matrix> ATL(ptr, m, m);
+      printf( "[\n" );
+      for (int i=0; i<m; i++) {
+        for (int j=0; j<m; j++) printf( " %e",ATL(i,j) );
+	printf("\n");
+      }
+      printf( "];\n\n" );
+    }*/
     if (final) {
+      //printf( "   * factorize_recursive_serial (nchild = %d) *\n",s.nchildren );
       // serial recursion
       for (ordinal_type i = 0; i < s.nchildren; ++i)
         factorize_recursive_serial(member, info, s.children[i], final, piv, diag, buf, bufsize);
@@ -279,6 +291,19 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       CholSupernodes<Algo::Workflow::Serial>::update(member, info, ABR, sid, bufsize - ABR.span() * sizeof(value_type),
                                                      (void *)(w.data()));
     }
+    /*{
+      const auto &t = info.supernodes(60154);
+      value_type *ptr = t.u_buf;
+      const ordinal_type m = t.m;
+      printf( " check (sid = 60154) : m = %d\n",m );
+      UnmanagedViewType<value_type_matrix> ATL(ptr, m, m);
+      printf( " -> [\n" );
+      for (int i=0; i<m; i++) {
+        for (int j=0; j<m; j++) printf( " %e",ATL(i,j) );
+        printf("\n");
+      }
+      printf( "];\n\n" );
+    }*/
     return 0;
   }
 

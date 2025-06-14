@@ -49,6 +49,7 @@ public:
   using typename base_type::ordinal_type_array_host;
   using typename base_type::size_type_array;
   using typename base_type::mag_type;
+  using typename base_type::mag_type_array_host;
   using typename base_type::value_type;
   using typename base_type::value_type_array;
   using typename base_type::value_type_matrix;
@@ -63,6 +64,7 @@ private:
   using base_type::_info;
   using base_type::_m;
   using base_type::_nsupernodes;
+  using base_type::_d;
   using base_type::_peri;
   using base_type::_perm;
   using base_type::_piv;
@@ -383,7 +385,27 @@ public:
       timer.reset();
       {
         /// matrix values
-        _ax = ax;
+        if (this->_scale_mat) {
+          // !! let's copy and scale !!
+          auto h_ap = Kokkos::create_mirror_view(host_memory_space(), _ap);
+          auto h_aj = Kokkos::create_mirror_view(host_memory_space(), _aj);
+          Kokkos::deep_copy(h_ap, _ap);
+          Kokkos::deep_copy(h_aj, _aj);
+
+          int m = h_ap.extent(0)-1;
+          int nnz = h_ap(m);
+
+	  // Apply matrix scaling
+          Kokkos::resize(_ax, nnz);
+          for (int i=0; i<m; i++) {
+            for (int k=h_ap(i); k<h_ap(i+1); k++) {
+              _ax(k) = ax(k)/(_d(i) * _d(h_aj(k)));
+            }
+          }
+        } else {
+          // no matrix scaling, so just shallow-copy
+          _ax = ax;
+        }
 
         /// copy the input matrix into super panels
         const bool copy_to_l_buf(false);
@@ -444,7 +466,13 @@ public:
     // copy b -> t
     timer.reset();
     const auto exec_instance = exec_space();
-    ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, b, _perm, t);
+    if (this->_scale_mat) {
+      // TODO: integrate into ApplyPerm
+      for (int j=0; j<b.extent(1); j++) for (int i=0; i<b.extent(0); i++) x(i,j) = b(i,j) / _d(i);
+      ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, x, _perm, t);
+    } else {
+      ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, b, _perm, t);
+    }
     stat.t_extra = timer.seconds();
 
     timer.reset();
@@ -469,6 +497,10 @@ public:
     // copy t -> x
     timer.reset();
     ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, t, _peri, x);
+    if (this->_scale_mat) {
+      // TODO: integrate into ApplyPerm
+      for (int j=0; j<x.extent(1); j++) for (int i=0; i<x.extent(0); i++) x(i,j) = x(i,j) / _d(i);
+    }
     stat.t_extra += timer.seconds();
 
     if (verbose) {
@@ -601,7 +633,7 @@ public:
       const bool test = !std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
       TACHO_TEST_FOR_EXCEPTION(test, std::logic_error, "Serial interface works on host device only");
     }
-    //printf( " factorize(%d)\n",this->getSolutionMethod() );
+    //printf( " Tacho_NumericTools_Serial::factorize(%d)\n",this->getSolutionMethod() );
     /// reset the supernode buffer for potential reuse cases
     Kokkos::deep_copy(_superpanel_buf, value_type(0));
     switch (this->getSolutionMethod()) {

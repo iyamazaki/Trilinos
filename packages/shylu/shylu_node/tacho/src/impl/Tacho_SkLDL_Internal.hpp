@@ -44,12 +44,16 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
       // TODO: move this to symbolic init
       Kokkos::View<value_type **, Kokkos::LayoutLeft, typename ViewTypeA::execution_space> Wk("WK",m,2);
 
-      /*printf( "\n\n A=[\n" );
-      for (int i=0; i<m; i++) {
-        for (int j=0; j<m; j++) printf("%e ",A(i,j));
-        printf("\n");
-      }
-      printf( "];\n" );*/
+      //printf( "\n SkLDL_Internal(m = %d)\n",m );
+      //if (m == 8) 
+      /*{
+        printf( "\n A=[\n" );
+        for (int i=0; i<m; i++) {
+          for (int j=0; j<m; j++) printf("%e ",A(i,j));
+          printf("\n");
+        }
+        printf( "];\n" );
+      }*/
       bool left_look = false;
       if (left_look) {
         // no easy way to pivot..
@@ -110,7 +114,8 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           value_type piv = Aj(1,0);
           P(j) = P(j+1) = -(j+2);
           ordinal_type mj = m-j;
-          if (false)
+          //printf( "\n === j = %d (mj = %d) ===\n",j,mj );
+          if (true) // on/off pivot
           {
             for (ordinal_type k=3; k<mj; k+=2) {
               if (abs(piv) < abs(Aj(k,0))) {
@@ -119,29 +124,26 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
               }
             }
           }
+          // check if we should use the pivot
+          typedef ArithTraits<value_type> arith_traits;
+          const typename arith_traits::mag_type tol(0.01);
+          if (tol*abs(piv) < abs(Aj(1,0))) {
+            // don't use this pivot (not big enough)
+            piv = Aj(1,0);
+            P(j) = P(j+1) = -(j+2);
+          }
           if (piv == zero) {
-            /*if (true) {
-              using arith_traits = ArithTraits<value_type>;
-              piv = arith_traits::epsilon();
+            if (false ) {
+              piv = Aj(1,0) = arith_traits::epsilon();
               P(j) = P(j+1) = -(j+2);
-	      A(j+1,j) = piv;
-	      A(j,j+1) = -piv;
-	    } else */
-	    {
+	    } else {
               TACHO_TEST_FOR_ABORT(true, ">> zero pivot during Skewed LDLt.");
             }
           }
           if (P(j) != -(j+2)) {
             // pivot id
+	    //printf( " pivot : %d -> %d (%e -> %e)\n",j+1,-P(j)-1,Aj(1,0),piv );
             ordinal_type j2 = -P(j)-1;
-
-            //printf( " Pivot %d <=> %d -> %d\n",j+1,P(j),j2 );
-            /*printf( "A0=[\n" );
-            for (int i=0; i<m; i++) {
-              for (int k=0; k<m; k++) printf("%e ",A(i,k));
-              printf("\n");
-            }
-            printf( "];\n" );*/
 
             // row-swap (only to this and remaining columns)
             for (ordinal_type k=j; k<m; k++) {
@@ -156,14 +158,8 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
               A(k, j+1) = A(k, j2);
               A(k, j2)  = val;
             }
-
-            /*printf( "A1=[\n" );
-            for (int i=0; i<m; i++) {
-              for (int k=0; k<m; k++) printf("%e ",A(i,k));
-              printf("\n");
-            }
-            printf( "];\n" );*/
           }
+	  //printf( " > PIVOT = %e\n",piv );
 
           // -----------------------------------
           // 2) scale with 2-by-2 pivot
@@ -190,9 +186,9 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
                                     minus_one, Lp.data(), Lp.stride_1(),
                                                Up.data(), Up.stride_1(),
                                           one, Ap.data(), Ap.stride_1());
-	  }
+          }
 
-	  // ------------------------------------------------------------
+          // ------------------------------------------------------------
           // expand to upper (after original used for right-look update)
           for (ordinal_type k=j+1; k<m; k++) {
             A(j, k) = -A(k, j);
@@ -202,12 +198,6 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           }
         }
       }
-      /*printf( "\n LU=[\n" );
-      for (int i=0; i<m; i++) {
-        for (int j=0; j<m; j++) printf("%e ",A(i,j));
-        printf("\n");
-      }
-      printf( "];\n" );*/
     }
     return r_val;
   }
@@ -258,6 +248,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
               const ordinal_type fla_pivot = -ipiv[i] - i - 1;
               fpiv[i] = fla_pivot;
               if (fla_pivot) {
+                // apply the row-swap to the previous columns
                 value_type *KOKKOS_RESTRICT src = Aptr + i;
                 value_type *KOKKOS_RESTRICT tgt = src + fla_pivot;
                 for (ordinal_type j = 0; j < (i - 1); ++j) {

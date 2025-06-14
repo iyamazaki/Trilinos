@@ -63,13 +63,14 @@ int loadMatrixFromMatlab(const mxArray* mxa, CrsMatrixBase<ScalarType, DeviceTyp
   mwIndex *colptr = mxGetJc(mxa);
   int nnz = colptr[n];
   //printf( " m=%d, n=%d\n",m,n );
-  /*printf("A=[\n");
+  /*FILE *fp = fopen("matA.dat","w");
+  fprintf(fp,"%d %d %d\n",n,n,colptr[n]);
   for (int j=0; j<n; j++) {
     for (int k=colptr[j]; k<colptr[j+1]; k++) {
-      printf("%d, %d %d %e\n",k, rowind[k],j,nzvals[k]);
+      fprintf(fp,"%d %d %e\n", 1+rowind[k],1+j,nzvals[k]);
     }
   }
-  printf("];\n");*/
+  fclose(fp);*/
 
   Kokkos::View<size_type *, DeviceType>    ap("ap", m + 1);
   Kokkos::View<ordinal_type *, DeviceType> aj("aj", nnz);

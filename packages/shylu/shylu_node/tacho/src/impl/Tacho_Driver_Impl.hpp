@@ -22,7 +22,7 @@ namespace Tacho {
 
 template <typename VT, typename DT>
 Driver<VT, DT>::Driver()
-    : _method(1), _order_connected_graph_separately(1), _m(0), _nnz(0), _ap(), _h_ap(), _aj(), _h_aj(), _perm(),
+    : _method(1), _order_connected_graph_separately(1), _m(0), _nnz(0), _ap(), _h_ap(), _aj(), _h_aj(), _scale_mat(false), _perm(),
       _h_perm(), _peri(), _h_peri(), _m_graph(0), _nnz_graph(0), _h_ap_graph(), _h_aj_graph(), _h_perm_graph(),
       _h_peri_graph(), _nnz_u(0), _nsupernodes(0), _N(nullptr), _verbose(0), _small_problem_thres(1024),
 #ifdef TACHO_DEPRECATED_PARAMETERS
@@ -422,6 +422,7 @@ template <typename VT, typename DT> int Driver<VT, DT>::factorize(const value_ty
   if (_m <= _small_problem_thres) {
     factorize_small_host(ax);
   } else {
+    _N->scaleMatrix(_scale_mat, _d);
     _N->factorize(ax, _store_transpose, _pivot_tol, _verbose);
   }
   return 0;

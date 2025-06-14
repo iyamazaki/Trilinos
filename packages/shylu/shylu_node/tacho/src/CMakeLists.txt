@@ -27,6 +27,7 @@ IF (Tacho_REMOVE_DEPRECATED_PARAMETERS)
 ELSE()
   SET(TACHO_DEPRECATED_PARAMETERS ON)
 ENDIF()
+SET(TACHO_HAVE_SUPERLUDIST ${TPL_ENABLE_SuperLUDist})
 
 #-----------------------------------------------------------------------------
 

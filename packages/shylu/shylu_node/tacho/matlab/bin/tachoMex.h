@@ -61,6 +61,8 @@ class TachoSystem
  private:
   bool _verbose;
   bool _max_match;
+  bool _max_weight;
+  bool _scale_mat;
   int _dofs_per_node;
   CrsMatrixBaseTypeHost A;
   Tacho::Driver<value_type, host_device_type> solver;

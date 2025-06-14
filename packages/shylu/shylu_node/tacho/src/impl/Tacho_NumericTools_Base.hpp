@@ -49,6 +49,7 @@ public:
 
   using ordinal_type_array_host = Kokkos::View<ordinal_type *, host_device_type>;
   using size_type_array_host = Kokkos::View<size_type *, host_device_type>;
+  using mag_type_array_host = Kokkos::View<mag_type *, host_device_type>;
   using supernode_type_array_host = Kokkos::View<typename supernode_info_type::supernode_type *, host_device_type>;
 
 protected:
@@ -59,6 +60,10 @@ protected:
 
   // solution method
   ordinal_type _method; // 1 - cholesky, 2 - LDL, 3 - LU
+
+  // ** matrix scaling
+  bool _scale_mat;
+  mag_type_array_host _d;
 
   // matrix input
   ordinal_type _m;
@@ -157,7 +162,7 @@ protected:
   }
 
 public:
-  NumericToolsBase() : _method(0), _m(0), stat() {}
+  NumericToolsBase() : _method(0), _m(0), _scale_mat(false), stat() {}
 
   NumericToolsBase(const NumericToolsBase &b) = default;
 
@@ -197,6 +202,8 @@ public:
   }
 
   virtual ~NumericToolsBase() {}
+
+  inline void scaleMatrix(bool scale_mat, const mag_type_array_host &d) { _scale_mat = scale_mat; _d = d; };
 
   inline ordinal_type getSolutionMethod() const { return _method; }
 
