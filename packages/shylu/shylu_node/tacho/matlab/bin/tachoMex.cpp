@@ -26,7 +26,9 @@ template <>
 TachoSystem<double>::TachoSystem() :
  _verbose(false),
  _dofs_per_node(1),
- _max_match(false)
+ _max_match(false),
+ _max_weight(false),
+ _scale_mat(false)
 {}
 template <>
 TachoSystem<double>::~TachoSystem() {}
@@ -67,6 +69,12 @@ int TachoSystem<Scalar>::option(const mxArray** mx) {
   } else if (option_name == "max-match") {
     if (_verbose) printf( " > option(max-match = true)\n" );
     _max_match = true;
+  } else if (option_name == "max-weight") {
+    if (_verbose) printf( " > option(max-weight = true)\n" );
+    _max_weight = true;
+  } else if (option_name == "scale-mat") {
+    if (_verbose) printf( " > option(scale-mat = true)\n" );
+    _scale_mat = true;
   }
   return IS_TRUE;
 }
@@ -79,7 +87,10 @@ int TachoSystem<Scalar>::setup(const mxArray* mx) {
   try {
     if (_verbose) printf( " solver.analyze\n" );
     if (_dofs_per_node > 1) {
-      solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols(), _max_match);
+      if (_max_weight)
+        solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols(), A.Values(), true, _scale_mat);
+      else
+        solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols(), _max_match);
     } else {
       solver.analyze(A.NumRows(), A.RowPtr(), A.Cols());
     }

@@ -21,6 +21,8 @@ SET(TACHO_HAVE_SUITESPARSE ${TPL_ENABLE_Cholmod})
 SET(TACHO_HAVE_VTUNE ${TPL_ENABLE_VTune})
 SET(TACHO_HAVE_MATLAB ${TPL_ENABLE_MATLAB})
 
+SET(TACHO_HAVE_SUPERLUDIST ${TPL_ENABLE_SuperLUDist})
+
 #-----------------------------------------------------------------------------
 
 TRIBITS_CONFIGURE_FILE(Tacho_config.h)

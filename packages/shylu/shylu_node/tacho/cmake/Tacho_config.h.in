@@ -34,6 +34,9 @@
 /* Define if want to build Matlab interface */
 #cmakedefine TACHO_HAVE_MATLAB
 
+/* Define if you want to build superludist */
+#cmakedefine TACHO_HAVE_SUPERLUDIST
+
 #ifndef F77_BLAS_MANGLE
 # define F77_BLAS_MANGLE@F77_BLAS_MANGLE@
 #endif
