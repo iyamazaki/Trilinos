@@ -442,6 +442,7 @@ public:
         double maxwork = 0.0;
         double work;
         bool do_mwm = (av.extent(0) == aj.extent(0));
+        printf( "   > using %s\n",(do_mwm ? "max-weight matching" : "max-cardinarity matching") );
         if (do_mwm) {
           Kokkos::deep_copy(h_av, av);
           if (scale_mat) {
@@ -461,7 +462,7 @@ public:
               }
               for (int i=0; i<m; i++) _d(i) *= d_new(i);
             }
-	    _scale_mat = scale_mat;
+            _scale_mat = scale_mat;
           }
         }
         size_type_array_host iwork("iwork", 5*m);
@@ -588,65 +589,64 @@ public:
           // compute max cardinarity matching
           size_type_array_host match_odd("match_odd",m/2);
           if (do_mwm) {
-            if (false) {
-              int rval = mwm(m/2, nnz, h_ap_odd.data(), h_aj_odd.data(), h_av_odd.data(), match_odd.data(), num_match);
-            } else {
 #if defined(TACHO_HAVE_SUPERLUDIST)
-              int liw, ldw;
-              int *iw;
-              int icntl[10], info[10];
-              //int job = 4; // job = 4 seems to do better than 1, 2, or 3
-	      int job = 5; // job = 5 with scaling seems to do the best
-              double *dw;
-              double *nzval_abs;
-              int n = m/2;
+            int liw, ldw;
+            int *iw;
+            int icntl[10], info[10];
+            //int job = 4; // job = 4 seems to do better than 1, 2, or 3
+            int job = 5; // job = 5 with scaling seems to do the best
+            double *dw;
+            double *nzval_abs;
+            int n = m/2;
 
+            liw = 5*n;
+            if(job == 3) 
+              { liw = 10*n + n; }
+            iw = (int*) malloc(liw*sizeof(int));
+            ldw = 3*n+nnz;
+            dw = (double*) malloc(ldw*sizeof(double));
+            nzval_abs = (double*)malloc(nnz*sizeof(double));
 
-              liw = 5*n;
-              if(job == 3) 
-                { liw = 10*n + n; }
-              iw = (int*) malloc(liw*sizeof(int));
-              ldw = 3*n+nnz;
-              dw = (double*) malloc(ldw*sizeof(double));
-              nzval_abs = (double*)malloc(nnz*sizeof(double));
+            //Convert to 1 formatting
+            for(int i = 0; i < h_ap_odd(n); ++i)
+              h_aj_odd(i) = h_aj_odd(i)+1;
+            for(int i = 0; i < h_ap_odd(n); ++i)
+              nzval_abs[i] = abs(h_av_odd(i));
+            for(int i = 0; i <= n; ++i)
+              h_ap_odd(i) = h_ap_odd(i)+1;
 
-              //Convert to 1 formatting
-              for(int i = 0; i < h_ap_odd(n); ++i)
-                h_aj_odd(i) = h_aj_odd(i)+1;
-              for(int i = 0; i < h_ap_odd(n); ++i)
-                nzval_abs[i] = abs(h_av_odd(i));
-              for(int i = 0; i <= n; ++i)
-                h_ap_odd(i) = h_ap_odd(i)+1;
+            printf( "   > calling SuperLU_DIST MC64(job = %d) \n",job );
+            mc64id_dist(icntl);
+            mc64ad_dist(&job, &n, &nnz, h_ap_odd.data(), h_aj_odd.data(), nzval_abs,
+                        &num_match, match_odd.data(), &liw, iw, &ldw, dw, icntl, info);
 
-              mc64id_dist(icntl);
-              mc64ad_dist(&job, &n, &nnz, h_ap_odd.data(), h_aj_odd.data(), nzval_abs,
-                          &num_match, match_odd.data(), &liw, iw, &ldw, dw, icntl, info);
-
-	      if (job == 5) {
-                Kokkos::resize(_d, m);
-                //printf("d=[\n");
-                for (int i = 0; i < n; ++i) {
-                  //printf("%e %e\n",exp(dw[i]),exp(dw[n+i]));
-		  _d(2*i) = 1.0/exp(dw[n+i]);
-		  _d(2*i+1) = 1.0/exp(dw[i]);
-                }
-		_scale_mat = true;
-                //printf("];\n");
-	      }
-
-              //convert indexing back
-              for(int i=0; i <= n; ++i)
-              { h_ap_odd(i) = h_ap_odd(i)-1; }
-              for(int i=0; i < h_ap_odd(n); ++i)
-              { h_aj_odd(i) = h_aj_odd(i)-1; }
-              for(int i=0; i < n; ++i)
-              { match_odd(i) = match_odd(i)-1; }
-
-              free(nzval_abs);
-              free(iw);
-              free(dw);
-#endif
+            if (job == 5) {
+              Kokkos::resize(_d, m);
+              //printf("d=[\n");
+              for (int i = 0; i < n; ++i) {
+                //printf("%e %e\n",exp(dw[i]),exp(dw[n+i]));
+                _d(2*i) = 1.0/exp(dw[n+i]);
+                _d(2*i+1) = 1.0/exp(dw[i]);
+              }
+              _scale_mat = true;
+              //printf("];\n");
             }
+
+            //convert indexing back
+            for(int i=0; i <= n; ++i)
+            { h_ap_odd(i) = h_ap_odd(i)-1; }
+            for(int i=0; i < h_ap_odd(n); ++i)
+            { h_aj_odd(i) = h_aj_odd(i)-1; }
+            for(int i=0; i < n; ++i)
+            { match_odd(i) = match_odd(i)-1; }
+
+            free(nzval_abs);
+            free(iw);
+            free(dw);
+#else
+            printf( "   > calling ShyLU-Basker MWM\n" );
+            int rval = mwm(m/2, nnz, h_ap_odd.data(), h_aj_odd.data(), h_av_odd.data(), match_odd.data(), num_match);
+#endif
           } else {
             num_match = trilinos_btf_maxtrans (m/2, m/2, h_ap_odd.data(), h_aj_odd.data(), maxwork, &work, match_odd.data(), iwork.data());
           }

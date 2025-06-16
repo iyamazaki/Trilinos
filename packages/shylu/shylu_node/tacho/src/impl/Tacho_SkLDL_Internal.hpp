@@ -115,7 +115,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           P(j) = P(j+1) = -(j+2);
           ordinal_type mj = m-j;
           //printf( "\n === j = %d (mj = %d) ===\n",j,mj );
-          if (true) // on/off pivot
+          if (false) // on/off pivot
           {
             for (ordinal_type k=3; k<mj; k+=2) {
               if (abs(piv) < abs(Aj(k,0))) {
