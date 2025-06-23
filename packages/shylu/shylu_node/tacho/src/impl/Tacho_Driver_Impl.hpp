@@ -26,7 +26,7 @@ Driver<VT, DT>::Driver()
       _h_perm(), _peri(), _h_peri(), _m_graph(0), _nnz_graph(0), _h_ap_graph(), _h_aj_graph(), _h_perm_graph(),
       _h_peri_graph(), _nnz_u(0), _nsupernodes(0), _N(nullptr), _verbose(0), _small_problem_thres(1024), _serial_thres_size(-1),
       _mb(-1), _nb(-1), _front_update_mode(-1), _levelset(0), _device_level_cut(0), _device_factor_thres(128),
-      _device_solve_thres(128), _variant(2), _nstreams(16), _pivot_tol(0.0), _max_num_superblocks(-1) {}
+      _device_solve_thres(128), _variant(2), _nstreams(16), _pivot_tol(0.0), _pivot(true), _max_num_superblocks(-1) {}
 
 ///
 /// duplicate the object
@@ -157,6 +157,10 @@ template <typename VT, typename DT> void Driver<VT, DT>::setLevelSetOptionAlgori
 
 template <typename VT, typename DT> void Driver<VT, DT>::setLevelSetOptionNumStreams(const ordinal_type nstreams) {
   _nstreams = nstreams;
+}
+
+template <typename VT, typename DT> void Driver<VT, DT>::doLocalPivot(const bool pivot) {
+  _pivot = pivot;
 }
 
 template <typename VT, typename DT> void Driver<VT, DT>::setPivotTolerance(const mag_type pivot_tol) {
@@ -397,7 +401,7 @@ template <typename VT, typename DT> int Driver<VT, DT>::factorize(const value_ty
     factorize_small_host(ax);
   } else {
     _N->scaleMatrix(_scale_mat, _d);
-    _N->factorize(ax, _pivot_tol, _verbose);
+    _N->factorize(ax, _pivot_tol, _pivot, _verbose);
   }
   return 0;
 }
@@ -594,6 +598,44 @@ int Driver<VT, DT>::diag(const value_type_array &d) {
   if (_m <= _small_problem_thres) {
   } else {
     _N->diag(d);
+  }
+  return 0;
+}
+
+template <typename VT, typename DT>
+int Driver<VT, DT>::pfaffian() {
+  TACHO_TEST_FOR_EXCEPTION(_method != SkewLDL, std::runtime_error, "Pfaffian valid only for Skew LDL.");
+  if (_verbose) {
+    switch (_method) {
+    case Cholesky: {
+      printf("TachoSolver: Pfaffian Cholesky\n");
+      printf("==============================\n");
+      break;
+    }
+    case LDL: {
+      printf("TachoSolver: Pfaffian LDL\n");
+      printf("=========================\n");
+      break;
+    }
+    case SymLU: {
+      printf("TachoSolver: Pfaffian SymLU\n");
+      printf("===========================\n");
+      break;
+    }
+    case SkewLDL: {
+      printf("TachoSolver: Pfaffian SkewLDL\n");
+      printf("=============================\n");
+      break;
+    }
+    }
+  }
+
+  if (_m <= _small_problem_thres) {
+  } else {
+    int pf =  _N->pfaffian();
+    int pf_match = pow(-1, _num_sweeps);
+    printf( " > pf = %d * %d = %d (%d)\n",pf,pf_match,pf*pf_match, _num_sweeps );
+    return pf * pf_match;
   }
   return 0;
 }

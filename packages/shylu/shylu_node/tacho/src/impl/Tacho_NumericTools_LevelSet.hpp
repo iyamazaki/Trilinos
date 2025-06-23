@@ -4602,7 +4602,7 @@ public:
     }
   }
 
-  inline void factorize(const value_type_array &ax, const mag_type pivot_tol = 0.0, const ordinal_type verbose = 0) override {
+  inline void factorize(const value_type_array &ax, const mag_type pivot_tol = 0.0, const bool pivot = true, const ordinal_type verbose = 0) override {
     Kokkos::deep_copy(_superpanel_buf, value_type(0));
     switch (this->getSolutionMethod()) {
     case 1: { /// Cholesky

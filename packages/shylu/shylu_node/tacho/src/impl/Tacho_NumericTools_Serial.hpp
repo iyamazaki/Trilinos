@@ -374,7 +374,7 @@ public:
   ///
   /// Skewed LDL
   ///
-  inline void factorizeSkLDL(const value_type_array &ax, const ordinal_type verbose) {
+  inline void factorizeSkLDL(const value_type_array &ax, const bool pivot, const ordinal_type verbose) {
     {
       const bool test = !std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
       TACHO_TEST_FOR_EXCEPTION(test, std::logic_error, "Serial interface works on host device only");
@@ -399,7 +399,7 @@ public:
           Kokkos::resize(_ax, nnz);
           for (int i=0; i<m; i++) {
             for (int k=h_ap(i); k<h_ap(i+1); k++) {
-              _ax(k) = ax(k)/(_d(i) * _d(h_aj(k)));
+              _ax(k) = ax(k) * (_d(i) * _d(h_aj(k)));
             }
           }
         } else {
@@ -429,9 +429,9 @@ public:
       /// recursive tree traversal
       const ordinal_type member = 0, nroots = _stree_roots.extent(0);
       for (ordinal_type i = 0; i < nroots; ++i) {
-        //printf( " %d : SkLDL_Supernodes::factorize_recursive_serial\n",i );
+        //printf( "\n\n %d : SkLDL_Supernodes::factorize_recursive_serial\n",i );
         SkLDL_Supernodes<Algo::Workflow::Serial>::factorize_recursive_serial(
-            member, _info, _stree_roots(i), true, _piv.data(), _diag.data(), buf.data(), bufsize);
+            member, _info, _stree_roots(i), true, _piv.data(), _diag.data(), buf.data(), bufsize, pivot);
       }
       track_free(bufsize);
     }
@@ -468,7 +468,8 @@ public:
     const auto exec_instance = exec_space();
     if (this->_scale_mat) {
       // TODO: integrate into ApplyPerm
-      for (int j=0; j<b.extent(1); j++) for (int i=0; i<b.extent(0); i++) x(i,j) = b(i,j) / _d(i);
+      // P*D*A*D*P x = P*D*b
+      for (int j=0; j<b.extent(1); j++) for (int i=0; i<b.extent(0); i++) x(i,j) = b(i,j) * _d(i);
       ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, x, _perm, t);
     } else {
       ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, b, _perm, t);
@@ -499,7 +500,8 @@ public:
     ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, t, _peri, x);
     if (this->_scale_mat) {
       // TODO: integrate into ApplyPerm
-      for (int j=0; j<x.extent(1); j++) for (int i=0; i<x.extent(0); i++) x(i,j) = x(i,j) / _d(i);
+      // P*D*A*D*P x = P*D*b
+      for (int j=0; j<x.extent(1); j++) for (int i=0; i<x.extent(0); i++) x(i,j) = x(i,j) * _d(i);
     }
     stat.t_extra += timer.seconds();
 
@@ -514,8 +516,26 @@ public:
   inline void diagSkLDL(const value_type_array &d) {
     /// recursive tree traversal
     const ordinal_type member = 0, nroots = _stree_roots.extent(0);
-    for (ordinal_type i = 0; i < nroots; ++i)
+    TACHO_TEST_FOR_EXCEPTION(nroots > 1, std::logic_error, "Serial interface works on host device only");
+
+    for (ordinal_type i = 0; i < nroots; ++i) {
+      //printf( "\n\n %d : SkLDL_Supernodes::diagSkLDL\n",i );
       SkLDL_Supernodes<Algo::Workflow::Serial>::get_diag_recursive_serial(member, _info, _diag.data(), d.data(), _stree_roots(i), true);
+    }
+  }
+
+  inline int pfSkLDL() {
+    /// recursive tree traversal
+    const ordinal_type member = 0, nroots = _stree_roots.extent(0);
+    TACHO_TEST_FOR_EXCEPTION(nroots > 1, std::logic_error, "Serial interface works on host device only");
+
+    int pf = 1;
+    for (ordinal_type i = 0; i < nroots; ++i) {
+      //printf( "\n\n %d : SkLDL_Supernodes::pfSkLDL\n",i );
+      int pf_i = SkLDL_Supernodes<Algo::Workflow::Serial>::get_pf_recursive_serial(member, _info, _diag.data(), _stree_roots(i), true);
+      pf *= pf_i;
+    }
+    return pf;
   }
 
   ///
@@ -628,7 +648,7 @@ public:
   ///
   /// main interface
   ///
-  inline void factorize(const value_type_array &ax, const mag_type pivot_tol = 0.0, const ordinal_type verbose = 0) override {
+  inline void factorize(const value_type_array &ax, const mag_type pivot_tol = 0.0, const bool pivot = true, const ordinal_type verbose = 0) override {
     {
       const bool test = !std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
       TACHO_TEST_FOR_EXCEPTION(test, std::logic_error, "Serial interface works on host device only");
@@ -687,7 +707,7 @@ public:
           track_alloc(this->_piv.span() * sizeof(ordinal_type));
         }
       }
-      factorizeSkLDL(ax, verbose);
+      factorizeSkLDL(ax, pivot, verbose);
       break;
     }
     default: {
@@ -742,10 +762,22 @@ public:
       break;
     }
     default: {
-      TACHO_TEST_FOR_EXCEPTION(false, std::logic_error, "The solution method is not supported");
+      TACHO_TEST_FOR_EXCEPTION(false, std::logic_error, "The solution method is not supported for diag");
       break;
     }
     }
+  }
+
+  inline int pfaffian() override {
+    switch (this->getSolutionMethod()) {
+    case 5: {
+      return pfSkLDL();
+    }
+    default: {
+      TACHO_TEST_FOR_EXCEPTION(false, std::logic_error, "The solution method is not supported for diag");
+    }
+    }
+    return 0;
   }
 };
 

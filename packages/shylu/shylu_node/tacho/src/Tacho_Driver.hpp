@@ -116,6 +116,9 @@ private:
   bool _scale_mat;
   mag_type_array_host _d;
 
+  // ** matching
+  ordinal_type _num_sweeps;
+
   // ** fill-reducing perm
   ordinal_type_array _perm;
   ordinal_type_array_host _h_perm;
@@ -184,6 +187,7 @@ private:
   ordinal_type _variant;             // algorithmic variant in levelset 0: naive, 1: invert diagonals
   ordinal_type _nstreams;            // on cuda, multi streams are used
 
+  bool _pivot;                       // turn on/off local pivoting
   mag_type _pivot_tol;               // tolerance for tiny pivot perturbation
 
   // parallelism and memory constraint is made via this parameter
@@ -232,6 +236,7 @@ public:
   void setLevelSetOptionNumStreams(const ordinal_type nstreams);
   void setLevelSetOptionAlgorithmVariant(const ordinal_type variant);
 
+  void doLocalPivot(const bool pivot);
   void setPivotTolerance(const mag_type pivot_tol);
   void useNoPivotTolerance();
   void useDefaultPivotTolerance();
@@ -255,6 +260,7 @@ public:
               const bool duplicate = false) {
 
     _m = m;
+    _num_sweeps = 0;
 
     if (duplicate) {
       /// for most cases, ap and aj are from host; so construct ap and aj and mirror to device
@@ -301,6 +307,7 @@ public:
   int analyze(const ordinal_type m, const arg_size_type_array &ap, const arg_ordinal_type_array &aj,
               const arg_perm_type_array &perm, const arg_perm_type_array &peri, const bool duplicate = false) {
     _m = m;
+    _num_sweeps = 0;
 
     // this takes the user-specified perm, such that analyze() won't call graph partitioner
     if (duplicate) {
@@ -355,6 +362,7 @@ public:
               const ordinal_type m_graph, const arg_size_type_array &ap_graph, const arg_ordinal_type_array &aj_graph,
               const arg_ordinal_type_array &aw_graph, const bool duplicate = false) {
     _m = m;
+    _num_sweeps = 0;
 
     if (duplicate) {
       /// for most cases, ap and aj are from host; so construct ap and aj and mirror to device
@@ -422,6 +430,8 @@ public:
               const arg_size_type_array &ap, const arg_ordinal_type_array &aj, const arg_value_type_array &av,
               const bool max_match = false, const bool scale_mat = false, const bool duplicate = false) {
 
+    _num_sweeps = 0;
+
     int rval = 0;
     Kokkos::Timer timer;
     printf( "\n >> in analyze (%d%s%s) <<\n",blk_size,(max_match ? ", match" : ""),(scale_mat ? ", scale" : "") ); fflush(stdout);
@@ -430,6 +440,7 @@ public:
       double t_match  = 0.0;
 
       // ** max cardinarity matchng
+      int num_sweeps = 0;
       ordinal_type_array_host h_match("h_match",0);
       ordinal_type_array_host h_imatch("h_imatch",0);
       if (max_match) {
@@ -581,7 +592,7 @@ public:
           /*{
             printf("B=[\n");
             if (do_mwm)
-              for (int i=0; i<m/2; i++) for (int k=h_ap_odd(i); k<h_ap_odd(i+1); k++) printf("%d %d %e\n",i,h_aj_odd(k),h_av_odd(k));
+              for (int i=0; i<m/2; i++) for (int k=h_ap_odd(i); k<h_ap_odd(i+1); k++) printf("%d %d %e\n",i,h_aj_odd(k),abs(h_av_odd(k)));
             else
               for (int i=0; i<m/2; i++) for (int k=h_ap_odd(i); k<h_ap_odd(i+1); k++) printf("%d %d\n",i,h_aj_odd(k));
             printf("];\n"); fflush(stdout);
@@ -605,31 +616,45 @@ public:
             iw = (int*) malloc(liw*sizeof(int));
             ldw = 3*n+nnz;
             dw = (double*) malloc(ldw*sizeof(double));
+
+            // Abs nzvals
             nzval_abs = (double*)malloc(nnz*sizeof(double));
+            for(int i = 0; i < h_ap_odd(n); ++i)
+              nzval_abs[i] = abs(h_av_odd(i));
 
             //Convert to 1 formatting
             for(int i = 0; i < h_ap_odd(n); ++i)
               h_aj_odd(i) = h_aj_odd(i)+1;
-            for(int i = 0; i < h_ap_odd(n); ++i)
-              nzval_abs[i] = abs(h_av_odd(i));
             for(int i = 0; i <= n; ++i)
               h_ap_odd(i) = h_ap_odd(i)+1;
 
-            printf( "   > calling SuperLU_DIST MC64(job = %d) \n",job );
+            printf( "   > calling SuperLU_DIST MC64(job = %d) \n",job ); fflush(stdout);
             mc64id_dist(icntl);
             mc64ad_dist(&job, &n, &nnz, h_ap_odd.data(), h_aj_odd.data(), nzval_abs,
                         &num_match, match_odd.data(), &liw, iw, &ldw, dw, icntl, info);
 
             if (job == 5) {
               Kokkos::resize(_d, m);
-              //printf("d=[\n");
+              //printf("k=[\n");
               for (int i = 0; i < n; ++i) {
-                //printf("%e %e\n",exp(dw[i]),exp(dw[n+i]));
-                _d(2*i) = 1.0/exp(dw[n+i]);
-                _d(2*i+1) = 1.0/exp(dw[i]);
+                double r = exp(dw[n+i]);
+                double c = exp(dw[i]);
+                int scaling_option = 2;
+                if (scaling_option == 1) {
+                    _d(2*i)   = r;
+                    _d(2*i+1) = c;
+                } else if (scaling_option == 2) {
+                    _d(2*i)   = c;
+                    _d(2*i+1) = r;
+                } else {
+                    _d(2*i)   = c*r;
+                    _d(2*i+1) = 1.0;
+                }
+                //_d(2*i+1) = _d(2*i) = 1.0;
+                //printf("%e %e\n",dw[n+i],dw[i],r,c);
               }
+              //printf("];\n"); fflush(stdout);
               _scale_mat = true;
-              //printf("];\n");
             }
 
             //convert indexing back
@@ -695,21 +720,50 @@ public:
             }
             h_imatch(abs(h_match(i))) = i;
           }
+	  {
+            size_type_array_host visited("visited", m/2);
+            for (int i=1; i<m/2; i++) visited(i) = 0;
+            for (int i=1; i<m; i+=2) {
+              int i1 = (i-1)/2;
+	      if (visited(i1) == 0) {
+                visited(i1) = 1;
+
+		// follow the chain
+                int j = h_match(i);
+                int i2 = (j-1)/2;
+	        while (i1 != i2) {
+                  num_sweeps ++;
+                  visited(i2) = 1;
+
+                  j = h_match(j);
+                  i2 = (j-1)/2;
+	        }
+	      }
+	    }
+	  }
+	  printf( " num_sweeps = %d / %d\n",num_sweeps,m/2 );
           /*{
             printf("q=[\n");
             for (int i=0; i<m; i++) printf("%d %d\n",i,h_match(i));
             printf("];\n"); fflush(stdout);
-            printf("T=[\n");
-            for (int i=0; i<m; i++) {
-              for (int k=_h_ap(h_match(i)); k<_h_ap(h_match(i)+1); k++) {
-                if (do_mwm) {
-                  printf("%d %d %e\n",i,h_imatch(_h_aj(k)),h_av(k));
-                } else {
-                  printf("%d %d\n",i,h_imatch(_h_aj(k)));
-                }
-              }
+	  }*/
+	  /*{
+            if (_d.extent(0) == m) {
+              printf("d=[\n");
+              for (int i=0; i<m; i++) printf("%d %e\n",i,_d(i));
+              printf("];\n"); fflush(stdout);
             }
-            printf("];\n");
+            //printf("T=[\n");
+            //for (int i=0; i<m; i++) {
+            //  for (int k=_h_ap(h_match(i)); k<_h_ap(h_match(i)+1); k++) {
+            //    if (do_mwm) {
+            //      printf("%d %d %e\n",i,h_imatch(_h_aj(k)),h_av(k));
+            //    } else {
+            //      printf("%d %d\n",i,h_imatch(_h_aj(k)));
+            //    }
+            //  }
+            //}
+            //printf("];\n");
           }*/
           //printf( " calling maxtrans, done\n" ); fflush(stdout);
         }
@@ -806,6 +860,7 @@ public:
         printf("];\n");
       }*/
       rval = analyze(m, ap, aj, m_graph, ap_graph, aj_graph, aw_graph, duplicate);
+      _num_sweeps = num_sweeps;
       if (max_match) {
         // * integrate the max-matching into fill-reducing perm
         //printf("perm0=[\n");
@@ -838,6 +893,7 @@ public:
   int solve_small_host(const value_type_matrix &x, const value_type_matrix &b, const value_type_matrix &t);
 
   int diag(const value_type_array &d);
+  int pfaffian();
 
   double computeRelativeResidual(const value_type_array &ax, const value_type_matrix &x, const value_type_matrix &b);
   void   computeSpMV(const value_type_array &ax, const value_type_matrix &x, value_type_matrix &b);
