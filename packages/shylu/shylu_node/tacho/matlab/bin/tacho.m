@@ -57,6 +57,9 @@ elseif(strcmp(varargin{1}, 'solve')),
 elseif(strcmp(varargin{1}, 'diag')),
     % Diag mode = 5
     varargout{1} = tachoMex(5, varargin{2:nargin});
+elseif(strcmp(varargin{1}, 'pfaffian')),
+    % Pfaffian mode = 7
+    varargout{1} = tachoMex(7, varargin{2:nargin});
 elseif(strcmp(varargin{1}, 'cleanup')),
     % Cleanup mode = 3
     tachoMex(3);

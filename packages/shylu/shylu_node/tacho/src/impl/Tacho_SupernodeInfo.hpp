@@ -106,6 +106,7 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
 
   struct Supernode {
     mutable int32_t lock;
+    mutable ordinal_type npivots;   // # of pivot exchanges
 
     ordinal_type row_begin; // beginning row
     ordinal_type m, n;      // panel dimension
@@ -143,7 +144,7 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
 
     KOKKOS_INLINE_FUNCTION
     Supernode()
-        : lock(0), row_begin(0), m(0), n(0), gid_col_begin(0), gid_col_end(0), sid_col_begin(0), sid_col_end(0),
+        : lock(0), npivots(0), row_begin(0), m(0), n(0), gid_col_begin(0), gid_col_end(0), sid_col_begin(0), sid_col_end(0),
           nchildren(0), children(NULL), max_decendant_schur_size(0), max_decendant_supernode_size(0), l_buf(NULL),
           u_buf(NULL), do_not_apply_pivots(false) {
       // for (ordinal_type i=0;i<MaxDependenceSize;++i) children[i] = 0;
@@ -151,7 +152,7 @@ template <typename ValueType, typename DeviceType> struct SupernodeInfo {
 
     KOKKOS_INLINE_FUNCTION
     Supernode(const Supernode &b)
-        : lock(0), row_begin(b.row_begin), m(b.m), n(b.n), gid_col_begin(b.gid_col_begin), gid_col_end(b.gid_col_end),
+        : lock(0), npivots(0), row_begin(b.row_begin), m(b.m), n(b.n), gid_col_begin(b.gid_col_begin), gid_col_end(b.gid_col_end),
           sid_col_begin(b.sid_col_begin), sid_col_end(b.sid_col_end), nchildren(b.nchildren), children(b.children),
           max_decendant_schur_size(b.max_decendant_schur_size),
           max_decendant_supernode_size(b.max_decendant_supernode_size), l_buf(b.l_buf), u_buf(b.u_buf),

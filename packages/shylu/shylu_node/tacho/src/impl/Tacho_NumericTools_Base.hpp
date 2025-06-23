@@ -251,7 +251,7 @@ public:
     }
   }
 
-  inline virtual void factorize(const value_type_array &ax, const bool store_transpose, const mag_type pivot_tol = 0.0, const ordinal_type verbose = 0) {
+  inline virtual void factorize(const value_type_array &ax, const bool store_transpose, const mag_type pivot_tol = 0.0, const bool pivot = true, const ordinal_type verbose = 0) {
     TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "The function should be overriden by derived classes");
   }
 
@@ -263,7 +263,11 @@ public:
   }
 
   inline virtual void diag(const value_type_array &d) {
-    TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "The function should be overriden by derived classes");
+    TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "The function diag should be overriden by derived classes");
+  }
+
+  inline virtual int pfaffian() {
+    TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, "The function pfaffian should be overriden by derived classes");
   }
 
   ///

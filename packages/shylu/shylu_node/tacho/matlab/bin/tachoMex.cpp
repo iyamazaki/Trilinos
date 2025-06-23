@@ -85,7 +85,7 @@ template <typename Scalar>
 int TachoSystem<Scalar>::setup(const mxArray* mx) {
   loadMatrixFromMatlab<double, host_device_type>(mx, A);
   try {
-    if (_verbose) printf( " solver.analyze\n" );
+    if (_verbose) printf( " solver.analyze(%d%s%s)\n",_dofs_per_node,(_max_match ? ", max-match" : ""),(_max_weight ? ", max-weight" : "") );
     if (_dofs_per_node > 1) {
       if (_max_weight)
         solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols(), A.Values(), true, _scale_mat);
@@ -164,6 +164,21 @@ mxArray* TachoSystem<Scalar>::diag() {
 }
 
 
+/// Pfaffian function
+template <typename Scalar>
+int TachoSystem<Scalar>::pfaffian() {
+  int pf = 0;
+  try {
+    if (_verbose) printf( " solver.diag\n" );
+    pf = this->solver.pfaffian();
+  } catch (std::exception& e) {
+    mexPrintf("Error occurred during TachoMex pfaffian:\n");
+    std::cout << e.what() << std::endl;
+  }
+  return pf;
+}
+
+
 // Helper function
 MODE_TYPE sanity_check(int nrhs, const mxArray* prhs[]) {
   MODE_TYPE rv = MODE_ERROR;
@@ -208,6 +223,13 @@ MODE_TYPE sanity_check(int nrhs, const mxArray* prhs[]) {
         rv = MODE_DIAG;
       } else {
         mexErrMsgTxt("TachoMex Error: Invalid input for diag phase\n");
+      }
+      break;
+    case MODE_PFAFFIAN:
+      if(nrhs == 1) {
+        rv = MODE_PFAFFIAN;
+      } else {
+        mexErrMsgTxt("TachoMex Error: Invalid input for pfaffian phase\n");
       }
       break;
     case MODE_OPTION:
@@ -301,6 +323,22 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
           plhs[0] = output;
 	}
         if (dp.verbose()) printf( " -- Dian done! --\n\n" );
+      } catch (std::exception& e) {
+        mexPrintf("An error occurred during the solve routine:\n");
+        std::cout << e.what() << std::endl;
+      }
+      break;
+    }
+    case MODE_PFAFFIAN: {
+      try {
+        if (dp.verbose()) printf( " -- Pfaffian --\n" );
+        int pf = dp.pfaffian();
+	if (nlhs > 0) {
+          if (dp.verbose()) printf( " > return pf = %d\n",pf );
+          plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
+          *((int*)mxGetData(plhs[0])) = pf;
+	}
+        if (dp.verbose()) printf( " -- Pfaffian done! --\n\n" );
       } catch (std::exception& e) {
         mexPrintf("An error occurred during the solve routine:\n");
         std::cout << e.what() << std::endl;

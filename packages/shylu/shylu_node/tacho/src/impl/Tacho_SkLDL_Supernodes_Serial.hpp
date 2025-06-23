@@ -47,7 +47,8 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
   factorize(MemberType &member, const SupernodeInfoType &info, const typename SupernodeInfoType::ordinal_type_array &P,
             const typename SupernodeInfoType::value_type_matrix &D,
             const typename SupernodeInfoType::value_type_array &W,
-            const typename SupernodeInfoType::value_type_matrix &ABR, const ordinal_type sid) {
+            const typename SupernodeInfoType::value_type_matrix &ABR, const ordinal_type sid,
+            const bool pivot) {
     using supernode_info_type = SupernodeInfoType;
     using value_type = typename supernode_info_type::value_type;
     using value_type_matrix = typename supernode_info_type::value_type_matrix;
@@ -69,6 +70,7 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
     const ordinal_type m = s.m, n = s.n - s.m;
 
     // m and n are available, then factorize the supernode block
+    int npivots = (pivot ? 0 : -1);
     if (m > 0) {
       /// LDL factorize ATL, extract diag, symmetrize ATL with unit diagonals
       UnmanagedViewType<value_type_matrix> ATL(ptr, m, m);
@@ -76,7 +78,7 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
 
       SkSymmetrize<Uplo::Upper, Algo::Internal>::invoke(member, ATL);
 
-      SkLDL<Uplo::Lower, Algo::Internal>::invoke(member, ATL, P, W);
+      SkLDL<Uplo::Lower, Algo::Internal>::invoke(member, ATL, P, W, npivots);
       /*printf( " > L = [\n" );
       for (int i=0; i < m; i++) {
         for (int j=0; j < m; j++) printf( "%e ",ATL(i,j) );
@@ -84,12 +86,12 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       }
       printf( " ]\n" );*/
       SkLDL<Uplo::Lower, Algo::Internal>::modify(member, ATL, P, D);
-      //printf( " D = [\n" );
-      //for (int i=0; i < m; i++) printf( "%e %e\n",D(i,0),D(i,1) );
-      //printf( " ]\n" );
-      /*printf( " * L = [\n" );
+      /*printf( " D = [\n" );
+      for (int i=0; i < m; i++) printf( "%.16e %.16e\n",D(i,0),D(i,1) );
+      printf( " ]\n" );
+      printf( " * L = [\n" );
       for (int i=0; i < m; i++) {
-        for (int j=0; j < m; j++) printf( "%e ",ATL(i,j) );
+        for (int j=0; j < m; j++) printf( "%.16e ",ATL(i,j) );
         printf("\n");
       }
       printf( " ]\n" );*/
@@ -134,101 +136,8 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
                                                                                                 zero, ABR);
       }
     }
-    return 0;
-  }
+    s.npivots = npivots;
 
-  template <typename MemberType, typename SupernodeInfoType>
-  KOKKOS_INLINE_FUNCTION static int solve_lower(MemberType &member, const SupernodeInfoType &info,
-                                                const typename SupernodeInfoType::ordinal_type_array &P,
-                                                const typename SupernodeInfoType::value_type_matrix &xB,
-                                                const ordinal_type sid) {
-    using supernode_info_type = SupernodeInfoType;
-    using value_type = typename supernode_info_type::value_type;
-    using value_type_matrix = typename supernode_info_type::value_type_matrix;
-    using ordinal_type_array = typename supernode_info_type::ordinal_type_array;
-
-    using range_type = Kokkos::pair<ordinal_type, ordinal_type>;
-
-    const auto &s = info.supernodes(sid);
-
-    using TrsvAlgoType = typename TrsvAlgorithm::type;
-    using GemvAlgoType = typename GemvAlgorithm::type;
-
-    // get panel pointer
-    value_type *ptr = s.u_buf;
-
-    // panel is divided into diagonal and interface block
-    const ordinal_type m = s.m, n = s.n - s.m; //, nrhs = info.x.extent(1);
-
-    // m and n are available, then factorize the supernode block
-    if (m > 0) {
-      const value_type one(1), zero(0);
-      const ordinal_type offm = s.row_begin;
-      UnmanagedViewType<value_type_matrix> AL(ptr, m, m);
-      ptr += m * m;
-      const auto xT = Kokkos::subview(info.x, range_type(offm, offm + m), Kokkos::ALL());
-      const auto fpiv = ordinal_type_array(P.data() + m, m);
-
-      ApplyPivots<PivotMode::Flame, Side::Left, Direct::Forward, Algo::Internal> /// row inter-change
-          ::invoke(member, fpiv, xT);
-
-      Trsv<Uplo::Lower, Trans::NoTranspose, TrsvAlgoType>::invoke(member, Diag::Unit(), AL, xT);
-
-      if (n > 0) {
-        UnmanagedViewType<value_type_matrix> AR(ptr, m, n); // ptr += m*n;
-        Gemv<Trans::Transpose, GemvAlgoType>::invoke(member, -one, AR, xT, zero, xB);
-      }
-    }
-    return 0;
-  }
-
-  template <typename MemberType, typename SupernodeInfoType>
-  KOKKOS_INLINE_FUNCTION static int solve_upper(MemberType &member, const SupernodeInfoType &info,
-                                                const typename SupernodeInfoType::ordinal_type_array &P,
-                                                const typename SupernodeInfoType::value_type_matrix &D,
-                                                const typename SupernodeInfoType::value_type_matrix &xB,
-                                                const ordinal_type sid) {
-    using supernode_info_type = SupernodeInfoType;
-
-    using value_type = typename supernode_info_type::value_type;
-    using value_type_matrix = typename supernode_info_type::value_type_matrix;
-    using ordinal_type_array = typename supernode_info_type::ordinal_type_array;
-
-    using range_type = Kokkos::pair<ordinal_type, ordinal_type>;
-
-    using GemvAlgoType = typename GemvAlgorithm::type;
-    using TrsvAlgoType = typename TrsvAlgorithm::type;
-
-    // get current supernode
-    const auto &s = info.supernodes(sid);
-
-    // get supernode panel pointer
-    value_type *ptr = s.u_buf;
-
-    // panel is divided into diagonal and interface block
-    const ordinal_type m = s.m, n = s.n - s.m; //, nrhs = info.x.extent(1);
-
-    // m and n are available, then factorize the supernode block
-    if (m > 0) {
-      const value_type one(1);
-      const UnmanagedViewType<value_type_matrix> AL(ptr, m, m);
-      ptr += m * m;
-
-      const ordinal_type offm = s.row_begin;
-      const auto xT = Kokkos::subview(info.x, range_type(offm, offm + m), Kokkos::ALL());
-      const auto fpiv = ordinal_type_array(P.data() + m, m);
-
-      Scale2x2_BlockInverseDiagonals<Side::Left, Algo::Internal> /// row scaling
-          ::invoke(member, P, D, xT);
-
-      if (n > 0) {
-        const UnmanagedViewType<value_type_matrix> AR(ptr, m, n); // ptr += m*n;
-        Gemv<Trans::NoTranspose, GemvAlgoType>::invoke(member, -one, AR, xB, one, xT);
-      }
-      Trsv<Uplo::Lower, Trans::Transpose, TrsvAlgoType>::invoke(member, Diag::Unit(), AL, xT);
-      ApplyPivots<PivotMode::Flame, Side::Left, Direct::Backward, Algo::Internal> /// row inter-change
-          ::invoke(member, fpiv, xT);
-    }
     return 0;
   }
 
@@ -237,7 +146,8 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
   factorize_recursive_serial(MemberType &member, const SupernodeInfoType &info, const ordinal_type sid,
                              const bool final, typename SupernodeInfoType::ordinal_type_array::pointer_type piv,
                              typename SupernodeInfoType::value_type_array::pointer_type diag,
-                             typename SupernodeInfoType::value_type_array::pointer_type buf, const size_type bufsize) {
+                             typename SupernodeInfoType::value_type_array::pointer_type buf, const size_type bufsize,
+                             const bool pivot) {
     using supernode_info_type = SupernodeInfoType;
     using value_type = typename supernode_info_type::value_type;
     using value_type_array = typename supernode_info_type::value_type_array;
@@ -245,7 +155,6 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
     using ordinal_type_array = typename supernode_info_type::ordinal_type_array;
 
     const auto &s = info.supernodes(sid);
-    //printf( " > actorize_recursive_serial (sid = %d) <\n",sid );
     /*{
       const auto &t = info.supernodes(60154);
       value_type *ptr = t.u_buf;
@@ -255,7 +164,7 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       printf( "[\n" );
       for (int i=0; i<m; i++) {
         for (int j=0; j<m; j++) printf( " %e",ATL(i,j) );
-	printf("\n");
+        printf("\n");
       }
       printf( "];\n\n" );
     }*/
@@ -263,10 +172,11 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       //printf( "   * factorize_recursive_serial (nchild = %d) *\n",s.nchildren );
       // serial recursion
       for (ordinal_type i = 0; i < s.nchildren; ++i)
-        factorize_recursive_serial(member, info, s.children[i], final, piv, diag, buf, bufsize);
+        factorize_recursive_serial(member, info, s.children[i], final, piv, diag, buf, bufsize, pivot);
     }
 
     {
+      //printf( "\n > factorize_recursive_serial (sid = %d) <\n",sid );
       const ordinal_type m = s.m;
       const ordinal_type rbeg = s.row_begin;
       UnmanagedViewType<ordinal_type_array> ipiv(piv + rbeg * 4, 4 * m);
@@ -285,7 +195,7 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       UnmanagedViewType<value_type_array> w(bufptr, m * mn);
       bufptr += w.span();
 
-      SkLDL_Supernodes<Algo::Workflow::Serial>::factorize(member, info, ipiv, dblk, w, ABR, sid);
+      SkLDL_Supernodes<Algo::Workflow::Serial>::factorize(member, info, ipiv, dblk, w, ABR, sid, pivot);
 
       /// assembly is same
       CholSupernodes<Algo::Workflow::Serial>::update(member, info, ABR, sid, bufsize - ABR.span() * sizeof(value_type),
@@ -417,6 +327,51 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       }
     }
     return 0;
+  }
+
+  template <typename MemberType, typename SupernodeInfoType>
+  KOKKOS_INLINE_FUNCTION static int
+  get_pf_recursive_serial(MemberType &member, const SupernodeInfoType &info,
+                          typename SupernodeInfoType::value_type_array::pointer_type diag,
+                          const ordinal_type sid, const bool final) {
+    using supernode_info_type = SupernodeInfoType;
+    using value_type = typename supernode_info_type::value_type;
+    using value_type_matrix = typename supernode_info_type::value_type_matrix;
+    using value_type_array = typename supernode_info_type::value_type_array;
+    using ordinal_type_array = typename supernode_info_type::ordinal_type_array;
+    using arith_traits = Tacho::ArithTraits<value_type>;
+
+    int pf = 1;
+    const auto &s = info.supernodes(sid);
+    if (final) {
+      // serial recursion
+      for (ordinal_type i = 0; i < s.nchildren; ++i) {
+        int pf_i = get_pf_recursive_serial(member, info, diag, s.children[i], final);
+        pf *= pf_i;
+        //printf( " => %d (%d / %d)\n",pf,i,s.nchildren );
+      }
+    }
+    {
+      //printf( "\n > get_pf_recursive_serial (sid = %d, num_childs = %d) <\n",sid,s.nchildren );
+      const ordinal_type m = s.m;
+      const ordinal_type rbeg = s.row_begin;
+
+      // from det(T)
+      //printf( "  pf = %d ",pf );
+      UnmanagedViewType<value_type_matrix> dblk(diag + rbeg * 2, m, 2); // input
+      for (ordinal_type i = 1; i < m; i+=2) {
+        if (arith_traits::real(dblk(i,0)) < 0.0) {
+          pf *= -1;
+        }
+      }
+      //printf(" -> %d ",pf );
+      // from det(P)
+      if (s.npivots >= 0) {
+        pf *= pow(-1,s.npivots);
+      }
+      //printf(" x -1^(%d) -> %d (%d)\n",s.npivots,pf,sid );
+    }
+    return pf;
   }
 };
 } // namespace Tacho

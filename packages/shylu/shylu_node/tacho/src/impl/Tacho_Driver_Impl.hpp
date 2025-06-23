@@ -34,7 +34,7 @@ Driver<VT, DT>::Driver()
       #else
       _variant(-1), // sequential by default
       #endif
-      _nstreams(16), _pivot_tol(0.0),
+      _nstreams(16), _pivot_tol(0.0), _pivot(true),
 #if defined(KOKKOS_ENABLE_HIP)
       _store_transpose(true)
 #else
@@ -179,6 +179,10 @@ template <typename VT, typename DT> void Driver<VT, DT>::setLevelSetOptionAlgori
 
 template <typename VT, typename DT> void Driver<VT, DT>::setLevelSetOptionNumStreams(const ordinal_type nstreams) {
   _nstreams = nstreams;
+}
+
+template <typename VT, typename DT> void Driver<VT, DT>::doLocalPivot(const bool pivot) {
+  _pivot = pivot;
 }
 
 template <typename VT, typename DT> void Driver<VT, DT>::setPivotTolerance(const mag_type pivot_tol) {
@@ -423,7 +427,7 @@ template <typename VT, typename DT> int Driver<VT, DT>::factorize(const value_ty
     factorize_small_host(ax);
   } else {
     _N->scaleMatrix(_scale_mat, _d);
-    _N->factorize(ax, _store_transpose, _pivot_tol, _verbose);
+    _N->factorize(ax, _store_transpose, _pivot_tol, _pivot, _verbose);
   }
   return 0;
 }
@@ -620,6 +624,44 @@ int Driver<VT, DT>::diag(const value_type_array &d) {
   if (_m <= _small_problem_thres) {
   } else {
     _N->diag(d);
+  }
+  return 0;
+}
+
+template <typename VT, typename DT>
+int Driver<VT, DT>::pfaffian() {
+  TACHO_TEST_FOR_EXCEPTION(_method != SkewLDL, std::runtime_error, "Pfaffian valid only for Skew LDL.");
+  if (_verbose) {
+    switch (_method) {
+    case Cholesky: {
+      printf("TachoSolver: Pfaffian Cholesky\n");
+      printf("==============================\n");
+      break;
+    }
+    case LDL: {
+      printf("TachoSolver: Pfaffian LDL\n");
+      printf("=========================\n");
+      break;
+    }
+    case SymLU: {
+      printf("TachoSolver: Pfaffian SymLU\n");
+      printf("===========================\n");
+      break;
+    }
+    case SkewLDL: {
+      printf("TachoSolver: Pfaffian SkewLDL\n");
+      printf("=============================\n");
+      break;
+    }
+    }
+  }
+
+  if (_m <= _small_problem_thres) {
+  } else {
+    int pf =  _N->pfaffian();
+    int pf_match = pow(-1, _num_sweeps);
+    printf( " > pf = %d * %d = %d (%d)\n",pf,pf_match,pf*pf_match, _num_sweeps );
+    return pf * pf_match;
   }
   return 0;
 }

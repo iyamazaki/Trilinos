@@ -25,7 +25,7 @@ namespace Tacho {
 template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
   template <typename MemberType, typename ViewTypeA, typename ViewTypeP, typename ViewTypeW>
   KOKKOS_INLINE_FUNCTION static int invoke(MemberType &member, const ViewTypeA &A, const ViewTypeP &P,
-                                           const ViewTypeW &W) {
+                                           const ViewTypeW &W, int &npivots) {
     typedef typename ViewTypeA::non_const_value_type value_type;
     using range_type = Kokkos::pair<ordinal_type, ordinal_type>;
     const value_type one(1), minus_one(-1), zero(0);
@@ -39,17 +39,18 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
     int r_val(0);
     const ordinal_type m = A.extent(0);
 
+    bool pivot = (npivots == 0);
     if (m > 0) {
       /// factorize LDL
       // TODO: move this to symbolic init
       Kokkos::View<value_type **, Kokkos::LayoutLeft, typename ViewTypeA::execution_space> Wk("WK",m,2);
 
-      //printf( "\n SkLDL_Internal(m = %d)\n",m );
+      //printf( "\n SkLDL_Internal(m = %d, %s)\n",m,(pivot ? "pivot" : "no pivot"));
       //if (m == 8) 
       /*{
         printf( "\n A=[\n" );
         for (int i=0; i<m; i++) {
-          for (int j=0; j<m; j++) printf("%e ",A(i,j));
+          for (int j=0; j<m; j++) printf("%.16e ",A(i,j));
           printf("\n");
         }
         printf( "];\n" );
@@ -115,7 +116,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           P(j) = P(j+1) = -(j+2);
           ordinal_type mj = m-j;
           //printf( "\n === j = %d (mj = %d) ===\n",j,mj );
-          if (false) // on/off pivot
+          if (pivot) // on/off pivot
           {
             for (ordinal_type k=3; k<mj; k+=2) {
               if (abs(piv) < abs(Aj(k,0))) {
@@ -133,16 +134,16 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
             P(j) = P(j+1) = -(j+2);
           }
           if (piv == zero) {
-            if (false ) {
+            if (false) {
               piv = Aj(1,0) = arith_traits::epsilon();
               P(j) = P(j+1) = -(j+2);
-	    } else {
+            } else {
               TACHO_TEST_FOR_ABORT(true, ">> zero pivot during Skewed LDLt.");
             }
           }
           if (P(j) != -(j+2)) {
             // pivot id
-	    //printf( " pivot : %d -> %d (%e -> %e)\n",j+1,-P(j)-1,Aj(1,0),piv );
+            //printf( " pivot : %d -> %d (%e -> %e)\n",j+1,-P(j)-1,Aj(1,0),piv );
             ordinal_type j2 = -P(j)-1;
 
             // row-swap (only to this and remaining columns)
@@ -158,8 +159,9 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
               A(k, j+1) = A(k, j2);
               A(k, j2)  = val;
             }
+            npivots ++;
           }
-	  //printf( " > PIVOT = %e\n",piv );
+          //printf( " > PIVOT = %e\n",piv );
 
           // -----------------------------------
           // 2) scale with 2-by-2 pivot
@@ -285,6 +287,13 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
         }
         for (ordinal_type i = 0; i < m; ++i)
           peri[perm[i]] = i;
+        /*{
+          bool pivoted = false;
+          printf("perm=[\n");
+          for (ordinal_type i = 0; i < m; ++i) { printf("%d %d\n",perm[i],peri[i]); if (perm[i] != i) pivoted = true; }
+          printf("];\n");
+          if (pivoted) printf( " WARNING PIVOTED\n" );
+        }*/
       }
     } else {
       TACHO_TEST_FOR_ABORT(true, ">> This function is only allowed in host space.");

@@ -36,7 +36,8 @@ typedef enum
     MODE_CLEANUP, //3
     MODE_OPTION,  //4
     MODE_DIAG,    //5
-    MODE_ERROR    //6
+    MODE_ERROR,   //6
+    MODE_PFAFFIAN //7
   } MODE_TYPE;
 
 
@@ -56,6 +57,7 @@ class TachoSystem
   int factor(const mxArray* mx);
   mxArray* solve(const mxArray* mx);
   mxArray* diag();
+  int pfaffian();
 
   bool verbose() { return _verbose; };
  private:
