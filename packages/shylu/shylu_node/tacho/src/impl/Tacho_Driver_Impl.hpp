@@ -634,7 +634,7 @@ int Driver<VT, DT>::pfaffian() {
   } else {
     int pf =  _N->pfaffian();
     int pf_match = pow(-1, _num_sweeps);
-    printf( " > pf = %d * %d = %d (%d)\n",pf,pf_match,pf*pf_match, _num_sweeps );
+    //printf( " > pf = %d * %d = %d (%d)\n",pf,pf_match,pf*pf_match, _num_sweeps );
     return pf * pf_match;
   }
   return 0;

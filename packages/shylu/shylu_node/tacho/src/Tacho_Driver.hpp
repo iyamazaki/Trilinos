@@ -601,26 +601,48 @@ public:
           size_type_array_host match_odd("match_odd",m/2);
           if (do_mwm) {
 #if defined(TACHO_HAVE_SUPERLUDIST)
+            using int_type_array_host = Kokkos::View<int    *, host_device_type>;
+            using dbl_type_array_host = Kokkos::View<double *, host_device_type>;
+
             int liw, ldw;
-            int *iw;
             int icntl[10], info[10];
-            //int job = 4; // job = 4 seems to do better than 1, 2, or 3
-            int job = 5; // job = 5 with scaling seems to do the best
-            double *dw;
-            double *nzval_abs;
+            /* Possible values for JOB are: */
+            /*   1 Compute a column permutation of the matrix so that the */
+            /*     permuted matrix has as many entries on its diagonal as possible. */
+            /*     The values on the diagonal are of arbitrary size. HSL subroutine */
+            /*     MC21A/AD is used for this. See [1]. */
+            /*   2 Compute a column permutation of the matrix so that the smallest */
+            /*     value on the diagonal of the permuted matrix is maximized. */
+            /*     See [3]. */
+            /*   3 Compute a column permutation of the matrix so that the smallest */
+            /*     value on the diagonal of the permuted matrix is maximized. */
+            /*     The algorithm differs from the one used for JOB = 2 and may */
+            /*     have quite a different performance. See [2]. */
+            /*   4 Compute a column permutation of the matrix so that the sum */
+            /*     of the diagonal entries of the permuted matrix is maximized. */
+            /*     See [3]. */
+            /*   5 Compute a column permutation of the matrix so that the product */
+            /*     of the diagonal entries of the permuted matrix is maximized */
+            /*     and vectors to scale the matrix so that the nonzero diagonal */
+            /*     entries of the permuted matrix are one in absolute value and */
+            /*     all the off-diagonal entries are less than or equal to one in */
+            /*     absolute value. See [3]. */
+            //int job = 4; // job = 4 seems to do best
+            int job = 5; // job = 5 with scaling may do better
+            int scaling_option = 3; // 2 seems to do the best
             int n = m/2;
 
             liw = 5*n;
             if(job == 3) 
               { liw = 10*n + n; }
-            iw = (int*) malloc(liw*sizeof(int));
             ldw = 3*n+nnz;
-            dw = (double*) malloc(ldw*sizeof(double));
+            int_type_array_host iw("iw", liw);
+            dbl_type_array_host dw("dw", ldw);
 
             // Abs nzvals
-            nzval_abs = (double*)malloc(nnz*sizeof(double));
+            dbl_type_array_host nzval_abs("nzval_abs", nnz);
             for(int i = 0; i < h_ap_odd(n); ++i)
-              nzval_abs[i] = abs(h_av_odd(i));
+              nzval_abs(i) = abs(h_av_odd(i));
 
             //Convert to 1 formatting
             for(int i = 0; i < h_ap_odd(n); ++i)
@@ -630,16 +652,15 @@ public:
 
             printf( "   > calling SuperLU_DIST MC64(job = %d) \n",job ); fflush(stdout);
             mc64id_dist(icntl);
-            mc64ad_dist(&job, &n, &nnz, h_ap_odd.data(), h_aj_odd.data(), nzval_abs,
-                        &num_match, match_odd.data(), &liw, iw, &ldw, dw, icntl, info);
+            mc64ad_dist(&job, &n, &nnz, h_ap_odd.data(), h_aj_odd.data(), nzval_abs.data(),
+                        &num_match, match_odd.data(), &liw, iw.data(), &ldw, dw.data(), icntl, info);
 
             if (job == 5) {
+              printf( "   > using (scaling option = %d) \n",scaling_option ); fflush(stdout);
               Kokkos::resize(_d, m);
-              //printf("k=[\n");
               for (int i = 0; i < n; ++i) {
-                double r = exp(dw[n+i]);
-                double c = exp(dw[i]);
-                int scaling_option = 2;
+                double r = exp(dw(n+i));
+                double c = exp(dw(i));
                 if (scaling_option == 1) {
                     _d(2*i)   = r;
                     _d(2*i+1) = c;
@@ -651,9 +672,7 @@ public:
                     _d(2*i+1) = 1.0;
                 }
                 //_d(2*i+1) = _d(2*i) = 1.0;
-                //printf("%e %e\n",dw[n+i],dw[i],r,c);
               }
-              //printf("];\n"); fflush(stdout);
               _scale_mat = true;
             }
 
@@ -664,10 +683,6 @@ public:
             { h_aj_odd(i) = h_aj_odd(i)-1; }
             for(int i=0; i < n; ++i)
             { match_odd(i) = match_odd(i)-1; }
-
-            free(nzval_abs);
-            free(iw);
-            free(dw);
 #else
             printf( "   > calling ShyLU-Basker MWM\n" );
             int rval = mwm(m/2, nnz, h_ap_odd.data(), h_aj_odd.data(), h_av_odd.data(), match_odd.data(), num_match);
@@ -720,34 +735,34 @@ public:
             }
             h_imatch(abs(h_match(i))) = i;
           }
-	  {
+          {
             size_type_array_host visited("visited", m/2);
             for (int i=1; i<m/2; i++) visited(i) = 0;
             for (int i=1; i<m; i+=2) {
               int i1 = (i-1)/2;
-	      if (visited(i1) == 0) {
+              if (visited(i1) == 0) {
                 visited(i1) = 1;
 
-		// follow the chain
+                // follow the chain
                 int j = h_match(i);
                 int i2 = (j-1)/2;
-	        while (i1 != i2) {
+                while (i1 != i2) {
                   num_sweeps ++;
                   visited(i2) = 1;
 
                   j = h_match(j);
                   i2 = (j-1)/2;
-	        }
-	      }
-	    }
-	  }
-	  printf( " num_sweeps = %d / %d\n",num_sweeps,m/2 );
+                }
+              }
+            }
+          }
+          //printf( " num_sweeps = %d / %d\n",num_sweeps,m/2 );
           /*{
             printf("q=[\n");
             for (int i=0; i<m; i++) printf("%d %d\n",i,h_match(i));
             printf("];\n"); fflush(stdout);
-	  }*/
-	  /*{
+          }*/
+          /*{
             if (_d.extent(0) == m) {
               printf("d=[\n");
               for (int i=0; i<m; i++) printf("%d %e\n",i,_d(i));

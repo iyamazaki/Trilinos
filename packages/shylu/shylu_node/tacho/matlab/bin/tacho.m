@@ -47,10 +47,10 @@ function varargout = tacho(varargin)
 
 if(strcmp(varargin{1},'setup')),
     % Setup mode = 0
-    tachoMex(0, varargin{2:nargin});
+    varargout{1} = tachoMex(0, varargin{2:nargin});
 elseif(strcmp(varargin{1}, 'factor')),
     % Factor mode = 1
-    tachoMex(1, varargin{2:nargin});
+    varargout{1} = tachoMex(1, varargin{2:nargin});
 elseif(strcmp(varargin{1}, 'solve')),
     % Solve mode = 2
     varargout{1} = tachoMex(2, varargin{2:nargin});
