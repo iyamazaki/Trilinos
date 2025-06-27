@@ -70,6 +70,7 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
     const ordinal_type m = s.m, n = s.n - s.m;
 
     // m and n are available, then factorize the supernode block
+    int rval = 0;
     int npivots = (pivot ? 0 : -1);
     if (m > 0) {
       /// LDL factorize ATL, extract diag, symmetrize ATL with unit diagonals
@@ -77,7 +78,6 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       ptr += m * m;
 
       SkSymmetrize<Uplo::Upper, Algo::Internal>::invoke(member, ATL);
-
       SkLDL<Uplo::Lower, Algo::Internal>::invoke(member, ATL, P, W, npivots);
       /*printf( " > L = [\n" );
       for (int i=0; i < m; i++) {
@@ -138,7 +138,7 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
     }
     s.npivots = npivots;
 
-    return 0;
+    return rval;
   }
 
   template <typename MemberType, typename SupernodeInfoType>

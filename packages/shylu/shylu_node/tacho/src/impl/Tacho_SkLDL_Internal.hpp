@@ -34,7 +34,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
     static_assert(ViewTypeP::rank == 1, "P is not rank 1 view.");
     static_assert(ViewTypeW::rank == 1, "W is not rank 1 view.");
 
-    TACHO_TEST_FOR_ABORT(P.extent(0) < 4 * A.extent(0), "P should be 4*A.extent(0) .");
+    TACHO_TEST_FOR_EXCEPTION(P.extent(0) < 4 * A.extent(0), std::logic_error, "P should be 4*A.extent(0) .");
 
     int r_val(0);
     const ordinal_type m = A.extent(0);
@@ -85,7 +85,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           value_type piv = Aj(1,0);
           P(j) = P(j+1) = -(j+2);
           if (piv == zero) {
-            TACHO_TEST_FOR_ABORT(true, ">> zero pivot during Skewed LDLt.");
+            TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, ">> zero pivot during Skewed LDLt.");
           }
 
           // -----------------------------------
@@ -138,7 +138,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
               piv = Aj(1,0) = arith_traits::epsilon();
               P(j) = P(j+1) = -(j+2);
             } else {
-              TACHO_TEST_FOR_ABORT(true, ">> zero pivot during Skewed LDLt.");
+	      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, ">> zero pivot during Skewed LDLt.");
             }
           }
           if (P(j) != -(j+2)) {
@@ -296,7 +296,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
         }*/
       }
     } else {
-      TACHO_TEST_FOR_ABORT(true, ">> This function is only allowed in host space.");
+      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, ">> This function is only allowed in host space.");
     }
     return r_val;
   }

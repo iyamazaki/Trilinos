@@ -10,15 +10,7 @@
 
 #include "tachoMex.h"
 
-#define IS_FALSE 0
-#define IS_TRUE 1
-#define MUEMEX_ERROR -1
-
 extern void _main();
-
-/* MUEMEX Teuchos Parameters*/
-#define MUEMEX_INTERFACE "Linear Algebra"
-
 
 namespace Tacho {
 
@@ -76,7 +68,7 @@ int TachoSystem<Scalar>::option(const mxArray** mx) {
     if (_verbose) printf( " > option(scale-mat = true)\n" );
     _scale_mat = true;
   }
-  return IS_TRUE;
+  return 0;
 }
 
 
@@ -100,9 +92,9 @@ int TachoSystem<Scalar>::setup(const mxArray* mx) {
   } catch (std::exception& e) {
     std::cout << "An error occurred during TachoMex setup:" << std::endl;
     std::cout << e.what() << std::endl;
-    return IS_FALSE;
+    return -1;
   }
-  return IS_TRUE;
+  return 0;
 }
 
 
@@ -117,9 +109,9 @@ int TachoSystem<Scalar>::factor(const mxArray* mx) {
   } catch (std::exception& e) {
     std::cout << "An error occurred during TachoMex setup:" << std::endl;
     std::cout << e.what() << std::endl;
-    return IS_FALSE;
+    return -1;
   }
-  return IS_TRUE;
+  return 0;
 }
 
 
@@ -260,89 +252,90 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     char** argv = NULL;
     Kokkos::initialize(argc, argv);
   }
-  int rv;
+  int rv = -1;
   /* Sanity Check Input */
   MODE_TYPE  mode = sanity_check(nrhs, prhs);
 
   switch (mode) {
     case MODE_SETUP: {
+      if (dp.verbose()) printf( " -- Setup --\n" );
       try {
-        if (dp.verbose()) printf( " -- Setup --\n" );
-        rv =  dp.setup(prhs[1]);
-	if (nlhs > 0) {
-          plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
-          *((int*)mxGetData(plhs[0])) = rv;
-	}
-        if (dp.verbose()) printf( " -- Setup done --\n" );
-        mexLock();
-        if (dp.verbose()) printf( " -- Locked --\n\n" );
+        rv = dp.setup(prhs[1]);
       } catch (std::exception& e) {
         mexPrintf("An error occurred during setup routine:\n");
         std::cout << e.what() << std::endl;
       }
+      if (nlhs > 0) {
+        plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
+        *((int*)mxGetData(plhs[0])) = rv;
+      }
+      if (dp.verbose()) printf( " -- Setup done (rval = %d, nlhs = %d) --\n",rv,nlhs );
+      mexLock();
       break;
     }
     case MODE_FACTOR: {
+      if (dp.verbose()) printf( " -- Factor --\n" );
       try {
-        if (dp.verbose()) printf( " -- Factor --\n" );
         rv =  dp.factor(prhs[1]);
-	if (nlhs > 0) {
-          plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
-          *((int*)mxGetData(plhs[0])) = rv;
-	}
-        if (dp.verbose()) printf( " -- Factor done --\n" );
       } catch (std::exception& e) {
         mexPrintf("An error occurred during factor routine:\n");
         std::cout << e.what() << std::endl;
       }
+      if (nlhs > 0) {
+        plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
+        *((int*)mxGetData(plhs[0])) = rv;
+      }
+      if (dp.verbose()) printf( " -- Factor done --\n" );
       break;
     }
     case MODE_SOLVE: {
+      if (dp.verbose()) printf( " -- Solve --\n" );
       try {
         // get pointer to MATLAB array that will be "B" or "rhs" multivector
-        if (dp.verbose()) printf( " -- Solve --\n" );
         mxArray* output = dp.solve(prhs[1]);
-	if (nlhs > 0) {
+        if (nlhs > 0) {
           if (dp.verbose()) printf( " > return x\n" );
           plhs[0] = output;
-	}
-        if (dp.verbose()) printf( " -- Solve done! --\n\n" );
+        }
       } catch (std::exception& e) {
         mexPrintf("An error occurred during the solve routine:\n");
         std::cout << e.what() << std::endl;
       }
+      if (dp.verbose()) printf( " -- Solve done! --\n\n" );
       break;
     }
     case MODE_DIAG: {
+      if (dp.verbose()) printf( " -- Diag --\n" );
       try {
         // get pointer to MATLAB array that will be "B" or "rhs" multivector
-        if (dp.verbose()) printf( " -- Diag --\n" );
         mxArray* output = dp.diag();
-	if (nlhs > 0) {
+        if (nlhs > 0) {
           if (dp.verbose()) printf( " > return d\n" );
           plhs[0] = output;
-	}
-        if (dp.verbose()) printf( " -- Dian done! --\n\n" );
+        }
       } catch (std::exception& e) {
         mexPrintf("An error occurred during the solve routine:\n");
         std::cout << e.what() << std::endl;
       }
+      if (dp.verbose()) printf( " -- Dian done! --\n\n" );
       break;
     }
     case MODE_PFAFFIAN: {
+      int pf = 0;
+      if (dp.verbose()) printf( " -- Pfaffian --\n" );
       try {
-        if (dp.verbose()) printf( " -- Pfaffian --\n" );
-        int pf = dp.pfaffian();
-	if (nlhs > 0) {
-          if (dp.verbose()) printf( " > return pf = %d\n",pf );
-          plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
-          *((int*)mxGetData(plhs[0])) = pf;
-	}
-        if (dp.verbose()) printf( " -- Pfaffian done! --\n\n" );
+        pf = dp.pfaffian();
       } catch (std::exception& e) {
+        pf = 0;
         mexPrintf("An error occurred during the solve routine:\n");
         std::cout << e.what() << std::endl;
       }
+      if (nlhs > 0) {
+        if (dp.verbose()) printf( " > return pf = %d\n",pf );
+        plhs[0] = mxCreateNumericMatrix(1, 1, mxINT32_CLASS, mxREAL);
+        *((int*)mxGetData(plhs[0])) = pf;
+      }
+      if (dp.verbose()) printf( " -- Pfaffian done! --\n\n" );
       break;
     }
     case MODE_CLEANUP: {
