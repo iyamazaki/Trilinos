@@ -659,8 +659,8 @@ int Driver<VT, DT>::pfaffian() {
   if (_m <= _small_problem_thres) {
   } else {
     int pf =  _N->pfaffian();
-    int pf_match = pow(-1, _num_sweeps);
-    //printf( " > pf = %d * %d = %d (%d)\n",pf,pf_match,pf*pf_match, _num_sweeps );
+    int pf_match = pow(-1, _num_swaps);
+    //printf( " > pf = %d * %d = %d (%d)\n",pf,pf_match,pf*pf_match, _num_swaps );
     return pf * pf_match;
   }
   return 0;
