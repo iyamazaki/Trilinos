@@ -117,7 +117,7 @@ private:
   mag_type_array_host _d;
 
   // ** matching
-  ordinal_type _num_sweeps;
+  ordinal_type _num_swaps;
 
   // ** fill-reducing perm
   ordinal_type_array _perm;
@@ -260,7 +260,7 @@ public:
               const bool duplicate = false) {
 
     _m = m;
-    _num_sweeps = 0;
+    _num_swaps = 0;
 
     if (duplicate) {
       /// for most cases, ap and aj are from host; so construct ap and aj and mirror to device
@@ -307,7 +307,7 @@ public:
   int analyze(const ordinal_type m, const arg_size_type_array &ap, const arg_ordinal_type_array &aj,
               const arg_perm_type_array &perm, const arg_perm_type_array &peri, const bool duplicate = false) {
     _m = m;
-    _num_sweeps = 0;
+    _num_swaps = 0;
 
     // this takes the user-specified perm, such that analyze() won't call graph partitioner
     if (duplicate) {
@@ -362,7 +362,7 @@ public:
               const ordinal_type m_graph, const arg_size_type_array &ap_graph, const arg_ordinal_type_array &aj_graph,
               const arg_ordinal_type_array &aw_graph, const bool duplicate = false) {
     _m = m;
-    _num_sweeps = 0;
+    _num_swaps = 0;
 
     if (duplicate) {
       /// for most cases, ap and aj are from host; so construct ap and aj and mirror to device
@@ -419,31 +419,31 @@ public:
   template <typename arg_size_type_array, typename arg_ordinal_type_array>
   int analyze(const ordinal_type m, const ordinal_type blk_size,
               const arg_size_type_array &ap, const arg_ordinal_type_array &aj,
-              const bool max_match = false, const bool duplicate = false) {
+              const int max_match = -1, const bool duplicate = false) {
 
     value_type_array av;
-    return analyze(m, blk_size, ap, aj, av, max_match, duplicate);
+    return analyze(m, blk_size, ap, aj, av, max_match, false, duplicate);
   }
 
   template <typename arg_size_type_array, typename arg_ordinal_type_array, typename arg_value_type_array>
   int analyze(const ordinal_type m, const ordinal_type blk_size,
               const arg_size_type_array &ap, const arg_ordinal_type_array &aj, const arg_value_type_array &av,
-              const bool max_match = false, const bool scale_mat = false, const bool duplicate = false) {
+              const int max_match = -1, const bool scale_mat = false, const bool duplicate = false) {
 
-    _num_sweeps = 0;
+    _num_swaps = 0;
 
     int rval = 0;
     Kokkos::Timer timer;
-    printf( "\n >> in analyze (%d%s%s) <<\n",blk_size,(max_match ? ", match" : ""),(scale_mat ? ", scale" : "") ); fflush(stdout);
+    printf( "\n >> in analyze (blk-size=%d, max-match=%d%s) <<\n",blk_size,max_match,(scale_mat ? ", scale" : "") ); fflush(stdout);
     if (blk_size > 1) {
       double t_shrink = 0.0;
       double t_match  = 0.0;
 
       // ** max cardinarity matchng
-      int num_sweeps = 0;
+      int num_swaps = 0;
       ordinal_type_array_host h_match("h_match",0);
       ordinal_type_array_host h_imatch("h_imatch",0);
-      if (max_match) {
+      if (max_match >= 0) {
         _h_ap = Kokkos::create_mirror_view(host_memory_space(), ap);
         _h_aj = Kokkos::create_mirror_view(host_memory_space(), aj);
         auto h_av = Kokkos::create_mirror_view(host_memory_space(), av);
@@ -455,26 +455,6 @@ public:
         bool do_mwm = (av.extent(0) == aj.extent(0));
         printf( "   > using %s\n",(do_mwm ? "max-weight matching" : "max-cardinarity matching") );
         if (do_mwm) {
-          Kokkos::deep_copy(h_av, av);
-          if (scale_mat) {
-            // Find matrix scaling
-            mag_type_array_host d_new("d_new",m);
-            Kokkos::resize(_d, m);
-            Kokkos::deep_copy(_d, mag_type(1.0));
-            for (int itr=0; itr<3; itr++)
-            {
-              for (int i=0; i<m; i++) {
-                d_new(i) = mag_type(0.0);
-                for (int k=_h_ap(i); k<_h_ap(i+1); k++) {
-                  mag_type val = abs(h_av(k)) / (_d(i) * _d(_h_aj(k)));
-                  if (val > d_new(i)) d_new(i) = val;
-                }
-                d_new(i) = sqrt(d_new(i));
-              }
-              for (int i=0; i<m; i++) _d(i) *= d_new(i);
-            }
-            _scale_mat = scale_mat;
-          }
         }
         size_type_array_host iwork("iwork", 5*m);
         {
@@ -491,14 +471,12 @@ public:
                 if (true) {
                   // all odd rows
                   h_aj_odd_upp(nnz) = (_h_aj(k)-1)/2;
-                  if (do_mwm) h_av_odd_upp(nnz) =  h_av(k);
-                  if (scale_mat) h_av_odd_upp(nnz) / (_d(i) * _d(_h_aj(k)));
+                  if (do_mwm) h_av_odd_upp(nnz) = h_av(k);
                   nnz++;
                 } else if (_h_aj(k) > i) {
                   // only upper
                   h_aj_odd_upp(nnz) = (_h_aj(k)-1)/2;
-                  if (do_mwm) h_av_odd_upp(nnz) =  h_av(k);
-                  if (scale_mat) h_av_odd_upp(nnz) / (_d(i) * _d(_h_aj(k)));
+                  if (do_mwm) h_av_odd_upp(nnz) = h_av(k);
                   nnz++;
                 }
               }
@@ -627,10 +605,13 @@ public:
             /*     entries of the permuted matrix are one in absolute value and */
             /*     all the off-diagonal entries are less than or equal to one in */
             /*     absolute value. See [3]. */
-            //int job = 4; // job = 4 seems to do best
-            int job = 5; // job = 5 with scaling may do better
-            int scaling_option = 3; // 2 seems to do the best
+            int job = 4; // job = 4 seems to do best
+            //int job = 5; // job = 5 with scaling may do better
+            int scaling_option = 2; // 2 seems to do the best
             int n = m/2;
+            if (max_match >= 1 && max_match <= 5) {
+              job = max_match;
+            }
 
             liw = 5*n;
             if(job == 3) 
@@ -673,9 +654,31 @@ public:
                 }
                 //_d(2*i+1) = _d(2*i) = 1.0;
               }
+            }
+            if (scale_mat) {
+              // Find matrix scaling
+              mag_type_array_host d_new("d_new",m);
+	      if (job != 5) {
+                Kokkos::resize(_d, m);
+                Kokkos::deep_copy(_d, mag_type(1.0));
+	      }
+              for (int itr=0; itr<3; itr++)
+              {
+                for (int i=0; i<m; i++) {
+                  d_new(i) = mag_type(0.0);
+                  for (int k=_h_ap(i); k<_h_ap(i+1); k++) {
+                    mag_type val = abs(h_av(k)) / (_d(i) * _d(_h_aj(k)));
+                    if (val > d_new(i)) d_new(i) = val;
+                  }
+                  d_new(i) = sqrt(d_new(i));
+                }
+                for (int i=0; i<m; i++) _d(i) *= d_new(i);
+              }
+              _scale_mat = scale_mat;
+            }
+            if (job == 5) {
               _scale_mat = true;
             }
-
             //convert indexing back
             for(int i=0; i <= n; ++i)
             { h_ap_odd(i) = h_ap_odd(i)-1; }
@@ -747,7 +750,8 @@ public:
                 int j = h_match(i);
                 int i2 = (j-1)/2;
                 while (i1 != i2) {
-                  num_sweeps ++;
+                  num_swaps ++;
+		  if (visited(i2) != 0) printf( " %d already visited ?\n" );
                   visited(i2) = 1;
 
                   j = h_match(j);
@@ -756,7 +760,7 @@ public:
               }
             }
           }
-          //printf( " num_sweeps = %d / %d\n",num_sweeps,m/2 );
+          //printf( " num_swaps = %d / %d\n",num_swaps,m/2 );
           /*{
             printf("q=[\n");
             for (int i=0; i<m; i++) printf("%d %d\n",i,h_match(i));
@@ -768,6 +772,8 @@ public:
               for (int i=0; i<m; i++) printf("%d %e\n",i,_d(i));
               printf("];\n"); fflush(stdout);
             }
+	  }*/
+	  /*{}
             //printf("T=[\n");
             //for (int i=0; i<m; i++) {
             //  for (int k=_h_ap(h_match(i)); k<_h_ap(h_match(i)+1); k++) {
@@ -784,7 +790,7 @@ public:
         }
         if (_verbose) {
           printf("===========================\n");
-          printf("  Time for matching (num_match = %d, n = %d)\n",num_match,m/2);
+          printf("  Time for matching (num_match = %d, num_swap = %d, n = %d)\n",num_match,num_swaps,m/2);
           printf("             time to compress: %10.6f s\n", t_shrink);
           printf("             time to match   : %10.6f s\n", t_match);
         }
@@ -822,12 +828,12 @@ public:
             }
           }
           for (ordinal_type i = b; i < b+blk_size; i++) {
-            ordinal_type row = (max_match ? h_match(i) : i);
+            ordinal_type row = (max_match >= 0 ? h_match(i) : i);
             if (row < 0) {
               row = -row;
             }
             for (size_type k = ap(row); k < ap(row+1); k++) {
-              ordinal_type col = (max_match ? h_imatch(aj(k)) : aj(k));
+              ordinal_type col = (max_match >= 0 ? h_imatch(aj(k)) : aj(k));
               size_t bj = col/blk_size;
               if (col_graph(bj) == 0) {
                 aj_graph(nnz_graph) = bj;
@@ -875,8 +881,8 @@ public:
         printf("];\n");
       }*/
       rval = analyze(m, ap, aj, m_graph, ap_graph, aj_graph, aw_graph, duplicate);
-      _num_sweeps = num_sweeps;
-      if (max_match) {
+      _num_swaps = num_swaps;
+      if (max_match >= 0) {
         // * integrate the max-matching into fill-reducing perm
         //printf("perm0=[\n");
         //for (int i=0; i<m; i++) printf("%d %d\n",_h_perm(i),_h_peri(i));

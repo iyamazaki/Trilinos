@@ -62,8 +62,7 @@ class TachoSystem
   bool verbose() { return _verbose; };
  private:
   bool _verbose;
-  bool _max_match;
-  bool _max_weight;
+  int  _max_match;
   bool _scale_mat;
   int _dofs_per_node;
   CrsMatrixBaseTypeHost A;

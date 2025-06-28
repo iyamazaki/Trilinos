@@ -108,17 +108,18 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
         Kokkos::View<value_type **, Kokkos::LayoutLeft, typename ViewTypeA::execution_space> Ak("Ak",m,2);
         for (ordinal_type j=0; j < m; j+=2) {
           // factorize j:j+1 th columns
+          ordinal_type mj = m-j;
           auto Aj = Kokkos::subview(A, range_type(j,m), range_type(j,j+2));   
 
           // -----------------------------------
           // 1) pick 2-by-2 pivot
           value_type piv = Aj(1,0);
           P(j) = P(j+1) = -(j+2);
-          ordinal_type mj = m-j;
           //printf( "\n === j = %d (mj = %d) ===\n",j,mj );
           if (pivot) // on/off pivot
           {
-            for (ordinal_type k=3; k<mj; k+=2) {
+            ordinal_type piv_inc = 2;
+            for (ordinal_type k=3; k<mj; k+=piv_inc) {
               if (abs(piv) < abs(Aj(k,0))) {
                 piv = Aj(k,0);
                 P(j) = P(j+1) = -(j+k+1);
@@ -138,7 +139,7 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
               piv = Aj(1,0) = arith_traits::epsilon();
               P(j) = P(j+1) = -(j+2);
             } else {
-	      TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, ">> zero pivot during Skewed LDLt.");
+              TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, ">> zero pivot during Skewed LDLt.");
             }
           }
           if (P(j) != -(j+2)) {
@@ -163,6 +164,17 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           }
           //printf( " > PIVOT = %e\n",piv );
 
+          auto Up = Kokkos::subview(A, range_type(j,j+2), range_type(j+2,m));
+          auto Lp = Kokkos::subview(A, range_type(j+2,m), range_type(j,j+2));
+          auto Ap = Kokkos::subview(A, range_type(j+2,m), range_type(j+2,m));
+
+          // -----------------------------------
+	  // copy Lp to Up (to enhance symmetry?)
+          for (ordinal_type i=0; i<mj-2; i++) {
+            Up(0,i) = -Lp(i,0);
+            Up(1,i) = -Lp(i,1);
+	  }
+
           // -----------------------------------
           // 2) scale with 2-by-2 pivot
           // 2.1) jth column
@@ -181,9 +193,6 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           if (j < m-2) {
             // -----------------------------------
             // 3) update using previous columns : A(j+2:end, j+1:end) - L(j+2:end, j:j+2) * T(j:j+2, j:j+2) * L(j+2:end, j:j+2)'
-            auto Up = Kokkos::subview(A, range_type(j,j+2), range_type(j+2,m));   
-            auto Lp = Kokkos::subview(A, range_type(j+2,m), range_type(j,j+2));   
-            auto Ap = Kokkos::subview(A, range_type(j+2,m), range_type(j+2,m));   
             Blas<value_type>::gemm('N','N',mj-2, mj-2, 2,
                                     minus_one, Lp.data(), Lp.stride_1(),
                                                Up.data(), Up.stride_1(),
@@ -192,12 +201,12 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
 
           // ------------------------------------------------------------
           // expand to upper (after original used for right-look update)
-          for (ordinal_type k=j+1; k<m; k++) {
-            A(j, k) = -A(k, j);
-          }
-          for (ordinal_type k=j+2; k<m; k++) {
-            A(j+1, k) = -A(k, j+1);
-          }
+          //for (ordinal_type k=j+1; k<m; k++) {
+          //  A(j, k) = -A(k, j);
+          //}
+          //for (ordinal_type k=j+2; k<m; k++) {
+          //  A(j+1, k) = -A(k, j+1);
+          //}
         }
       }
     }
@@ -290,7 +299,10 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
         /*{
           bool pivoted = false;
           printf("perm=[\n");
-          for (ordinal_type i = 0; i < m; ++i) { printf("%d %d\n",perm[i],peri[i]); if (perm[i] != i) pivoted = true; }
+          for (ordinal_type i = 0; i < m; ++i) {
+            printf("%d %d %d %d %d\n",i,perm[i],peri[i],(perm[i] == i ? 0 : 1),(pivoted ? 0 : 1));
+            if (perm[i] != i) pivoted = true;
+          }
           printf("];\n");
           if (pivoted) printf( " WARNING PIVOTED\n" );
         }*/

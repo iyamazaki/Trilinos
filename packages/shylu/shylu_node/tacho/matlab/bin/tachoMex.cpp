@@ -18,8 +18,7 @@ template <>
 TachoSystem<double>::TachoSystem() :
  _verbose(false),
  _dofs_per_node(1),
- _max_match(false),
- _max_weight(false),
+ _max_match(-1),
  _scale_mat(false)
 {}
 template <>
@@ -60,10 +59,10 @@ int TachoSystem<Scalar>::option(const mxArray** mx) {
     solver.setSmallProblemThresholdsize(small_problem_thres);
   } else if (option_name == "max-match") {
     if (_verbose) printf( " > option(max-match = true)\n" );
-    _max_match = true;
+    _max_match = 0;
   } else if (option_name == "max-weight") {
-    if (_verbose) printf( " > option(max-weight = true)\n" );
-    _max_weight = true;
+    _max_match = loadDataFromMatlab<int>(mx[1]);
+    if (_verbose) printf( " > option(max-weight = %d)\n",_max_match );
   } else if (option_name == "scale-mat") {
     if (_verbose) printf( " > option(scale-mat = true)\n" );
     _scale_mat = true;
@@ -77,12 +76,13 @@ template <typename Scalar>
 int TachoSystem<Scalar>::setup(const mxArray* mx) {
   loadMatrixFromMatlab<double, host_device_type>(mx, A);
   try {
-    if (_verbose) printf( " solver.analyze(%d%s%s)\n",_dofs_per_node,(_max_match ? ", max-match" : ""),(_max_weight ? ", max-weight" : "") );
+    if (_verbose) printf( " solver.analyze(%d%s%s)\n",_dofs_per_node,(_max_match >= 0 ? ", max-match" : ""),(_max_match > 0 ? ", max-weight" : "") );
     if (_dofs_per_node > 1) {
-      if (_max_weight)
-        solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols(), A.Values(), true, _scale_mat);
-      else
+      if (_max_match > 0) {
+        solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols(), A.Values(), _max_match, _scale_mat);
+      } else {
         solver.analyze(A.NumRows(), _dofs_per_node, A.RowPtr(), A.Cols(), _max_match);
+      }
     } else {
       solver.analyze(A.NumRows(), A.RowPtr(), A.Cols());
     }
