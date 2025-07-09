@@ -77,7 +77,7 @@ ShyLUBasker<Matrix,Vector>::ShyLUBasker(
 #else
   num_threads = Kokkos::OpenMP::impl_max_hardware_threads();
 #endif
-
+  ShyLUbasker->Options.worker_threads = BASKER_FALSE;
 #else
  TEUCHOS_TEST_FOR_EXCEPTION(1 != 0,
      std::runtime_error,
@@ -124,6 +124,10 @@ ShyLUBasker<Matrix,Vector>::symbolicFactorization_impl()
   int info = 0;
   if(this->root_)
   {
+    if (ShyLUbasker->Options.worker_threads) {
+      // keep one worker-thread / subdomain (where originally subdomain = num_threads)
+      num_threads /= 2;
+    }
     ShyLUbasker->SetThreads(num_threads); 
 
 
@@ -589,6 +593,11 @@ ShyLUBasker<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::Param
     {
       ShyLUbasker->Options.min_block_size = parameterList->get<int>("min_block_size");
     }
+
+  if(parameterList->isParameter("worker_threads"))
+    {
+      ShyLUbasker->Options.worker_threads = parameterList->get<bool>("worker_threads");
+    }
 }
 
 template <class Matrix, class Vector>
@@ -658,6 +667,8 @@ ShyLUBasker<Matrix,Vector>::getValidParameters_impl() const
               "Use sequential algorithm to factor each diagonal block");
       pl->set("user_fill", (double)BASKER_FILL_USER,
               "User-provided padding for the fill ratio");
+      pl->set("worker_threads", false,
+              "Use worker thread for ND");
       valid_params = pl;
     }
   return valid_params;
