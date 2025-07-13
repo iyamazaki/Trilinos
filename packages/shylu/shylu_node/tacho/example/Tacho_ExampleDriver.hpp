@@ -36,9 +36,8 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   bool verbose = false;
   bool sanitize = false;
   bool duplicate = false;
-  bool max_match = false;
+  int  max_match = -1;
   bool scale_mat = false;
-  bool do_mwm = false;
   std::string file = "test.mtx";
   std::string rhs_file = "";
   std::string graph_file = "";
@@ -50,6 +49,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   bool storeTranspose = false;
 #endif
   bool perturbPivot = false;
+  bool noLocalPivot = false;
   int nrhs = 1;
   bool randomRHS = false;
   bool onesRHS = false;
@@ -70,8 +70,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   opts.set_option<bool>("verbose", "Flag for verbose printing", &verbose);
   opts.set_option<bool>("sanitize", "Flag to sanitize input matrix (remove zeros)", &sanitize);
   opts.set_option<bool>("duplicate", "Flag to duplicate input graph in the solver", &duplicate);
-  opts.set_option<bool>("max-match", "Flag to apply max cardinarity matching", &max_match);
-  opts.set_option<bool>("max-weight", "Flag to apply max weight matching", &do_mwm);
+  opts.set_option<int>("max-match", "Flag to apply max cardinarity matching (0: cardinarity, >0: job for weighted)", &max_match);
   opts.set_option<bool>("scale-mat", "Flag to apply matrix scaling", &scale_mat);
   opts.set_option<std::string>("file", "Input file (MatrixMarket SPD matrix)", &file);
   opts.set_option<std::string>("rhs", "Input RHS file", &rhs_file);
@@ -80,6 +79,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
   opts.set_option<int>("dofs-per-node", "# DoFs per node", &dofs_per_node);
   opts.set_option<bool>("store-trans", "Flag to store transpose", &storeTranspose);
   opts.set_option<bool>("perturb", "Flag to perturb tiny pivots", &perturbPivot);
+  opts.set_option<bool>("no-local-pivot", "Flag to turn off local pivots", &noLocalPivot);
   opts.set_option<int>("nrhs", "Number of RHS vectors", &nrhs);
   opts.set_option<std::string>("method", "Solution method: chol, ldl, lu", &method_name);
   opts.set_option<int>("small-problem-thres", "LAPACK is used smaller than this thres", &small_problem_thres);
@@ -213,6 +213,13 @@ template <typename value_type> int driver(int argc, char *argv[]) {
       if (verbose) std::cout << " > perturb tiny pivots" << std::endl;
       solver.useDefaultPivotTolerance();
     }
+    if (method_name == "skew") {
+      if (verbose) {
+        if (noLocalPivot) std::cout << " > no local pivot" << std::endl;
+        else              std::cout << " > local pivot" << std::endl;
+      }
+      solver.doLocalPivot(!noLocalPivot);
+    }
     solver.storeExplicitTranspose(storeTranspose);
     if (verbose) {
       if (storeTranspose) {
@@ -225,6 +232,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
     Kokkos::deep_copy(values_on_device, A.Values());
 
     /// inputs are used for graph reordering and analysis
+    Kokkos::Timer timer;
     {
 #ifdef TACHO_HAVE_TEUCHOS
       Teuchos::TimeMonitor localTimer(*Teuchos::TimeMonitor::getNewTimer("Analyze"));
@@ -233,19 +241,18 @@ template <typename value_type> int driver(int argc, char *argv[]) {
         solver.analyze(A.NumRows(), A.RowPtr(), A.Cols(), m_graph, ap_graph, aj_graph, aw_graph);
       } else if (dofs_per_node > 1) {
         if (verbose) std::cout << " > DoFs / node = " << dofs_per_node << std::endl;
-        solver.analyze(A.NumRows(), dofs_per_node, A.RowPtr(), A.Cols(), max_match);
-        if (do_mwm) {
-          solver.analyze(A.NumRows(), dofs_per_node, A.RowPtr(), A.Cols(), A.Values(), true, scale_mat);
+        if (max_match > 0) {
+          solver.analyze(A.NumRows(), dofs_per_node, A.RowPtr(), A.Cols(), A.Values(), max_match, scale_mat, duplicate);
         } else {
-          solver.analyze(A.NumRows(), dofs_per_node, A.RowPtr(), A.Cols(), max_match);
+          solver.analyze(A.NumRows(), dofs_per_node, A.RowPtr(), A.Cols(), max_match, duplicate);
         }
       } else {
         solver.analyze(A.NumRows(), A.RowPtr(), A.Cols());
       }
     }
+    double analy_time = timer.seconds();
 
     /// create numeric tools and levelset tools
-    Kokkos::Timer timer;
 #ifdef TACHO_HAVE_TEUCHOS
     {
       Teuchos::TimeMonitor localTimer(*Teuchos::TimeMonitor::getNewTimer("Initialize"));
@@ -278,6 +285,8 @@ template <typename value_type> int driver(int argc, char *argv[]) {
         x("x", A.NumRows(), nrhs),                  // solution multivector
         t("t", A.NumRows(), nrhs);                  // temp workspace (store permuted rhs)
 
+    const value_type zero(0.0);
+    const value_type one (1.0);
     {
       if (rhs_file.length() > 0) {
         if(Tacho::MatrixMarket<value_type>::readDenseVectors(rhs_file, b, verbose) != 0) {
@@ -285,7 +294,6 @@ template <typename value_type> int driver(int argc, char *argv[]) {
         }
       } else if (onesRHS) {
         if (verbose) std::cout << std::endl << " > RHS = ones" << std::endl << std::endl;
-        const value_type one(1.0);
         Kokkos::deep_copy (b, one);
       } else if (randomRHS) {
         if (verbose) std::cout << std::endl << " > RHS = rands" << std::endl << std::endl;
@@ -298,6 +306,7 @@ template <typename value_type> int driver(int argc, char *argv[]) {
         solver.computeSpMV(values_on_device, x, b);
       }
     }
+    Kokkos::deep_copy (x, zero);
 
     bool success = true;
     mag_type tol = sqrt(arith_traits::epsilon()); // loose accuracy tol..
@@ -358,10 +367,11 @@ template <typename value_type> int driver(int argc, char *argv[]) {
       stackedTimer->report(std::cout, comm, options);
     }
 #else
-    std::cout << " Initi Time " << initi_time << std::endl;
+    std::cout << " Analyize   Time " << initi_time << std::endl;
+    std::cout << " Initialize Time " << initi_time << std::endl;
     std::cout << " > nnz = " << solver.getNumNonZerosU() << std::endl;
-    std::cout << " Facto Time " << facto_time / (double)nfacts << std::endl;
-    std::cout << " Solve Time " << solve_time / (double)nsolves << std::endl;
+    std::cout << " Factoorize Time " << facto_time / (double)nfacts << std::endl;
+    std::cout << " Solve      Time " << solve_time / (double)nsolves << std::endl;
 #endif
     std::cout << std::endl;
     solver.release();

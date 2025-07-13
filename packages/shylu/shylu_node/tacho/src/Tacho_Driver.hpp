@@ -462,8 +462,6 @@ public:
         double work;
         bool do_mwm = (av.extent(0) == aj.extent(0));
         printf( "   > using %s\n",(do_mwm ? "max-weight matching" : "max-cardinarity matching") );
-        if (do_mwm) {
-        }
         size_type_array_host iwork("iwork", 5*m);
         {
           // compress & extract

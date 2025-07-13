@@ -155,8 +155,9 @@ public:
   }
 
   void createObject(numeric_tools_base_type *&object) {
+    ordinal_type variant = (_method == 5 ? -1 : _variant);
     KOKKOS_IF_ON_HOST((
-    switch (_variant) {
+    switch (variant) {
     case -1: {
       // sequential code
       TACHO_NUMERIC_TOOLS_FACTORY_SERIAL_BODY;
