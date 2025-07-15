@@ -442,7 +442,9 @@ public:
 
     int rval = 0;
     Kokkos::Timer timer;
-    printf( "\n >> in analyze (blk-size=%d, max-match=%d%s) <<\n",blk_size,max_match,(scale_mat ? ", scale" : "") ); fflush(stdout);
+    if (_verbose) {
+      printf( "\n >> in analyze (blk-size=%d, max-match=%d%s) <<\n",blk_size,max_match,(scale_mat ? ", scale" : "") ); fflush(stdout);
+    }
     if (blk_size > 1) {
       double t_shrink = 0.0;
       double t_match  = 0.0;
@@ -461,7 +463,9 @@ public:
         double maxwork = 0.0;
         double work;
         bool do_mwm = (av.extent(0) == aj.extent(0));
-        printf( "   > using %s\n",(do_mwm ? "max-weight matching" : "max-cardinarity matching") );
+        if (_verbose) {
+          printf( "   > using %s\n",(do_mwm ? "max-weight matching" : "max-cardinarity matching") );
+        }
         size_type_array_host iwork("iwork", 5*m);
         {
           // compress & extract
@@ -637,13 +641,17 @@ public:
             for(int i = 0; i <= n; ++i)
               h_ap_odd(i) = h_ap_odd(i)+1;
 
-            printf( "   > calling SuperLU_DIST MC64(job = %d) \n",job ); fflush(stdout);
+            if (_verbose) {
+              printf( "   > calling SuperLU_DIST MC64(job = %d) \n",job ); fflush(stdout);
+            }
             mc64id_dist(icntl);
             mc64ad_dist(&job, &n, &nnz, h_ap_odd.data(), h_aj_odd.data(), nzval_abs.data(),
                         &num_match, match_odd.data(), &liw, iw.data(), &ldw, dw.data(), icntl, info);
 
             if (job == 5) {
-              printf( "   > using (scaling option = %d) \n",scaling_option ); fflush(stdout);
+              if (_verbose) {
+                printf( "   > using (scaling option = %d) \n",scaling_option ); fflush(stdout);
+              }
               Kokkos::resize(_d, m);
               for (int i = 0; i < n; ++i) {
                 double r = exp(dw(n+i));
@@ -664,10 +672,10 @@ public:
             if (scale_mat) {
               // Find matrix scaling
               mag_type_array_host d_new("d_new",m);
-	      if (job != 5) {
+              if (job != 5) {
                 Kokkos::resize(_d, m);
                 Kokkos::deep_copy(_d, mag_type(1.0));
-	      }
+              }
               for (int itr=0; itr<3; itr++)
               {
                 for (int i=0; i<m; i++) {
@@ -693,7 +701,9 @@ public:
             for(int i=0; i < n; ++i)
             { match_odd(i) = match_odd(i)-1; }
 #else
-            printf( "   > calling ShyLU-Basker MWM\n" );
+            if (_verbose) {
+              printf( "   > calling ShyLU-Basker MWM\n" );
+            }
             int rval = mwm(m/2, nnz, h_ap_odd.data(), h_aj_odd.data(), h_av_odd.data(), match_odd.data(), num_match);
 #endif
           } else {
@@ -757,7 +767,7 @@ public:
                 int i2 = (j-1)/2;
                 while (i1 != i2) {
                   num_swaps ++;
-		  if (visited(i2) != 0) printf( " %d already visited ?\n" );
+                  if (visited(i2) != 0) printf( " %d already visited ?\n" );
                   visited(i2) = 1;
 
                   j = h_match(j);
@@ -778,8 +788,8 @@ public:
               for (int i=0; i<m; i++) printf("%d %e\n",i,_d(i));
               printf("];\n"); fflush(stdout);
             }
-	  }*/
-	  /*{}
+          }*/
+          /*{}
             //printf("T=[\n");
             //for (int i=0; i<m; i++) {
             //  for (int k=_h_ap(h_match(i)); k<_h_ap(h_match(i)+1); k++) {

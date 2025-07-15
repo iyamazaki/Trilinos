@@ -39,6 +39,14 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
     int r_val(0);
     const ordinal_type m = A.extent(0);
 
+    #ifdef TACHO_SK_TIMER
+    Kokkos::Timer tic;
+    Kokkos::Timer timer;
+    double time_pivot  = 0.0;
+    double time_swap   = 0.0;
+    double time_scale  = 0.0;
+    double time_update = 0.0;
+    #endif
     bool pivot = (npivots == 0);
     if (m > 0) {
       /// factorize LDL
@@ -113,6 +121,9 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
 
           // -----------------------------------
           // 1) pick 2-by-2 pivot
+          #ifdef TACHO_SK_TIMER
+          timer.reset();
+          #endif
           value_type piv = Aj(1,0);
           P(j) = P(j+1) = -(j+2);
           //printf( "\n === j = %d (mj = %d) ===\n",j,mj );
@@ -135,32 +146,56 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
             P(j) = P(j+1) = -(j+2);
           }
           if (piv == zero) {
-            if (false) {
-              piv = Aj(1,0) = arith_traits::epsilon();
-              P(j) = P(j+1) = -(j+2);
-            } else {
-              TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, ">> zero pivot during Skewed LDLt.");
-            }
+            TACHO_TEST_FOR_EXCEPTION(true, std::logic_error, ">> zero pivot during Skewed LDLt.");
           }
+          #ifdef TACHO_SK_TIMER
+          time_pivot += timer.seconds();
+          timer.reset();
+          #endif
           if (P(j) != -(j+2)) {
             // pivot id
             //printf( " pivot : %d -> %d (%e -> %e)\n",j+1,-P(j)-1,Aj(1,0),piv );
             ordinal_type j2 = -P(j)-1;
 
+#ifdef TACHO_SKLDL_FULL_UPDATE
             // row-swap (only to this and remaining columns)
             for (ordinal_type k=j; k<m; k++) {
               value_type val = A(j+1, k);
               A(j+1, k) = A(j2, k);
               A(j2, k)  = val;
             }
-
             // col-swap (only to this and remaining rows)
             for (ordinal_type k=j; k<m; k++) {
               value_type val = A(k, j+1);
               A(k, j+1) = A(k, j2);
               A(k, j2)  = val;
             }
+#else
+            // > row-swap just jth column
+            value_type val = A(j+1, j);
+            A(j+1, j) = A(j2, j);
+            A(j2, j) = val;
+            // > swap (j+1)th column of j+2 to j2-1 rows
+            //   with j2th row of j+2 to j2-1 cols
+            for (ordinal_type k=j+2; k<j2; k++) {
+              val = A(k, j+1);
+              A(k, j+1) = -A(j2, k);
+              A(j2, k)  = -val;
+            }
+            A(j2, j+1) = -A(j2, j+1);
+
+            // col-swap (only to this and remaining rows)
+            // > from j2+1 to m-1 rows
+            for (ordinal_type k=j2+1; k<m; k++) {
+              val = A(k, j+1);
+              A(k, j+1) = A(k, j2);
+              A(k, j2)  = val;
+            }
+#endif
             npivots ++;
+            #ifdef TACHO_SK_TIMER
+            time_swap += timer.seconds();
+            #endif
           }
           //printf( " > PIVOT = %e\n",piv );
 
@@ -169,11 +204,14 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           auto Ap = Kokkos::subview(A, range_type(j+2,m), range_type(j+2,m));
 
           // -----------------------------------
-	  // copy Lp to Up (to enhance symmetry?)
+          // copy Lp^T to Up, before scaling (to enhance symmetry?)
+          #ifdef TACHO_SK_TIMER
+          timer.reset();
+          #endif
           for (ordinal_type i=0; i<mj-2; i++) {
             Up(0,i) = -Lp(i,0);
             Up(1,i) = -Lp(i,1);
-	  }
+          }
 
           // -----------------------------------
           // 2) scale with 2-by-2 pivot
@@ -189,27 +227,44 @@ template <> struct SkLDL<Uplo::Lower, Algo::Internal> {
           for (ordinal_type i=2; i<mj; i++) {
             Aj(i,0) = Wk(i,0);
           }
+          #ifdef TACHO_SK_TIMER
+          time_scale += timer.seconds();
+          timer.reset();
+          #endif
 
           if (j < m-2) {
             // -----------------------------------
             // 3) update using previous columns : A(j+2:end, j+1:end) - L(j+2:end, j:j+2) * T(j:j+2, j:j+2) * L(j+2:end, j:j+2)'
+#ifdef TACHO_SKLDL_FULL_UPDATE
             Blas<value_type>::gemm('N','N',mj-2, mj-2, 2,
                                     minus_one, Lp.data(), Lp.stride_1(),
                                                Up.data(), Up.stride_1(),
                                           one, Ap.data(), Ap.stride_1());
+#else
+            ordinal_type nb = 2;
+            for (ordinal_type j=0; j<mj-2; j+=nb) {
+              //ordinal_type nb_j = (mj-j-2 < nb ? mj-j-2 : nb);
+              Blas<value_type>::gemm('N','N',mj-j-2, nb, 2,
+                                      minus_one, &(Lp(j,0)), Lp.stride_1(),
+                                                 &(Up(0,j)), Up.stride_1(),
+                                            one, &(Ap(j,j)), Ap.stride_1());
+            }
+#endif
+            #ifdef TACHO_SK_TIMER
+            time_update += timer.seconds();
+            #endif
           }
-
-          // ------------------------------------------------------------
-          // expand to upper (after original used for right-look update)
-          //for (ordinal_type k=j+1; k<m; k++) {
-          //  A(j, k) = -A(k, j);
-          //}
-          //for (ordinal_type k=j+2; k<m; k++) {
-          //  A(j+1, k) = -A(k, j+1);
-          //}
         }
       }
     }
+    #ifdef TACHO_SK_TIMER
+    double time_total = tic.seconds();
+    printf( "\n  Total : %e\n",time_total);
+    printf( "  > Time (pivot ) : %e\n",time_pivot);
+    printf( "  > Time (swap  ) : %e\n",time_swap);
+    printf( "  > Time (scale ) : %e\n",time_scale);
+    printf( "  > Time (update) : %e\n",time_update);
+    #endif
     return r_val;
   }
 

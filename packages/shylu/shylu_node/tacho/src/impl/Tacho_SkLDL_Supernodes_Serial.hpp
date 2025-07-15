@@ -77,64 +77,50 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       UnmanagedViewType<value_type_matrix> ATL(ptr, m, m);
       ptr += m * m;
 
+      #ifdef TACHO_SK_TIMER
+      Kokkos::Timer timer;
+      double time_scal (0.0);
+      double time_gemm (0.0);
+      #endif
       SkSymmetrize<Uplo::Upper, Algo::Internal>::invoke(member, ATL);
       SkLDL<Uplo::Lower, Algo::Internal>::invoke(member, ATL, P, W, npivots);
-      /*printf( " > L = [\n" );
-      for (int i=0; i < m; i++) {
-        for (int j=0; j < m; j++) printf( "%e ",ATL(i,j) );
-        printf("\n");
-      }
-      printf( " ]\n" );*/
       SkLDL<Uplo::Lower, Algo::Internal>::modify(member, ATL, P, D);
-      /*printf( " D = [\n" );
-      for (int i=0; i < m; i++) printf( "%.16e %.16e\n",D(i,0),D(i,1) );
-      printf( " ]\n" );
-      printf( " * L = [\n" );
-      for (int i=0; i < m; i++) {
-        for (int j=0; j < m; j++) printf( "%.16e ",ATL(i,j) );
-        printf("\n");
-      }
-      printf( " ]\n" );*/
-
+      #ifdef TACHO_SK_TIMER
+      double time_diag = timer.seconds();
+      timer.reset();
+      #endif
       if (n > 0) {
         const value_type one(1), zero(0);
         UnmanagedViewType<value_type_matrix> ATR(ptr, m, n);
         ptr += m * n;
         UnmanagedViewType<value_type_matrix> STR(W.data(), m, n);
-        /*printf( " > B = [\n" );
-        for (int i=0; i < m; i++) {
-          for (int j=0; j < n; j++) printf( "%e ",ATR(i,j) );
-          printf("\n");
-        }
-        printf( " ]\n" );*/
 
         auto fpiv = ordinal_type_array(P.data() + m, m);
         ApplyPivots<PivotMode::Flame, Side::Left, Direct::Forward, Algo::Internal> /// row inter-change
             ::invoke(member, fpiv, ATR);
         Trsm<Side::Left, Uplo::Lower, Trans::NoTranspose, TrsmAlgoType>::invoke(member, Diag::Unit(), one, ATL, ATR);
-        /*printf( " > Y = [\n" );
-        for (int i=0; i < m; i++) {
-          for (int j=0; j < n; j++) printf( "%e ",ATR(i,j) );
-          printf("\n");
-        }
-        printf( " ]\n" );*/
 
         Copy<Algo::Internal>::invoke(member, STR, ATR);
         Scale2x2_BlockInverseDiagonals<Side::Left, Algo::Internal> /// row scaling
             ::invoke(member, P, D, ATR);
-        /*printf( " > X = [\n" );
-        for (int i=0; i < m; i++) {
-          for (int j=0; j < n; j++) printf( "%e ",ATR(i,j) );
-          printf("\n");
-        }
-        printf( " ]\n" );*/
-
+        #ifdef TACHO_SK_TIMER
+        time_scal = timer.seconds();
+        timer.reset();
+        #endif
         TACHO_TEST_FOR_ABORT(static_cast<ordinal_type>(ABR.extent(0)) != n ||
                                  static_cast<ordinal_type>(ABR.extent(1)) != n,
                              "ABR dimension does not match to supernodes");
         GemmTriangular<Trans::Transpose, Trans::NoTranspose, Uplo::Upper, GemmAlgoType>::invoke(member, -one, ATR, STR,
                                                                                                 zero, ABR);
+        #ifdef TACHO_SK_TIMER
+        time_gemm = timer.seconds();
+        #endif
       }
+      #ifdef TACHO_SK_TIMER
+      printf( " * time(diag) : %e\n",time_diag );
+      printf( " * time(scal) : %e\n",time_scal );
+      printf( " * time(gemm) : %e\n",time_gemm );
+      #endif
     }
     s.npivots = npivots;
 
@@ -176,7 +162,10 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
     }
 
     {
-      //printf( "\n > factorize_recursive_serial (sid = %d) <\n",sid );
+      #ifdef TACHO_SK_TIMER
+      Kokkos::Timer timer;
+      Kokkos::Timer tic;
+      #endif
       const ordinal_type m = s.m;
       const ordinal_type rbeg = s.row_begin;
       UnmanagedViewType<ordinal_type_array> ipiv(piv + rbeg * 4, 4 * m);
@@ -196,10 +185,22 @@ template <> struct SkLDL_Supernodes<Algo::Workflow::Serial> {
       bufptr += w.span();
 
       SkLDL_Supernodes<Algo::Workflow::Serial>::factorize(member, info, ipiv, dblk, w, ABR, sid, pivot);
+      #ifdef TACHO_SK_TIMER
+      double time_factor = tic.seconds();
+      tic.reset();
+      #endif
 
       /// assembly is same
       CholSupernodes<Algo::Workflow::Serial>::update(member, info, ABR, sid, bufsize - ABR.span() * sizeof(value_type),
                                                      (void *)(w.data()));
+      #ifdef TACHO_SK_TIMER
+      double time_update = tic.seconds();
+      #endif
+
+      #ifdef TACHO_SK_TIMER
+      double toc = timer.seconds();
+      printf( "\n > factorize_recursive_serial (sid = %d: %dx%d) %e (%e + %e) seconds <\n",sid,s.n,s.m, toc, time_factor,time_update );
+      #endif
     }
     /*{
       const auto &t = info.supernodes(60154);
