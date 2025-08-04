@@ -121,7 +121,7 @@ TachoSolver<Matrix,Vector>::numericFactorization_impl()
 template <class Matrix, class Vector>
 int
 TachoSolver<Matrix,Vector>::solve_impl(const Teuchos::Ptr<MultiVecAdapter<Vector> > X,
-                                   const Teuchos::Ptr<const MultiVecAdapter<Vector> > B) const
+                                       const Teuchos::Ptr<const MultiVecAdapter<Vector> > B) const
 {
   using Teuchos::as;
 
@@ -140,14 +140,25 @@ TachoSolver<Matrix,Vector>::solve_impl(const Teuchos::Ptr<MultiVecAdapter<Vector
 #endif
     const bool initialize_data = true;
     const bool do_not_initialize_data = false;
-    Util::get_1d_copy_helper_kokkos_view<MultiVecAdapter<Vector>,
-                             device_solve_array_t>::do_get(initialize_data, B, this->bValues_,
-                                               as<size_t>(ld_rhs),
-                                               ROOTED, this->rowIndexBase_);
-    bDidAssignX = Util::get_1d_copy_helper_kokkos_view<MultiVecAdapter<Vector>,
-                             device_solve_array_t>::do_get(do_not_initialize_data, X, this->xValues_,
-                                               as<size_t>(ld_rhs),
-                                               ROOTED, this->rowIndexBase_);
+    int nProcs = B->getComm()->getSize();
+    {
+      //auto reindexTimer = Teuchos::TimeMonitor::getNewTimer("Time to convert vectors B("+std::to_string(nProcs)+","+std::to_string(nrhs)+")");
+      auto reindexTimer = Teuchos::TimeMonitor::getNewTimer("Time to convert vectors B");
+      Teuchos::TimeMonitor ReindexTimer(*reindexTimer);
+      Util::get_1d_copy_helper_kokkos_view<MultiVecAdapter<Vector>,
+                               device_solve_array_t>::do_get(initialize_data, B, this->bValues_,
+                                                 as<size_t>(ld_rhs),
+                                                 ROOTED, this->rowIndexBase_);
+    }
+    {
+      //auto reindexTimer = Teuchos::TimeMonitor::getNewTimer("Time to convert vectors X("+std::to_string(nProcs)+","+std::to_string(nrhs)+")");
+      auto reindexTimer = Teuchos::TimeMonitor::getNewTimer("Time to convert vectors X");
+      Teuchos::TimeMonitor ReindexTimer(*reindexTimer);
+      bDidAssignX = Util::get_1d_copy_helper_kokkos_view<MultiVecAdapter<Vector>,
+                               device_solve_array_t>::do_get(do_not_initialize_data, X, this->xValues_,
+                                                 as<size_t>(ld_rhs),
+                                                 ROOTED, this->rowIndexBase_);
+    }
   }
 
   int ierr = 0; // returned error code

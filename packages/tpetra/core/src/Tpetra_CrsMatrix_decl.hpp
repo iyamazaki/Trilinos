@@ -891,6 +891,12 @@ private:
                              Teuchos::RCP<Teuchos::ParameterList> params);
 
   public:
+    using crsmatrix_type = CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>;
+    void setTranspose(Teuchos::RCP<crsmatrix_type> &Atrans_) { Atrans = Atrans_; }
+    Teuchos::RCP<crsmatrix_type> getTranspose() { return Atrans; }
+    Teuchos::RCP<crsmatrix_type> Atrans;
+
+  public:
     //@}
     //! @name Methods for inserting, modifying, or removing entries
     //@{

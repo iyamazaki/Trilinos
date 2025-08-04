@@ -313,9 +313,7 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
   using Teuchos::ArrayView;
   using Teuchos::RCP;
   using Teuchos::rcp;
-
   using Node = Tpetra::KokkosCompat::KokkosCudaWrapperNode;
-
 
   // Lots and lots of typedefs
   typedef typename Tpetra::CrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::local_matrix_host_type KCRS;
@@ -370,10 +368,26 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
   // each row.  Chris Siefert says that this reflects experience in
   // ML; for the non-threaded case, ML found it faster to spend less
   // effort on estimation and risk an occasional reallocation.
+  //
+{
+  Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt : MMM Newmatrix Cuda-Host : total");
+  Teuchos::TimeMonitor LocTimer(*locTimer_);
+
+  // Usig ** UVM **
   size_t CSR_alloc = std::max(C_estimate_nnz(*Aview.origMatrix, *Bview.origMatrix), n);
+#define TPETRA_MMM_USE_CUDA_UVM
+#ifdef TPETRA_MMM_USE_CUDA_UVM
   lno_view_t Crowptr(Kokkos::ViewAllocateWithoutInitializing("Crowptr"),m+1);
   lno_nnz_view_t Ccolind(Kokkos::ViewAllocateWithoutInitializing("Ccolind"),CSR_alloc);
   scalar_view_t Cvals(Kokkos::ViewAllocateWithoutInitializing("Cvals"),CSR_alloc);
+#else
+  lno_view_t Crowptr_d(Kokkos::ViewAllocateWithoutInitializing("Crowptr"),m+1);
+  lno_nnz_view_t Ccolind_d(Kokkos::ViewAllocateWithoutInitializing("Ccolind"),CSR_alloc);
+  scalar_view_t Cvals_d(Kokkos::ViewAllocateWithoutInitializing("Cvals"),CSR_alloc);
+  auto Crowptr = Kokkos::create_mirror_view(Crowptr_d);
+  auto Ccolind = Kokkos::create_mirror_view(Ccolind_d);
+  auto Cvals   = Kokkos::create_mirror_view(Cvals_d);
+#endif
 
   // mfh 27 Sep 2016: The c_status array is an implementation detail
   // of the local sparse matrix-matrix multiply routine.
@@ -395,6 +409,13 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
 
   // For each row of A/C
   size_t CSR_ip = 0, OLD_ip = 0;
+{
+  Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt : MMM Newmatrix Cuda-Host : multiply");
+  Teuchos::TimeMonitor LocTimer(*locTimer_);
+
+#ifdef TPETRA_MM_PRINT
+  if (Ccolmap->getComm()->getRank() == 10) printf( "\n + START(%d)\n",m );
+#endif
   for (size_t i = 0; i < m; i++) {
     // mfh 27 Sep 2016: m is the number of rows in the input matrix A
     // on the calling process.
@@ -426,6 +447,9 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
             c_status[Cij]   = CSR_ip;
             Ccolind[CSR_ip] = Cij;
             Cvals[CSR_ip]   = Aval*Bvals[j];
+#ifdef TPETRA_MM_PRINT
+            if (Ccolmap->getComm()->getRank() == 10 && m < 100) printf( " (%d->%d,%d) -> (%d,%d) at %d\n",Aik,Bk,Bkj, i,Cij,CSR_ip );
+#endif
             CSR_ip++;
 
           } else {
@@ -468,10 +492,16 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
   }
 
   Crowptr[m] = CSR_ip;
+}
 
   // Downward resize
   Kokkos::resize(Ccolind,CSR_ip);
   Kokkos::resize(Cvals,CSR_ip);
+#ifndef TPETRA_MMM_USE_CUDA_UVM
+  Kokkos::deep_copy(Crowptr_d, Crowptr);
+  Kokkos::deep_copy(Ccolind_d, Ccolind);
+  Kokkos::deep_copy(Cvals_d,   Cvals);
+#endif
 
 #ifdef HAVE_TPETRA_MMM_TIMINGS
   {
@@ -479,10 +509,18 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
 #endif
 
   // Final sort & set of CRS arrays
+{
+  Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt : MMM Newmatrix Cuda-Host : sort");
+  Teuchos::TimeMonitor LocTimer(*locTimer_);
+
   if (params.is_null() || params->get("sort entries",true))
     Import_Util::sortCrsEntries(Crowptr,Ccolind, Cvals);
+#ifdef TPETRA_MMM_USE_CUDA_UVM
   C.setAllValues(Crowptr,Ccolind, Cvals);
-
+#else
+  C.setAllValues(Crowptr_d,Ccolind_d, Cvals_d);
+#endif
+}
 
 #ifdef HAVE_TPETRA_MMM_TIMINGS
   }
@@ -498,15 +536,22 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
   // Import object.  We should be able to do this without interfering
   // with the implementation of the local part of sparse matrix-matrix
   // multply above.
+{
+  Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt : MMM Newmatrix Cuda-Host : fill");
+  Teuchos::TimeMonitor LocTimer(*locTimer_);
+
   RCP<Teuchos::ParameterList> labelList = rcp(new Teuchos::ParameterList);
   labelList->set("Timer Label",label);
   if(!params.is_null()) labelList->set("compute global constants",params->get("compute global constants",true));
+
   RCP<const Export<LO,GO,NO> > dummyExport;
   C.expertStaticFillComplete(Bview. origMatrix->getDomainMap(), Aview. origMatrix->getRangeMap(), Cimport,dummyExport,labelList);
+}
 #ifdef HAVE_TPETRA_MMM_TIMINGS
   }
   MM2 = Teuchos::null;
 #endif
+} // timer (total)
 }
 #endif
 
@@ -621,6 +666,9 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
 
   // For each row of A/C
   size_t CSR_ip = 0, OLD_ip = 0;
+#ifdef TPETRA_MM_PRINT
+  if (Ccolmap->getComm()->getRank() == 10) printf( "\n REUSE(%d)\n",m );
+#endif
   for (size_t i = 0; i < m; i++) {
     // First fill the c_status array w/ locations where we're allowed to
     // generate nonzeros for this row
@@ -646,9 +694,11 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
         for (size_t j = Browptr[Bk]; j < Browptr[Bk+1]; ++j) {
           LO Bkj = Bcolind[j];
           LO Cij = Bcol2Ccol[Bkj];
-
+#ifdef TPETRA_MM_PRINT
+          if (Ccolmap->getComm()->getRank() == 10 && m < 100) printf( " + (%d->%d,%d) -> (%d,%d) at %d\n",Aik,Bk,Bkj, i,Cij,CSR_ip ); fflush(stdout);
+#endif
           TEUCHOS_TEST_FOR_EXCEPTION(c_status[Cij] < OLD_ip || c_status[Cij] >= CSR_ip,
-            std::runtime_error, "Trying to insert a new entry (" << i << "," << Cij << ") into a static graph " <<
+            std::runtime_error, Ccolmap->getComm()->getRank() << ") Trying to insert a local new entry (" << i << "," << Cij << ") into a static graph " <<
             "(c_status = " << c_status[Cij] << " of [" << OLD_ip << "," << CSR_ip << "))");
 
           Cvals[c_status[Cij]] += Aval * Bvals[j];
@@ -660,9 +710,11 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Tpetra::KokkosCompat::Kokk
         for (size_t j = Irowptr[Ik]; j < Irowptr[Ik+1]; ++j) {
           LO Ikj = Icolind[j];
           LO Cij = Icol2Ccol[Ikj];
-
+#ifdef TPETRA_MM_PRINT
+          if (Ccolmap->getComm()->getRank() == 10 && m < 100) printf( " - (%d->%d,%d) -> (%d,%d) at %d\n",Aik,Ik, i,Cij,CSR_ip );
+#endif
           TEUCHOS_TEST_FOR_EXCEPTION(c_status[Cij] < OLD_ip || c_status[Cij] >= CSR_ip,
-            std::runtime_error, "Trying to insert a new entry (" << i << "," << Cij << ") into a static graph " <<
+            std::runtime_error, Ccolmap->getComm()->getRank() << ") Trying to insert a remote new entry (" << i << "," << Cij << ") into a static graph " <<
             "(c_status = " << c_status[Cij] << " of [" << OLD_ip << "," << CSR_ip << "))");
 
           Cvals[c_status[Cij]] += Aval * Ivals[j];

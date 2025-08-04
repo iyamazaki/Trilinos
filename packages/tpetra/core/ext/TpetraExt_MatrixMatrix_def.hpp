@@ -132,7 +132,12 @@ void Multiply(
   const bool newFlag = !C.getGraph()->isLocallyIndexed() && !C.getGraph()->isGloballyIndexed();
 
   bool use_optimized_ATB = false;
+  //#define TPETRA_FROSCH_COARSE_MM_REUSE
+  #ifdef TPETRA_FROSCH_COARSE_MM_REUSE
+  if (transposeA && !transposeB && call_FillComplete_on_result)
+  #else
   if (transposeA && !transposeB && call_FillComplete_on_result && newFlag)
+  #endif
     use_optimized_ATB = true;
 
 #ifdef USE_OLD_TRANSPOSE // NOTE: For Grey Ballard's use.  Remove this later.
@@ -142,26 +147,37 @@ void Multiply(
   using Teuchos::ParameterList;
   RCP<ParameterList> transposeParams (new ParameterList);
   transposeParams->set ("sort", true); // Kokkos Kernels spgemm requires inputs to be sorted
+  if(! params.is_null ()) {
+    transposeParams->set ("compute global constants",
+                          params->get ("compute global constants: temporaries",
+                                       false));
+  }
 
-{
-  Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::transpose");
-  Teuchos::TimeMonitor LocTimer(*locTimer_);
   if (!use_optimized_ATB && transposeA) {
+    Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::transpose(A)");
+    Teuchos::TimeMonitor LocTimer(*locTimer_);
+
     transposer_type transposer (rcpFromRef (A));
-    Aprime = transposer.createTranspose (transposeParams);
+    if (true) {
+      Aprime = transposer.createTranspose (transposeParams);
+    } else {
+      Aprime = transposer.createTransposeLocal (transposeParams);
+    }
   }
   else {
     Aprime = rcpFromRef(A);
   }
 
   if (transposeB) {
+    Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::transpose(B)");
+    Teuchos::TimeMonitor LocTimer(*locTimer_);
+
     transposer_type transposer (rcpFromRef (B));
     Bprime = transposer.createTranspose (transposeParams);
   }
   else {
     Bprime = rcpFromRef(B);
   }
-}
   //MPI_Barrier(MPI_COMM_WORLD); printf( " MM:Multiply 2\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 
   // Check size compatibility
@@ -207,8 +223,6 @@ void Multiply(
 
   //MPI_Barrier(MPI_COMM_WORLD); printf( " MM:Multiply 3\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 {
-  Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::import");
-  Teuchos::TimeMonitor LocTimer(*locTimer_);
 #ifdef HAVE_TPETRA_MMM_TIMINGS
   {
   TimeMonitor MM_importExtract(*TimeMonitor::getNewTimer(prefix_mmm + std::string("MMM All I&X")));
@@ -218,19 +232,29 @@ void Multiply(
   // NOTE: We assert that an import isn't needed --- since we do the transpose
   // above to handle that.
   if (!use_optimized_ATB) {
+    Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::import_and_extract(A)");
+    Teuchos::TimeMonitor LocTimer(*locTimer_);
+
     RCP<const import_type> dummyImporter;
     MMdetails::import_and_extract_views(*Aprime, targetMap_A, Aview, dummyImporter, true, label, params);
   }
 
   // We will also need local access to all rows of B that correspond to the
   // column-map of op(A).
-  if (numProcs > 1)
+  if (numProcs > 1) {
+    Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::getColMap(B)");
+    Teuchos::TimeMonitor LocTimer(*locTimer_);
+
     targetMap_B = Aprime->getColMap();
+  }
 
   // Import any needed remote rows and populate the Bview struct.
-  if (!use_optimized_ATB)
-    MMdetails::import_and_extract_views(*Bprime, targetMap_B, Bview, Aprime->getGraph()->getImporter(), Aprime->getGraph()->getImporter().is_null(), label, params);
+  if (!use_optimized_ATB) {
+    Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::import_and_extract(B)");
+    Teuchos::TimeMonitor LocTimer(*locTimer_);
 
+    MMdetails::import_and_extract_views(*Bprime, targetMap_B, Bview, Aprime->getGraph()->getImporter(), Aprime->getGraph()->getImporter().is_null(), label, params);
+  }
 #ifdef HAVE_TPETRA_MMM_TIMINGS
   } //stop MM_importExtract here
   //stop the setup timer, and start the multiply timer
@@ -241,22 +265,54 @@ void Multiply(
   // Call the appropriate method to perform the actual multiplication.
   //MPI_Barrier(MPI_COMM_WORLD); printf( " MM:Multiply 4\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
 {
+  #if 1//def TPETRA_FROSCH_COARSE_MM_REUSE
+#ifdef TPETRA_MM_PRINT
+  int myRank = A.getRowMap()->getComm()->getRank();
+  int nProcs = A.getRowMap()->getComm()->getSize();
+  if (myRank == 0) printf( " %d/%d : %s, %s, %s\n",myRank,nProcs,
+    (transposeA ? "transposeA" : "NOT transposeA"),(transposeB ? "transposeB" : "NOT transposeB"),(newFlag ? "new C" : "reuse C"));
+#endif
+  #endif
   if (use_optimized_ATB) {
+    #if 1//def TPETRA_FROSCH_COARSE_MM_REUSE
+#ifdef TPETRA_MM_PRINT
+    if (myRank == 0) printf( " %d/%d : compute-1\n",myRank,nProcs);
+    fflush(stdout); A.getRowMap()->getComm()->barrier();
+#endif
+    #endif
     Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::compute-1");
     Teuchos::TimeMonitor LocTimer(*locTimer_);
     MMdetails::mult_AT_B_newmatrix(A, B, C, label,params);
 
   } else if (call_FillComplete_on_result && newFlag) {
+    #if 1//def TPETRA_FROSCH_COARSE_MM_REUSE
+#ifdef TPETRA_MM_PRINT
+    if (myRank == 0) printf( " %d/%d : compute-2\n",myRank,nProcs);
+    fflush(stdout); A.getRowMap()->getComm()->barrier();
+#endif
+    #endif
     Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::compute-2");
     Teuchos::TimeMonitor LocTimer(*locTimer_);
     MMdetails::mult_A_B_newmatrix(Aview, Bview, C, label,params);
 
   } else if (call_FillComplete_on_result) {
+    #if 1//def TPETRA_FROSCH_COARSE_MM_REUSE
+#ifdef TPETRA_MM_PRINT
+    if (myRank == 0) printf( " %d/%d : compute-3\n",myRank,nProcs);
+    fflush(stdout); A.getRowMap()->getComm()->barrier();
+#endif
+    #endif
     Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::compute-3");
     Teuchos::TimeMonitor LocTimer(*locTimer_);
     MMdetails::mult_A_B_reuse(Aview, Bview, C, label,params);
 
   } else {
+    #if 1//def TPETRA_FROSCH_COARSE_MM_REUSE
+#ifdef TPETRA_MM_PRINT
+    if (myRank == 0) printf( " %d/%d : compute-4\n",myRank,nProcs);
+    fflush(stdout); A.getRowMap()->getComm()->barrier();
+#endif
+    #endif
     Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::compute-4");
     Teuchos::TimeMonitor LocTimer(*locTimer_);
     // mfh 27 Sep 2016: Is this the "slow" case?  This
@@ -1298,12 +1354,56 @@ void mult_AT_B_newmatrix(
                           params->get ("compute global constants: temporaries",
                                        false));
   }
-  RCP<Tpetra::CrsMatrix<SC, LO, GO, NO>> Atrans;
+#ifdef SAVE_TRANSPOSE
+  RCP<Tpetra::CrsMatrix<SC, LO, GO, NO>> Atrans = C.getTranspose();
+#else
+  RCP<Tpetra::CrsMatrix<SC, LO, GO, NO>> Atrans; // = C.getTranspose();
+#endif
 {
-Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_A_B_newmatrix::transpose");
-Teuchos::TimeMonitor LocTimer(*locTimer_);
   /* create transpose */
-  Atrans = transposer.createTransposeLocal (transposeParams);
+  if (Atrans.is_null()) {
+    Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_AT_B_newmatrix::transpose new");
+    Teuchos::TimeMonitor LocTimer(*locTimer_);
+    Atrans = transposer.createTransposeLocal (transposeParams);
+#ifdef SAVE_TRANSPOSE
+    C.setTranspose(Atrans);
+#endif
+  } else {
+    Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_AT_B_newmatrix::transpose fill");
+    Teuchos::TimeMonitor LocTimer(*locTimer_);
+#if 0
+    auto localPtrs_d = A.getLocalRowPtrsDevice();
+    auto localInds_d = A.getLocalIndicesDevice();
+    auto localVals_d = A.getLocalValuesDevice(Tpetra::Access::ReadOnly);
+    auto localPtrs = Kokkos::create_mirror_view(localPtrs_d);
+    auto localInds = Kokkos::create_mirror_view(localInds_d);
+    auto localVals = Kokkos::create_mirror_view(localVals_d);
+
+    auto localTPtrs_d = Atrans->getLocalRowPtrsDevice();
+    auto localTInds_d = Atrans->getLocalIndicesDevice();
+    auto localTVals_d = Atrans->getLocalValuesDevice(Tpetra::Access::OverwriteAll);
+    auto localTPtrs = Kokkos::create_mirror_view(localTPtrs_d);
+    auto localTInds = Kokkos::create_mirror_view(localTInds_d);
+    auto localTVals = Kokkos::create_mirror_view(localTVals_d);
+
+    LO numRows = localPtrs.extent(0)-1;
+    for (LO row=0; row<numRows; row++) {
+      for (size_t j=localPtrs(row); j<localPtrs(row+1); j++) {
+        bool found = false;
+        int col = localInds(j);
+        for (size_t k=localTPtrs(col); k<localTPtrs(col+1) && !found; k++) {
+          if (localTInds(k) == row) {
+            localTVals(k) = localVals(j);
+            found = true;
+          }
+        }
+        if (!found) printf( " not found\n" );
+      }
+    }
+#else
+    Atrans = transposer.createTransposeLocal (transposeParams);
+#endif
+  }
 }
 
   /*************************************************************/
@@ -1345,7 +1445,7 @@ Teuchos::TimeMonitor LocTimer(*locTimer_);
   }
 
 {
-Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_A_B_newmatrix::import");
+Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_AT_B_newmatrix::import");
 Teuchos::TimeMonitor LocTimer(*locTimer_);
   MMdetails::import_and_extract_views (*Atrans, Atrans->getRowMap (),
                                        Aview, dummyImporter, true,
@@ -1402,7 +1502,7 @@ Teuchos::TimeMonitor LocTimer(*locTimer_);
 
   /* calling mult_A_B_newmatrix */
 {
-Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_A_B_newmatrix::mult");
+Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_AT_B_newmatrix::mult");
 Teuchos::TimeMonitor LocTimer(*locTimer_);
   mult_A_B_newmatrix(Aview, Bview, *Ctemp, label,params);
 }
@@ -1418,9 +1518,10 @@ Teuchos::TimeMonitor LocTimer(*locTimer_);
   RCP<Tpetra::CrsMatrix<SC, LO, GO, NO>> Crcp (&C, false);
 
 {
-Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_A_B_newmatrix::fill");
-Teuchos::TimeMonitor LocTimer(*locTimer_);
   if (needs_final_export) {
+Teuchos::RCP< Teuchos::Time > locTimer_ = Teuchos::TimeMonitor::getNewCounter ("TpetraExt_MatrixMatrix::Multiply::mult_AT_B_newmatrix::fill");
+Teuchos::TimeMonitor LocTimer(*locTimer_);
+
     ParameterList labelList;
     labelList.set("Timer Label", label);
     if(!params.is_null()) {
@@ -1446,6 +1547,22 @@ Teuchos::TimeMonitor LocTimer(*locTimer_);
                                   rcp (&labelList, false));
   }
 }
+  /*{
+    RCP<Teuchos::FancyOStream> fancy = Teuchos::fancyOStream(Teuchos::rcpFromRef(std::cout)); 
+    if (A.getRowMap()->getComm()->getRank() == 0) printf( "\n\n A : \n" );
+    if (A.getRowMap()->getComm()->getRank() == 0) printf( "\n === Row Map === : \n" );
+    A.getRowMap()->describe(*fancy,Teuchos::VERB_HIGH);
+    if (A.getRowMap()->getComm()->getRank() == 0) printf( "\n === Col Map === : \n" );
+    A.getColMap()->describe(*fancy,Teuchos::VERB_HIGH);
+    if (A.getRowMap()->getComm()->getRank() == 0) printf( "\n\n Atrans : \n" );
+    //Atrans->describe(*fancy,Teuchos::VERB_MEDIUM);
+    if (A.getRowMap()->getComm()->getRank() == 0) printf( "\n === Row Map === : \n" );
+    Atrans->getRowMap()->describe(*fancy,Teuchos::VERB_HIGH);
+    if (A.getRowMap()->getComm()->getRank() == 0) printf( "\n === Col Map === : \n" );
+    Atrans->getColMap()->describe(*fancy,Teuchos::VERB_HIGH);
+    if (A.getRowMap()->getComm()->getRank() == 0) printf( "\n\n C : \n" );
+    C.getRowMap()->describe(*fancy,Teuchos::VERB_HIGH);
+  }*/
 
 #ifdef HAVE_TPETRA_MMM_STATISTICS
   printMultiplicationStatistics(Ctemp->getGraph()->getExporter(), label+std::string(" AT_B MMM"));
@@ -1815,6 +1932,14 @@ void mult_A_B_newmatrix(
     Kokkos::parallel_for("Tpetra::mult_A_B_newmatrix::Bcol2Ccol_getGlobalElement",range_type(0,Bview.origMatrix->getColMap()->getLocalNumElements()),KOKKOS_LAMBDA(const LO i) {
         Bcol2Ccol(i) = Ccolmap_local.getLocalElement(Bcolmap_local.getGlobalElement(i));
       });
+#ifdef TPETRA_MM_PRINT
+if (Ccolmap->getComm()->getRank() == 10) {
+  auto Bcol2Ccol_h = Kokkos::create_mirror_view(Bcol2Ccol);
+  Kokkos::deep_copy(Bcol2Ccol_h, Bcol2Ccol);
+  for (LO i=0; i<Bview.origMatrix->getColMap()->getLocalNumElements(); i++)
+    printf( " Bcol2Ccol(%d) = %d\n",i,Bcol2Ccol_h(i) );
+}
+#endif
     Kokkos::parallel_for("Tpetra::mult_A_B_newmatrix::Icol2Ccol_getGlobalElement",range_type(0,Bview.importMatrix->getColMap()->getLocalNumElements()),KOKKOS_LAMBDA(const LO i) {
         Icol2Ccol(i) = Ccolmap_local.getLocalElement(Icolmap_local.getGlobalElement(i));
       });
@@ -2174,6 +2299,9 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,LocalOrdinalViewType>
 
   // For each row of A/C
   size_t CSR_ip = 0, OLD_ip = 0;
+#ifdef TPETRA_MM_PRINT
+  if (Ccolmap->getComm()->getRank() == 10) printf( "\n * START(%d)",m );
+#endif
   for (size_t i = 0; i < m; i++) {
     // mfh 27 Sep 2016: m is the number of rows in the input matrix A
     // on the calling process.
@@ -2304,7 +2432,8 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,LocalOrdinalViewType>
                                                                                                CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& C,
                                                                                                Teuchos::RCP<const Import<LocalOrdinal,GlobalOrdinal,Node> > Cimport,
                                                                                                const std::string& label,
-                                                                                               const Teuchos::RCP<Teuchos::ParameterList>& params) {
+                                                                                               const Teuchos::RCP<Teuchos::ParameterList>& params)
+{
 #if 1//def HAVE_TPETRA_MMM_TIMINGS
   std::string prefix_mmm = std::string("TpetraExt ") + label + std::string(": ");
   using Teuchos::TimeMonitor;
@@ -2316,6 +2445,7 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,LocalOrdinalViewType>
   using Teuchos::ArrayView;
   using Teuchos::RCP;
   using Teuchos::rcp;
+
 
   // Lots and lots of typedefs
   typedef typename Tpetra::CrsMatrix<Scalar,LocalOrdinal,GlobalOrdinal,Node>::local_matrix_host_type KCRS;
@@ -2394,6 +2524,9 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,LocalOrdinalViewType>
   // ("orig") or B_remote ("Import").
 
   // For each row of A/C
+#ifdef TPETRA_MM_PRINT
+  if (Ccolmap->getComm()->getRank() == 10) printf( "\n START(%d)",m );
+#endif
   size_t CSR_ip = 0, OLD_ip = 0;
   for (size_t i = 0; i < m; i++) {
     // mfh 27 Sep 2016: m is the number of rows in the input matrix A
@@ -2426,6 +2559,9 @@ void KernelWrappers<Scalar,LocalOrdinal,GlobalOrdinal,Node,LocalOrdinalViewType>
             c_status[Cij]   = CSR_ip;
             Ccolind[CSR_ip] = Cij;
             Cvals[CSR_ip]   = Aval*Bvals[j];
+#ifdef TPETRA_MM_PRINT
+            if (Ccolmap->getComm()->getRank() == 10 && m < 100) printf( " (%d,%d) -> %d at %d\n",Bk,Bkj,Cij,CSR_ip );
+#endif
             CSR_ip++;
 
           } else {
@@ -2571,7 +2707,14 @@ void mult_A_B_reuse(
     Kokkos::parallel_for(range_type(0,Bview.origMatrix->getColMap()->getLocalNumElements()),KOKKOS_LAMBDA(const LO i) {
         Bcol2Ccol(i) = Ccolmap_local.getLocalElement(Bcolmap_local.getGlobalElement(i));
       });
-
+#ifdef TPETRA_MM_PRINT
+if (Ccolmap->getComm()->getRank() == 10) {
+  auto Bcol2Ccol_h = Kokkos::create_mirror_view(Bcol2Ccol);
+  Kokkos::deep_copy(Bcol2Ccol_h, Bcol2Ccol);
+  for (LO i=0; i<Bview.origMatrix->getColMap()->getLocalNumElements(); i++)
+    printf( " Bcol2Ccol(%d) = %d\n",i,Bcol2Ccol_h(i) );
+}
+#endif
     if (!Bview.importMatrix.is_null()) {
       TEUCHOS_TEST_FOR_EXCEPTION(!Cimport->getSourceMap()->isSameAs(*Bview.origMatrix->getDomainMap()),
                                  std::runtime_error, "Tpetra::MMM: Import setUnion messed with the DomainMap in an unfortunate way");
@@ -4192,7 +4335,7 @@ template \
     bool transposeA, \
     const Teuchos::RCP<const BlockCrsMatrix< SCALAR , LO , GO , NODE > >& B, \
     bool transposeB, \
-    Teuchos::RCP<BlockCrsMatrix< SCALAR , LO , GO , NODE > >& C,	\
+    Teuchos::RCP<BlockCrsMatrix< SCALAR , LO , GO , NODE > >& C,       \
     const std::string & label); \
 \
 template \

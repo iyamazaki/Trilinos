@@ -163,6 +163,11 @@ createTransposeLocal (const Teuchos::RCP<Teuchos::ParameterList>& params)
     graphParams = rcp(new Teuchos::ParameterList);
     graphParams->set("sorted", false);
   }
+  if(! params.is_null ()) {
+    if (graphParams.is_null ()) graphParams = rcp(new Teuchos::ParameterList);
+    const char paramName[] = "compute global constants";
+    graphParams->set(paramName, params->get (paramName, true));
+  }
 
   return rcp (new crs_matrix_type (lclTransposeMatrix,
                                    origMatrix_->getColMap (),

@@ -580,10 +580,16 @@ namespace FROSch {
         //{ if (myRank == 0) printf( " >> K_ <<\n" ); RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); this->K_->describe(*fancy,VERB_EXTREME); }
         //{ if (myRank == 0) printf( " >> Phi_ <<\n" ); RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); Phi_->describe(*fancy,VERB_EXTREME); }
         FROSCH_DETAILTIMER_START_LEVELID(buildCoarseMatrixTime,"CoarseOperator::buildCoarseMatrix");
+        //#define FROSCH_COARSE_MM_REUSE
         XMatrixPtr k0;
         if (this->ParameterList_->get("Use Triple MatrixMultiply",false)) {
+            #ifdef FROSCH_COARSE_MM_REUSE
+            this->K0_ = MatrixFactory<SC,LO,GO,NO>::Build(CoarseSpace_->getBasisMapUnique(),as<LO>(0));
+            TripleMatrixMultiply<SC,LO,GO,NO>::MultiplyRAP(*Phi_,true,*this->K_,false,*Phi_,false, *(this->K0_) );
+            #else
             k0 = MatrixFactory<SC,LO,GO,NO>::Build(CoarseSpace_->getBasisMapUnique(),as<LO>(0));
-            TripleMatrixMultiply<SC,LO,GO,NO>::MultiplyRAP(*Phi_,true,*this->K_,false,*Phi_,false,*k0);
+            TripleMatrixMultiply<SC,LO,GO,NO>::MultiplyRAP(*Phi_,true,*this->K_,false,*Phi_,false, *k0 );
+            #endif
         } else {
             RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); //Phi_->describe(*fancy,VERB_EXTREME);
 
@@ -602,12 +608,42 @@ namespace FROSch {
             }
             XMatrixPtr tmp = MatrixMatrix<SC,LO,GO,NO>::Multiply(*this->K_,false,*Phi_,false,*fancy,
                                                                  call_FillComplete_on_result,doOptimizeStorage,"",mmParams);
+            #ifdef FROSCH_COARSE_MM_REUSE
+            //this->K0_ = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true, *tmp,false, (this->K0_.is_null() ? Teuchos::null : this->K0_), *fancy,
+            //                                                call_FillComplete_on_result,doOptimizeStorage,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
+#if 0
+            k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true, *tmp,false, (this->K0_.is_null() ? Teuchos::null : this->K0_), *fancy,
+                                                            call_FillComplete_on_result,doOptimizeStorage,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
+            {
+              k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true, *tmp,false, k0, *fancy,
+                                                              call_FillComplete_on_result,doOptimizeStorage,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
+	    }
+            if (this->K0_.is_null()) {
+                this->K0_ = MatrixFactory<SC,LO,GO,NO>::BuildCopy(k0);
+	    }
+#else
+            if (this->K0_.is_null()) {
+              k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true,*tmp,false,*fancy,
+                                                       call_FillComplete_on_result,doOptimizeStorage,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
+              /*{
+                // just testing reuse
+                k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true, *tmp,false, k0, *fancy,
+                                                         call_FillComplete_on_result,doOptimizeStorage,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
+	      }*/
+              this->K0_ = MatrixFactory<SC,LO,GO,NO>::BuildCopy(k0);
+            } else {
+              k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true, *tmp,false, this->K0_, *fancy,
+                                                       call_FillComplete_on_result,doOptimizeStorage,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
+	    }
+#endif
+            #else
             k0 = MatrixMatrix<SC,LO,GO,NO>::Multiply(*Phi_,true,*tmp,false,*fancy,
                                                      call_FillComplete_on_result,doOptimizeStorage,"",mmParams); //k0->describe(*fancy,VERB_EXTREME);
+            #endif
         }
 	#if FROSCH_DEBUG_OUT
         fflush(stdout); MPI_Barrier(MPI_COMM_WORLD); printf( " buildCoarseMatrix done ..\n" ); fflush(stdout); MPI_Barrier(MPI_COMM_WORLD);
-        { RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); k0->describe(*fancy,VERB_EXTREME); }
+        { RCP<FancyOStream> fancy = fancyOStream(rcpFromRef(cout)); this->K0_->describe(*fancy,VERB_EXTREME); }
         #endif
         return k0;
     }

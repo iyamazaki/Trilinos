@@ -238,6 +238,7 @@ namespace FROSch {
 #ifdef FROSCH_COARSEOPERATOR_EXPORT_AND_IMPORT
         XImportPtrVecPtr CoarseSolveImporters_ = XImportPtrVecPtr(0);
 #endif
+        XMatrixPtr K0_;
     };
 
 }

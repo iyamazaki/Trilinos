@@ -239,7 +239,11 @@ namespace Amesos2 {
 #endif // HAVE_AMESOS2_DEBUG
 
     // Special case when number vectors == 1 and single MPI process
-    if ( num_vecs == 1 && this->getComm()->getRank() == 0 && this->getComm()->getSize() == 1 ) {
+    //if ( num_vecs == 1 && this->getComm()->getRank() == 0 && this->getComm()->getSize() == 1 )
+    if ( this->getComm()->getSize() == 1 && mv_->isConstantStride() )
+    {
+      auto reindexTimer = Teuchos::TimeMonitor::getNewTimer("Amesos2_TpetraMultiVecAdapter:deep-copy");
+      Teuchos::TimeMonitor ReindexTimer(*reindexTimer);
       if(mv_->isConstantStride()) {
         bool bAssigned;
         //deep_copy_or_assign_view(bInitialize, kokkos_view, mv_->getLocalViewDevice(Tpetra::Access::ReadOnly), bAssigned);
@@ -251,6 +255,8 @@ namespace Amesos2 {
       }
     }
     else {
+      auto reindexTimer = Teuchos::TimeMonitor::getNewTimer("Amesos2_TpetraMultiVecAdapter:export-copy");
+      Teuchos::TimeMonitor ReindexTimer(*reindexTimer);
 
       // (Re)compute the Export object if necessary.  If not, then we
       // don't need to clone distribution_map; we can instead just get
@@ -498,7 +504,9 @@ namespace Amesos2 {
     const size_t num_vecs = getGlobalNumVectors ();
 
     // Special case when number vectors == 1 and single MPI process
-    if ( num_vecs == 1 && this->getComm()->getRank() == 0 && this->getComm()->getSize() == 1 ) {
+    //if ( num_vecs == 1 && this->getComm()->getRank() == 0 && this->getComm()->getSize() == 1 )
+    if ( this->getComm()->getSize() == 1 && mv_->isConstantStride() )
+    {
 
       // num_vecs = 1; stride does not matter
 

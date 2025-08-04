@@ -178,7 +178,7 @@ RCP<Xpetra::Matrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>> MatrixMatrix<Scal
 
   } else {
     C->resumeFill();  // why this is not done inside of Tpetra MxM?
-    fos << "Reuse C pattern" << std::endl;
+    fos << "Xpetra_MatrixMatrix::Multiply Reuse C pattern" << std::endl;
   }
 
   Multiply(A, transposeA, B, transposeB, *C, doFillComplete, doOptimizeStorage, label, params);  // call Multiply routine from above
