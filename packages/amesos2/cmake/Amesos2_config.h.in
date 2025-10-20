@@ -108,6 +108,9 @@
 /* For experimental Basker in ShyLU*/
 #cmakedefine HAVE_AMESOS2_KOKKOS
 
+/* Define if you want to build amesos2-d3s */
+#cmakedefine HAVE_AMESOS2_D3S
+
 /* Define to 1 if SuperLU's *gssvx and *gsisx routines need a GlobalLU_t argument. */
 #cmakedefine HAVE_AMESOS2_SUPERLU5_API
 
