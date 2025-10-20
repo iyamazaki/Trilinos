@@ -140,6 +140,25 @@ IF (${PACKAGE_NAME}_ENABLE_LAPACK)
     )
 ENDIF()
 
+IF (${PACKAGE_NAME}_ENABLE_D3S)
+  TRIBITS_INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/d3s/src)
+
+  APPEND_SET(HEADERS
+    d3s/src/d3_solver.h
+    d3s/src/gather_to_root_simple.h
+    d3s/src/sc_pardiso.h
+    d3s/src/throwAssert.h
+    )
+
+  APPEND_SET(SOURCES
+    d3s/src/d3_solver.C
+    d3s/src/gather_to_root_simple.C
+    d3s/src/sc_pardiso.C
+    )
+
+  ADD_SUBDIRECTORY(d3s/src)
+ENDIF()
+
 IF (${PACKAGE_NAME}_ENABLE_KLU2)
 
   APPEND_SET(HEADERS
