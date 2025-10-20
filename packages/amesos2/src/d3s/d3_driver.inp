@@ -1,0 +1,38 @@
+3
+pre_tran_mat1.mm
+pre_tran_rhs1.mm
+Scalar
+100
+100
+100
+32
+0
+4
+2
+1
+0
+0
+0
+2
+0
+0
+
+line 1: matrix option (1 read from files, 2 generate on-the-fly, 3 read Matrix Market file)
+line 2: base name for distributed (or Matrix Market) matrix files
+line 3: base name for distributed (or Matrix Market) rhs files ("none" to automatically generate rhs)
+line 4: problem type for on-the-fly generated matrix (Scalar or Elasticity)
+line 5: number of elements in x-direction (for on-the-fly matrix generation)
+line 6: number of elements in y-direction (for on-the-fly matrix generation)
+line 7: number of elements in z-direction (for on-the-fly matrix generation, 0 for 2D)
+line 8: number of processors for solver
+line 9: message level for MKL Pardiso
+line 10: number of threads for MKL Pardiso
+line 11: reordering option (0 minumum degree, 2 nested dissection, 3 parallel OpenMP ND)
+line 12: debug level (0 none, 1 text output, 2 text + matrix output)
+line 13: add nonsymmetry to matrix (0 no, 1 yes), testing purposes only
+line 14: remove some entries to introduce non-structural-symmetry (0 no, 1 yes),
+         for testing only
+line 15: zero some entries (0 no, 1 yes), for testing with remove some entries
+line 16: number of factorizations
+line 17: output element matrix
+line 18: output system matrix
