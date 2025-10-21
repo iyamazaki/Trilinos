@@ -81,8 +81,7 @@ public:
 
   int getNumNodeElem(const int dim) const;
   
-  void generateNodalCoordinates(const std::vector<int> & numElemDir,
-                                std::vector<double> & x,
+  void generateNodalCoordinates(std::vector<double> & x,
                                 std::vector<double> & y,
                                 std::vector<double> & z) const;
   
@@ -104,15 +103,13 @@ public:
                                     double & length,
                                     double* axial_dcs) const;
   
-  void generateElemConnectivity(const std::vector<int> & numElemDir,
-                                std::vector<std::vector<int>> & elemConn) const;
+  void generateElemConnectivity(std::vector<std::vector<int>> & elemConn) const;
   
   void outputElemMatrix(const std::vector<double> & elemMatrix) const;
 
   void generate_rhs(const int numRows);
   
-  void generateMesh(const std::vector<int> & numElemDir,
-                    std::vector<std::vector<int>> & elemConn,
+  void generateMesh(std::vector<std::vector<int>> & elemConn,
                     std::vector<double> & x,
                     std::vector<double> & y,
                     std::vector<double> & z) const;
@@ -122,16 +119,12 @@ public:
                       std::vector<std::tuple<int,int,double>> & A) const;
 
 
-  void scatterMatrix(const std::vector<std::tuple<int,int,double>> & A);
-
-  void generateMatrix(std::vector<std::tuple<int,int,double>> & A);
-  
-  void generateProcMatrices();
+  void generateModelMatrix(std::vector<std::tuple<int,int,double>> & A);
   
   
   MPI_Comm comm;
 
-  std::vector<int> rowBegin, columns, numRowsProc;
+  std::vector<int> rowBegin, columns;
   std::vector<double> values, rhs;
   int myPID=-1, numProc=-1, root=0, startGID=-1;
 
