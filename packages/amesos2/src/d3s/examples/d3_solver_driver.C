@@ -85,7 +85,14 @@ int main(int argc, char *argv[]){
   // The same file is used either when reading a matrix from files
   // or when generating it on-the-fly. Some entries in the file will be ignored
   // depending on matrix_option, but all need to be in the file.
-  const std::string inputFile = "d3_driver.inp";
+  std::string inputFile = "d3_driver.inp";
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--file") {
+       inputFile = argv[++i];
+    }
+  }
+
   GenerateProblem problem(comm, inputFile);
   const int numRowsAll = problem.getNumRowsAll();
   const int numProcSolver = problem.getNumProcSolver();
