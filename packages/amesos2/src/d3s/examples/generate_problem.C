@@ -18,6 +18,10 @@ GenerateProblem::GenerateProblem(MPI_Comm comm_in,
   MPI_Comm_rank(comm, &myPID);
   MPI_Comm_size(comm, &numProc);
   readParameters(input_file);
+
+  std::vector<int> numRowsProc;
+  std::vector<std::tuple<int,int,double>> A;
+  std::vector<double> rhs_mm;
   if (matrix_option == 1) {
     if (myPID == 0) std::cout << "reading matrix from distributed files" << std::endl;
     readProcMatrices();
@@ -25,12 +29,14 @@ GenerateProblem::GenerateProblem(MPI_Comm comm_in,
   }
   else if (matrix_option == 2) {  
     if (myPID == 0) std::cout << "generating matrix on-the-fly" << std::endl;
-    generateProcMatrices();
+    generateModelMatrix(A);
+    scatterMatrix(A, numRowsProc);
+
+    const int numRows = rowBegin.size() - 1;
+    generate_rhs(numRows);
     if (myPID == 0) std::cout << "done generating matrix" << std::endl;
   }
   else if (matrix_option == 3) {
-    std::vector<std::tuple<int,int,double>> A;
-    std::vector<double> rhs_mm;
     if (myPID == 0) {
       std::cout << "reading matrix from matrix market file" << std::endl;
       int num_rows_mm;
@@ -38,7 +44,6 @@ GenerateProblem::GenerateProblem(MPI_Comm comm_in,
       readMatrixRhs(filenameBaseRhs, num_rows_mm, rhs_mm);
       std::cout << "done reading Matrix Market file" << std::endl;
     }
-    std::vector<int> numRowsProc;
     scatterMatrix(A, numRowsProc);
     scatterRhs(numRowsProc, rhs_mm);    
   }
@@ -183,14 +188,10 @@ void GenerateProblem::scatterMatrix(const std::vector<std::tuple<int,int,double>
 void GenerateProblem::scatterRhs(const std::vector<int> & numRowsProc,
                                  const std::vector<double> & rhs_mm)
 {
-  const int root = 0;
   int numRows;
   MPI_Scatter(numRowsProc.data(), 1, MPI_INT, &numRows, 1, MPI_INT, root, comm);
   rhs.resize(numRows);
-  const int numProc = numRowsProc.size();
   std::vector<int> displs(numProc, 0);
-  int myPID;
-  MPI_Comm_rank(comm, &myPID);
   if (myPID == root) {
     for (int i=1; i<numProc; i++) {
       displs[i] = displs[i-1] + numRowsProc[i-1];
@@ -365,6 +366,9 @@ void GenerateProblem::makeAdjustments()
   if (fin.is_open() == false) {
     std::cout << "could not open file " << inputFile << std::endl;
     ThrowAssert(0, "error opening file");
+  }
+  if (myPID == root) {
+    std::cout << std::endl << "Reading Example options from " << inputFile << std::endl;
   }
   numElemDir.resize(3);
   fin >> matrix_option;
@@ -543,7 +547,6 @@ void GenerateProblem::getNumTermsProc(const std::vector<std::tuple<int,int,doubl
                                       const std::vector<int> & numRowsProc,
                                       std::vector<int> & numTermsProc) const
 {
-  const int numProc = numRowsProc.size();
   numTermsProc.resize(numProc, 0);
   int currentProc(0), maxRow(numRowsProc[0]);
   for (size_t i=0; i<A.size(); i++) {
@@ -560,8 +563,7 @@ void GenerateProblem::getNumTermsProc(const std::vector<std::tuple<int,int,doubl
   }
 }
 
-void GenerateProblem::generateNodalCoordinates(const std::vector<int> & numElemDir,
-                                               std::vector<double> & x,
+void GenerateProblem::generateNodalCoordinates(std::vector<double> & x,
                                                std::vector<double> & y,
                                                std::vector<double> & z) const
 {
@@ -599,8 +601,7 @@ void GenerateProblem::generateNodalCoordinates(const std::vector<int> & numElemD
   }
 }
 
-void GenerateProblem::generateElemConnectivity(const std::vector<int> & numElemDir,
-                                               std::vector<std::vector<int>> & elemConn) const
+void GenerateProblem::generateElemConnectivity(std::vector<std::vector<int>> & elemConn) const
 {
   const int dim = numElemDir.size();
   int numElem = numElemDir[0] * numElemDir[1];
@@ -641,14 +642,13 @@ void GenerateProblem::generateElemConnectivity(const std::vector<int> & numElemD
   }
 }
 
-void GenerateProblem::generateMesh(const std::vector<int> & numElemDir,
-                                   std::vector<std::vector<int>> & elemConn,
+void GenerateProblem::generateMesh(std::vector<std::vector<int>> & elemConn,
                                    std::vector<double> & x,
                                    std::vector<double> & y,
                                    std::vector<double> & z) const
 {
-  generateElemConnectivity(numElemDir, elemConn);
-  generateNodalCoordinates(numElemDir, x, y, z);
+  generateElemConnectivity(elemConn);
+  generateNodalCoordinates(x, y, z);
 }
 
 void GenerateProblem::generateMatrix(const std::vector<std::vector<int>> & elemConn,
@@ -720,59 +720,7 @@ void GenerateProblem::generateMatrix(const std::vector<std::vector<int>> & elemC
   A.resize(numTerms);
 }
 
-void GenerateProblem::scatterMatrix(const std::vector<std::tuple<int,int,double>> & A)
-{
-  numRowsProc.resize(numProc);
-  std::vector<int> startGIDsProc, numTermsProc, ArowsRoot, AcolsRoot;
-  std::vector<double> AvalsRoot;
-  if (myPID == root) {
-    ArowsRoot.resize(A.size());
-    AcolsRoot.resize(A.size());
-    AvalsRoot.resize(A.size());
-    for (size_t i=0; i<A.size(); i++) {
-      ArowsRoot[i] = std::get<0>(A[i]);
-      AcolsRoot[i] = std::get<1>(A[i]);
-      AvalsRoot[i] = std::get<2>(A[i]);
-    }
-    const int index = A.size() - 1;
-    const int numRows = std::get<0>(A[index]) + 1; // 0-based indices
-    const int numRowsPerProc = numRows/numProc;
-    numRowsProc.resize(numProc);
-    startGIDsProc.resize(numProc);
-    int numRowsSum = 0;
-    for (int i=0; i<numProc; i++) {
-      startGIDsProc[i] = numRowsSum;
-      numRowsProc[i] = numRowsPerProc;
-      if (i == numProc-1) {
-        numRowsProc[i] = numRows - numRowsSum;
-      }
-      numRowsSum += numRowsProc[i];
-    }
-    getNumTermsProc(A, numRowsProc, numTermsProc);
-  }
-  int numRows, numTermsA;
-  MPI_Scatter(numRowsProc.data(), 1, MPI_INT, &numRows, 1, MPI_INT, root, comm);
-  MPI_Scatter(startGIDsProc.data(), 1, MPI_INT, &startGID, 1, MPI_INT, root, comm);
-  MPI_Scatter(numTermsProc.data(), 1, MPI_INT, &numTermsA, 1, MPI_INT, root, comm);
-  columns.resize(numTermsA);
-  values.resize(numTermsA);
-  std::vector<int> Arows(numTermsA);
-  std::vector<int> displs(numProc, 0);
-  if (myPID == root) {
-    for (int i=1; i<numProc; i++) {
-      displs[i] = displs[i-1] + numTermsProc[i-1];
-    }
-  }
-  MPI_Scatterv(ArowsRoot.data(), numTermsProc.data(), displs.data(), MPI_INT,
-               Arows.data(), numTermsA, MPI_INT, root, comm);
-  MPI_Scatterv(AcolsRoot.data(), numTermsProc.data(), displs.data(), MPI_INT,
-               columns.data(), numTermsA, MPI_INT, root, comm);
-  MPI_Scatterv(AvalsRoot.data(), numTermsProc.data(), displs.data(), MPI_DOUBLE,
-               values.data(), numTermsA, MPI_DOUBLE, root, comm);
-  extractRowBegin(Arows, numRows);
-}
-
-void GenerateProblem::generateMatrix(std::vector<std::tuple<int,int,double>> & A)
+void GenerateProblem::generateModelMatrix(std::vector<std::tuple<int,int,double>> & A)
 {
   // generate matrix on proc 0
   const int dim = numElemDir.size();
@@ -781,19 +729,10 @@ void GenerateProblem::generateMatrix(std::vector<std::tuple<int,int,double>> & A
     std::vector<double> x, y, z;
     auto elemMatrix = getElemMatrix(dim);
     if (output_elem_matrix) outputElemMatrix(elemMatrix);
-    generateMesh(numElemDir, elemConn, x, y, z);
+    generateMesh(elemConn, x, y, z);
     generateMatrix(elemConn, elemMatrix, A);
     if (output_matrix) outputMatrix(A);
   }
-}
-
-void GenerateProblem::generateProcMatrices()
-{
-  std::vector<std::tuple<int,int,double>> A;
-  generateMatrix(A);
-  scatterMatrix(A);
-  const int numRows = rowBegin.size() - 1;
-  generate_rhs(numRows);
 }
 
 void GenerateProblem::generate_rhs(const int numRows)
