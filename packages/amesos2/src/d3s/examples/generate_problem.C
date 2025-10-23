@@ -23,26 +23,26 @@ GenerateProblem::GenerateProblem(MPI_Comm comm_in,
   std::vector<std::tuple<int,int,double>> A;
   std::vector<double> rhs_mm;
   if (matrix_option == 1) {
-    if (myPID == 0) std::cout << "reading matrix from distributed files" << std::endl;
+    if (myPID == 0 && msg_level > 0) std::cout << "reading matrix from distributed files" << std::endl;
     readProcMatrices();
-    if (myPID == 0) std::cout << "done reading matrix from distributed files" << std::endl;
+    if (myPID == 0 && msg_level > 0) std::cout << "done reading matrix from distributed files" << std::endl;
   }
   else if (matrix_option == 2) {  
-    if (myPID == 0) std::cout << "generating matrix on-the-fly" << std::endl;
+    if (myPID == 0 && msg_level > 0) std::cout << "generating matrix on-the-fly" << std::endl;
     generateModelMatrix(A);
     scatterMatrix(A, numRowsProc);
 
     const int numRows = rowBegin.size() - 1;
     generate_rhs(numRows);
-    if (myPID == 0) std::cout << "done generating matrix" << std::endl;
+    if (myPID == 0 && msg_level > 0) std::cout << "done generating matrix" << std::endl;
   }
   else if (matrix_option == 3) {
     if (myPID == 0) {
-      std::cout << "reading matrix from matrix market file" << std::endl;
+      if (msg_level > 0) std::cout << "reading matrix from matrix market file" << std::endl;
       int num_rows_mm;
       readMatrixMarket(filenameBase, num_rows_mm, A);
       readMatrixRhs(filenameBaseRhs, num_rows_mm, rhs_mm);
-      std::cout << "done reading Matrix Market file" << std::endl;
+      if (msg_level > 0) std::cout << "done reading Matrix Market file" << std::endl;
     }
     scatterMatrix(A, numRowsProc);
     scatterRhs(numRowsProc, rhs_mm);    
@@ -208,6 +208,8 @@ void GenerateProblem::readMatrixMarket(const std::string & matrixFile,
   std::ifstream fileMatrix(matrixFile);
   if (!fileMatrix.is_open()) {
     throw std::runtime_error("Error: Could not open file " + matrixFile);
+  } else {
+    if (msg_level > 0) std::cout << "Reading Matrix from " + matrixFile << std::endl;
   }
   std::string line;
   bool header_read = false;
