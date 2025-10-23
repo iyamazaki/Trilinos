@@ -11,7 +11,44 @@ void sc_pardiso::isFailed(int ierr, const char* where) const
 {
   if (ierr!=0) {
     std::cerr << "MKL Pardiso linear solver failed in the "
-              << where << " phase.\n";
+              << where << " phase with ierr = " << ierr << ".\n";
+    switch( ierr ){
+    case -1:
+      std::cerr << "PardisoMKL reported error: 'Input inconsistent'\n";
+      break;
+    case -2:
+      std::cerr << "PardisoMKL reported error: 'Not enough memory'\n";
+      break;
+    case -3:
+      std::cerr << "PardisoMKL reported error: 'Reordering problem'\n";
+      break;
+    case -4:
+      std::cerr <<
+        "PardisoMKL reported error: 'Zero pivot, numerical "
+        "factorization or iterative refinement problem'\n";
+      break;
+    case -5:
+      std::cerr << "PardisoMKL reported error: 'Unclassified (internal) error'\n";
+      break;
+    case -6:
+      std::cerr << "PardisoMKL reported error: 'Reordering failed'\n";
+      break;
+    case -7:
+      std::cerr << "PardisoMKL reported error: 'Diagonal matrix is singular'\n";
+      break;
+    case -8:
+      std::cerr << "PardisoMKL reported error: '32-bit integer overflow problem'\n";
+      break;
+    case -9:
+      std::cerr << "PardisoMKL reported error: 'Not enough memory for OOC'\n";
+      break;
+    case -10:
+      std::cerr << "PardisoMKL reported error: 'Problems with opening OOC temporary files'\n";
+      break;
+    case -11:
+      std::cerr << "PardisoMKL reported error: 'Read/write problem with OOC data file'\n";
+      break;
+    }
   }
 }
 
@@ -98,23 +135,28 @@ int sc_pardiso::analysis_phase()
   return ierr;
 }
 
-void sc_pardiso::factorize(double* values)
+int sc_pardiso::factorize(double* values, bool verbose)
 {
+  int r_val = -1;
   m_values = values;
-  if (m_print_level) std::cout << "performing MKL/Pardiso numeric phase" << std::endl;
-  numeric_phase();
+  if (m_debug_level > 0 && verbose) {
+    std::cout << "performing MKL/Pardiso numeric phase" << std::endl;
+  }
+  r_val = numeric_phase();
+  return r_val;
 }
 
-void sc_pardiso::initialize(const int numRows,
-                            int* rowBegin,
-                            int* columns,
-                            int numRowsB,
-                            int* rowsB,
-                            int msg_level,
-                            int num_threads,
-                            int reorder_option,
-                            int structurally_symmetric,
-                            int print_level)
+int sc_pardiso::initialize(const int numRows,
+                           int* rowBegin,
+                           int* columns,
+                           int numRowsB,
+                           int* rowsB,
+                           int msg_level,
+                           int num_threads,
+                           int reorder_option,
+                           int structurally_symmetric,
+                           int debug_level,
+                           bool verbose)
 {
   mkl_set_num_threads(num_threads);
   m_numRows = numRows;
@@ -123,15 +165,18 @@ void sc_pardiso::initialize(const int numRows,
   m_numRowsB = numRowsB;
   m_rowsB = rowsB;
   m_schur.resize(numRowsB*numRowsB);
-  m_print_level = print_level;
+  m_debug_level = debug_level;
   // matrix_type = 1:  real and structurally symmetric
   // matrix_type = 11: real and nonsymmetric
+  int r_val = -1;
   int matrix_type;
   if (structurally_symmetric) matrix_type = 1;
   else matrix_type = 11;
-  set_parameters(matrix_type, msg_level, reorder_option);
-  if (m_print_level) std::cout << "performing MKL/Pardiso analysis phase" << std::endl;
-  analysis_phase();
+  set_parameters(matrix_type, msg_level, reorder_option, verbose);
+  if (m_debug_level > 0 && verbose) {
+    std::cout << "performing MKL/Pardiso analysis phase" << std::endl;
+  }
+  r_val = analysis_phase();
   /*
   m_solver = new MklPardisoSolver();
   // use Metis nested dissection for fill-reducing ordering
@@ -149,6 +194,7 @@ void sc_pardiso::initialize(const int numRows,
   ThrowAssert(0, "Pardiso solver only available for Intel builds");
 #endif
   */
+  return r_val;
 }
 
 sc_pardiso::~sc_pardiso()
@@ -158,7 +204,8 @@ sc_pardiso::~sc_pardiso()
 
 void sc_pardiso::set_parameters(const int matrix_type,
                                 const int msg_level,
-                                const int reorder_option)
+                                const int reorder_option,
+                                bool verbose)
 {
   m_matrixType = matrix_type;
   m_msgLvl = msg_level;
@@ -166,6 +213,7 @@ void sc_pardiso::set_parameters(const int matrix_type,
     m_iparam[i] = 0;
     m_pt[i] = 0;
   }
+  pardisoinit((_MKL_DSS_HANDLE_t*)m_pt, &m_matrixType, m_iparam);
   // See intel documentation on pardiso for more information:
   m_iparam[0] = 1; // do not use solver defaults
   const bool valid_reorder = (reorder_option == 0) || (reorder_option == 2) ||
@@ -179,6 +227,9 @@ void sc_pardiso::set_parameters(const int matrix_type,
   m_iparam[34] = 1; // 0-based indexing
   m_iparam[35] = 1; // calculate Schur complement
   m_iparam[59] = 0; // use in-core mode
+  if (m_debug_level > 0 && verbose) {
+    std::cout << "setting MKL/Pardiso parameters (reorder_option = " << reorder_option << ")" << std::endl;
+  }
 }
 
 std::vector<double> sc_pardiso::getSchurComplement() const
