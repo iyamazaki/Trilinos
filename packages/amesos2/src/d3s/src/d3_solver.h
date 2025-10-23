@@ -26,12 +26,12 @@ public:
 
   ~D3Solver();
   
-  void initialize(const std::vector<int> & rowBegin_in,
-                  const std::vector<int> & columns_in,
-                  const int startGID_in,
-                  const int numProcSolver_in);
+  int initialize(const std::vector<int> & rowBegin_in,
+                 const std::vector<int> & columns_in,
+                 const int startGID_in,
+                 const int numProcSolver_in);
   
-  void factorize(const std::vector<double> & values);
+  int factorize(const std::vector<double> & values);
   
   void solve(const std::vector<double> & rhs,
              std::vector<double> & sol,
@@ -380,7 +380,9 @@ public:
                    const double time) const;
   
   void getProcName();
-  
+ 
+private:
+
   MPI_Comm comm;
   int myPID, msg_level, num_threads, reorder_option, debug_level, numRows_proc,
     startGID, numProcSolver, num_level, structurally_symmetric, num_extra_edges;

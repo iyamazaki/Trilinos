@@ -210,7 +210,7 @@ void D3Solver::getGraphForMetis(const std::vector<int> & rowBegin,
     for (int j=0; j<num_cols; j++) columnsMetis[index++] = sortedCols[j];
   }
   if (num_additional_edges > 0) {
-    if (debug_level) {
+    if (msg_level > 0 && debug_level > 0) {
       std::cout << "number of additional edges added to graph for Metis = "
                 << num_additional_edges << std::endl;
     }
@@ -268,19 +268,19 @@ void D3Solver::extractRowSubIDs(const std::vector<int> & node_begin,
   }
 }
 
-void D3Solver::checkRowSubIDs(const std::vector<int> & rowSubIDs,
+void D3Solver::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
                               const std::vector<int> & rowBegin,
                               const std::vector<int> & columns) const
 {
   int maxSubID = 0;
-  for (size_t i=0; i<rowSubIDs.size(); i++) {
-    const int sub = std::abs(rowSubIDs[i]);
+  for (size_t i=0; i<in_rowSubIDs.size(); i++) {
+    const int sub = std::abs(in_rowSubIDs[i]);
     if (sub > maxSubID) maxSubID = sub;
   }
   const int num_group = maxSubID + 1;
   std::vector<std::vector<int>> subI(numProcSolver);
-  for (size_t i=0; i<rowSubIDs.size(); i++) {
-    const int sub = rowSubIDs[i];
+  for (size_t i=0; i<in_rowSubIDs.size(); i++) {
+    const int sub = in_rowSubIDs[i];
     if (sub >= 0) {
       subI[sub].push_back(i);
     }
@@ -291,7 +291,7 @@ void D3Solver::checkRowSubIDs(const std::vector<int> & rowSubIDs,
       const int row = subI[i][j];
       for (int k=rowBegin[row]; k<rowBegin[row+1]; k++) {
         const int col = columns[k];
-        const int sub2 = std::abs(rowSubIDs[col]);
+        const int sub2 = std::abs(in_rowSubIDs[col]);
         adj_sub[sub2] = 1;
       }
     }
@@ -306,41 +306,41 @@ void D3Solver::checkRowSubIDs(const std::vector<int> & rowSubIDs,
   }
 }
 
-void D3Solver::get_separators(const std::vector<int> & rowSubIDs,
-                              std::vector<int> & sepIDs,
-                              std::vector<int> & sepBegin,
-                              std::vector<int> & sepRows) const
+void D3Solver::get_separators(const std::vector<int> & in_rowSubIDs,
+                              std::vector<int> & in_sepIDs,
+                              std::vector<int> & in_sepBegin,
+                              std::vector<int> & in_sepRows) const
 {
-  const int numRows = rowSubIDs.size();
+  const int numRows = in_rowSubIDs.size();
   const int num_sep = numProcSolver - 1;
-  sepIDs.resize(num_sep);
+  in_sepIDs.resize(num_sep);
   for (int i=0; i<num_sep; i++) {
-    sepIDs[i] = numProcSolver + i;
+    in_sepIDs[i] = numProcSolver + i;
   }
   std::vector<int> count(2*numProcSolver, 0);
   for (int i=0; i<numRows; i++) {
-    if (rowSubIDs[i] < 0) {
-      const int sepID = -rowSubIDs[i];
+    if (in_rowSubIDs[i] < 0) {
+      const int sepID = -in_rowSubIDs[i];
       count[sepID]++;
     }
   }
-  if (debug_level) {
+  if (msg_level > 0 && debug_level > 0) {
     std::cout << "number of separators = " << num_sep << std::endl;
   }
-  sepBegin.resize(num_sep+1, 0);
+  in_sepBegin.resize(num_sep+1, 0);
   for (int i=0; i<num_sep; i++) {
-    const int sep = sepIDs[i];
-    sepBegin[i+1] = sepBegin[i] + count[sep];
+    const int sep = in_sepIDs[i];
+    in_sepBegin[i+1] = in_sepBegin[i] + count[sep];
     count[i] = 0;
   }
-  const int num_terms = sepBegin[num_sep];
-  sepRows.resize(num_terms);
+  const int num_terms = in_sepBegin[num_sep];
+  in_sepRows.resize(num_terms);
   for (int i=0; i<numRows; i++) {
-    if (rowSubIDs[i] < 0) {
-      const int sepID = -rowSubIDs[i];
-      const int index = getLocalID(sepID, sepIDs);
-      const int index2 = sepBegin[index] + count[index];
-      sepRows[index2] = i;
+    if (in_rowSubIDs[i] < 0) {
+      const int sepID = -in_rowSubIDs[i];
+      const int index = getLocalID(sepID, in_sepIDs);
+      const int index2 = in_sepBegin[index] + count[index];
+      in_sepRows[index2] = i;
       count[index]++;
     }
   }
@@ -468,11 +468,9 @@ void D3Solver::update_graph(const std::vector<int> & rowBegin,
   for (int i=0; i<numRows_proc; i++) {
     count[i] = rowBegin[i+1] - rowBegin[i];
   }
-  int index = 0;
   const int num_extra = extraEdges.size() / 2;
   for (int i=0; i<num_extra; i++) {
-    const int row = extraEdges[index];
-    index += 2;
+    const int row = extraEdges[2*i];
     const int local_row = row - startGID;
     ThrowAssert((local_row >= 0) && (local_row < numRows_proc), "row is out of range");
     count[local_row]++;
@@ -487,17 +485,16 @@ void D3Solver::update_graph(const std::vector<int> & rowBegin,
   valuesUse.resize(numTerms, 0);
   for (int i=0; i<numRows_proc; i++) {
     for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
-      const int col = columns[j];
       const int index = rowBeginUse[i] + count[i];
-      columnsUse[index] = col;
+      columnsUse[index] = columns[j];;
       count[i]++;
     }
   }
-  index = 0;
   for (int i=0; i<num_extra; i++) {
-    const int row = extraEdges[index++];
-    const int col = extraEdges[index++];
+    const int row = extraEdges[2*i];
+    const int col = extraEdges[2*i+1];
     const int local_row = row - startGID;
+
     const int index = rowBeginUse[local_row] + count[local_row];
     columnsUse[index] = col;
     count[local_row]++;
@@ -528,7 +525,7 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin,
     int numSepLevel(1), interfaceSize(0);
     const int numLevel = std::log2(numProcSolver) + 1;
     for (int level=0; level<numLevel; level++) {
-      if (debug_level) {
+      if (msg_level > 0 && debug_level > 0) {
         if (level < numLevel-1) {
           std::cout << "separator sizes for level " << level << ": \n";
         }
@@ -538,12 +535,14 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin,
       }
       for (int i=0; i<numSepLevel; i++) {
         const int sepSize = sizes[lowerIndex--];
-        if (debug_level) std::cout << sepSize << std::endl;
+        if (msg_level > 0 && debug_level > 0) std::cout << sepSize << std::endl;
         if (level < numLevel-1) interfaceSize += sepSize;
       }
       numSepLevel *= 2;
     }
-    if (debug_level) std::cout << "total interface size = " << interfaceSize << std::endl;
+    if (msg_level > 0 && debug_level > 0) {
+      std::cout << "total interface size = " << interfaceSize << std::endl;
+    }
     std::vector<int> level, location;
     getLevelsAndLocations(numProcSolver, level, location);
     const int num_level_nd = std::log2(numProcSolver) + 1;
@@ -1297,13 +1296,13 @@ void D3Solver::extractMatrix(const int level,
 void D3Solver::extractRhs(const int level)
 {
   std::vector<double> & rhs = rhs_sep[level];
-  const std::vector<std::vector<double>> & rhs_recv = rhs_recv_sep[level];
+  const std::vector<std::vector<double>> & rhs_recv_l = rhs_recv_sep[level];
   const std::vector<std::vector<int>> & index_map = rhs_recv_sep_index[level];
   const int num_recvs = index_map.size();
   for (int i=0; i<num_recvs; i++) {
     for (size_t j=0; j<index_map[i].size(); j++) {
       const int index = index_map[i][j];
-      rhs[index] = rhs_recv[i][j];
+      rhs[index] = rhs_recv_l[i][j];
     }
   }
 }
@@ -1347,9 +1346,9 @@ void D3Solver::sortColumns(const std::vector<int> & rowBegin,
 
 void D3Solver::getSubMatrices(const std::vector<int> & rowBegin,
                               const std::vector<int> & columns,
-                              std::vector<int> & rowBeginSub,
-                              std::vector<int> & columnsSub,
-                              std::vector<double> & valuesSub,
+                              std::vector<int> & in_rowBeginSub,
+                              std::vector<int> & in_columnsSub,
+                              std::vector<double> & in_valuesSub,
                               std::vector<int> & rowGIDsSub)
 {
   // subdomain matrices [A_{II} A_{IB}; A_{BI} 0]
@@ -1358,7 +1357,7 @@ void D3Solver::getSubMatrices(const std::vector<int> & rowBegin,
   phase1(rowBegin, columns, num_rows_recv, row_GIDs_recv,
          column_counts_recv, column_GIDs_recv);
   generateSubMatrices(row_GIDs_recv, column_counts_recv, column_GIDs_recv,
-                      rowBeginSub, columnsSub, valuesSub, rowGIDsSub);
+                      in_rowBeginSub, in_columnsSub, in_valuesSub, rowGIDsSub);
   phase1_rhs();  
 }
 
@@ -1380,7 +1379,7 @@ void D3Solver::output_sub_matrices(const std::vector<int> & rowBegin,
                                    const std::vector<int> & columns,
                                    const std::vector<double> & values)
 {
-  if (debug_level < 2) return;
+  if (msg_level == 0 || debug_level < 2) return;
   const int numRows = rowsISub.size() + rowsBSub.size();
   if (numRows > 0) {
     output_rows("rowsI", rowsISub);
@@ -1688,7 +1687,7 @@ void D3Solver::assignTargetMPIs(const std::vector<int> & rowBegin)
     auto iter = std::unique(target_copy.begin(), target_copy.end());
     target_copy.erase(iter, target_copy.end());
     ThrowAssert(target_copy.size() == targetMPIs.size(), "duplicate MPIs in targetMPIs");
-    if (debug_level) {
+    if (msg_level > 0 && debug_level > 0) {
       for (int i=0; i<numProcSolver; i++) {
         std::cout << "subdomain " << i << " is on node " << node_names[targetMPIs[i]]
                   << " and has MPI rank " << targetMPIs[i] << std::endl;
@@ -1703,7 +1702,7 @@ int D3Solver::setNumProcSolver(const int numProcSolver_in)
   int logInput = static_cast<int>(std::log2(numProcSolver_in));
   numProcSolver = std::pow(2, logInput);
   if (numProcSolver != numProcSolver_in) {
-    if (myPID == 0) {
+    if (msg_level > 0 && myPID == 0) {
       std::cout << "numProcSolver should be a power of 2" << std::endl;
       std::cout << "resetting to next lower power of 2" << std::endl;
     }
@@ -1711,10 +1710,10 @@ int D3Solver::setNumProcSolver(const int numProcSolver_in)
   return numProcSolver;
 }
 
-void D3Solver::initialize(const std::vector<int> & rowBegin_in,
-                          const std::vector<int> & columns_in,
-                          const int startGID_in,
-                          const int numProcSolver_in)
+int D3Solver::initialize(const std::vector<int> & rowBegin_in,
+                         const std::vector<int> & columns_in,
+                         const int startGID_in,
+                         const int numProcSolver_in)
 {
   startGID = startGID_in;
   numRows_proc = rowBegin_in.size() - 1;
@@ -1723,6 +1722,8 @@ void D3Solver::initialize(const std::vector<int> & rowBegin_in,
   getRowSubIDs(rowBegin_in, columns_in);
   getProcName();
   numProcSolver = setNumProcSolver(numProcSolver_in);
+
+  int r_val = 0;
   const std::vector<int> & rowBegin = *rowBeginPtr;
   const std::vector<int> & columns = *columnsPtr;
   assignTargetMPIs(rowBegin);
@@ -1737,25 +1738,29 @@ void D3Solver::initialize(const std::vector<int> & rowBegin_in,
     structurally_symmetric = 1;
     sort_and_add_zero_diags(rowBeginSub, columnsSub);
 #ifdef USE_INTEL_PARDISO
+    bool verbose = (myPID == 0);
     const int num_rows_subB = rowsBSub.size();
-    pardiso_solver.initialize(num_rows_sub, rowBeginSub.data(), columnsSub.data(),
-                              num_rows_subB, rowsBSub.data(), msg_level, num_threads,
-                              reorder_option, structurally_symmetric, debug_level);
+    r_val = pardiso_solver.initialize(num_rows_sub, rowBeginSub.data(), columnsSub.data(),
+                                      num_rows_subB, rowsBSub.data(), msg_level, num_threads,
+                                      reorder_option, structurally_symmetric, debug_level, verbose);
 #endif
   }
   timer_pardiso_symbolic = clockIt() - startTime;
-  int level = 0;
-  sc_GIDs[0] = getRowGIDsSubB(rowGIDsSub);
-  while (level < num_level) {
-    calculate_schur_complement(level, rowBegin, columns, sc_GIDs[level], sc_GIDs[level+1]);
-    level++;
+  if (r_val == 0) {
+    int level = 0;
+    sc_GIDs[0] = getRowGIDsSubB(rowGIDsSub);
+    while (level < num_level) {
+      calculate_schur_complement(level, rowBegin, columns, sc_GIDs[level], sc_GIDs[level+1]);
+      level++;
+    }
+    columnsUse.resize(0);
+    columnsUse.shrink_to_fit();
   }
-  columnsUse.resize(0);
-  columnsUse.shrink_to_fit();
+  return r_val;
 }
 
 void D3Solver::getSubMatrices(const std::vector<double> & values,
-                              std::vector<double> & valuesSub)
+                              std::vector<double> & in_valuesSub)
 {
   communicateMatrixValues(values);
   const int num_recvs = values_recv.size();
@@ -1763,7 +1768,7 @@ void D3Solver::getSubMatrices(const std::vector<double> & values,
     for (size_t j=0; j<values_recv[i].size(); j++) {
       const int index1 = index_map_sub[i][j];
       const int index2 = old_to_new_indices[index1];
-      valuesSub[index2] = values_recv[i][j];
+      in_valuesSub[index2] = values_recv[i][j];
     }
   }
 }
@@ -1785,8 +1790,9 @@ void D3Solver::assign_values(const std::vector<double> & values_in)
   }
 }
 
-void D3Solver::factorize(const std::vector<double> & values_in)
+int D3Solver::factorize(const std::vector<double> & values_in)
 {
+  int r_val = 0;
   assign_values(values_in);
   const std::vector<double> & values = *valuesPtr;
   double startTime = clockIt();
@@ -1798,30 +1804,34 @@ void D3Solver::factorize(const std::vector<double> & values_in)
   startTime = clockIt();
 #ifdef USE_INTEL_PARDISO
   if (pardiso_solver.getNumRows() != 0) {
-    pardiso_solver.factorize(valuesSub.data());
+    bool verbose = (myPID == 0);
+    r_val = pardiso_solver.factorize(valuesSub.data(), verbose);
     sc[0] = pardiso_solver.getSchurComplement();
   }
 #endif
   timer_pardiso_numeric = clockIt() - startTime;
   
-  int level = 0;
-  while (level < num_level) {
-    startTime = clockIt();
-    calculate_schur_complement(level, values);
-    timer_factor[level] = clockIt() - startTime;
-    level++;
+  if (r_val == 0) {
+    int level = 0;
+    while (level < num_level) {
+      startTime = clockIt();
+      calculate_schur_complement(level, values);
+      timer_factor[level] = clockIt() - startTime;
+      level++;
+    }
   }
+  return r_val;
 }
 
 void D3Solver::communicateMatrixValuesB(const int level,
                                         const std::vector<double> & values)
 {
-  std::vector<std::vector<double>> & values_send = values_send_B[level];
-  std::vector<std::vector<int>> & indices = values_send_B_index[level];
-  const int num_send = values_send.size();
+  std::vector<std::vector<double>> & values_send_l = values_send_B[level];
+  std::vector<std::vector<int>>    & indices = values_send_B_index[level];
+  const int num_send = values_send_l.size();
   for (int i=0; i<num_send; i++) {
-    for (size_t j=0; j<values_send[i].size(); j++) {
-      values_send[i][j] = values[indices[i][j]];
+    for (size_t j=0; j<values_send_l[i].size(); j++) {
+      values_send_l[i][j] = values[indices[i][j]];
     }
   }
   communicateData(values_send_B[level], my_recv_PIDs_B[level], my_send_PIDs_B[level],
@@ -1831,12 +1841,12 @@ void D3Solver::communicateMatrixValuesB(const int level,
 void D3Solver::communicateRhsValuesB(const int level,
                                      const std::vector<double> & rhs)
 {
-  std::vector<std::vector<double>> & rhs_send = rhs_send_sep[level];
-  std::vector<std::vector<int>> & indices = rhs_send_sep_index[level];
-  const int num_send = rhs_send.size();
+  std::vector<std::vector<double>> & rhs_send_l = rhs_send_sep[level];
+  std::vector<std::vector<int>>    & indices = rhs_send_sep_index[level];
+  const int num_send = rhs_send_l.size();
   for (int i=0; i<num_send; i++) {
-    for (size_t j=0; j<rhs_send[i].size(); j++) {
-      rhs_send[i][j] = rhs[indices[i][j]];
+    for (size_t j=0; j<rhs_send_l[i].size(); j++) {
+      rhs_send_l[i][j] = rhs[indices[i][j]];
     }
   }
   communicateData(rhs_send_sep[level], my_recv_PIDs_sep[level],
@@ -2296,18 +2306,20 @@ void D3Solver::assemble_dense(const int level,
     if (index == -1) not_in_sep.push_back(gIDs_recv[i]);
   }
   std::sort(not_in_sep.begin(), not_in_sep.end());
-  auto iter = std::unique(not_in_sep.begin(), not_in_sep.end());
-  not_in_sep.erase(iter, not_in_sep.end());
-  // add potentially missing rows to not_in_sep (this is rare but verified it is possible)
   int num_additional = 0;
-  for (size_t i=0; i<rowGIDsB.size(); i++) {
-    const int row = rowGIDsB[i];
-    const int index = getLocalID(row, sep_gIDs, num_rows_sep, do_not_throw);
-    if (index == -1) {
-      const int index2 = getLocalID(row, not_in_sep, do_not_throw);
-      if (index2 == -1) {
-        not_in_sep.push_back(row);
-        num_additional++;
+  {
+    auto iter = std::unique(not_in_sep.begin(), not_in_sep.end());
+    not_in_sep.erase(iter, not_in_sep.end());
+    // add potentially missing rows to not_in_sep (this is rare but verified it is possible)
+    for (size_t i=0; i<rowGIDsB.size(); i++) {
+      const int row = rowGIDsB[i];
+      const int index = getLocalID(row, sep_gIDs, num_rows_sep, do_not_throw);
+      if (index == -1) {
+        const int index2 = getLocalID(row, not_in_sep, do_not_throw);
+        if (index2 == -1) {
+          not_in_sep.push_back(row);
+          num_additional++;
+        }
       }
     }
   }
