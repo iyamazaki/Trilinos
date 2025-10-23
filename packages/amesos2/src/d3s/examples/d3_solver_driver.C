@@ -114,47 +114,53 @@ int main(int argc, char *argv[]){
     if (add_nonsymmetry) {
       std::cout << "artificially adding nonsymmetry to matrix (for testing only)" << std::endl;
     }
+    std::cout << "message level        = " << msg_level << std::endl;
     if (remove_some_entries) {
       std::cout << "artificially removing some matrix entries to remove structural symmetry"
                 << " (for testing only)" << std::endl;
     }
+    std::cout << std::endl;
   }
+  int r_val = 0;
   {
     D3Solver solver(comm, msg_level, num_threads, reorder_option, debugLevel);
     // initialization
     MPI_Barrier(comm);
     double startTime = clockIt();
-    solver.initialize(rowBegin, columns, startGID, numProcSolver);
-    MPI_Barrier(comm);
-    double elapsedTime = clockIt() - startTime;
-    printTiming("initialization", myPID, elapsedTime);
-    const int numRows = rowBegin.size() - 1;
-    std::vector<double> sol(numRows), solAll;
-    for (int i=0; i<num_factorizations; i++) {
-      // factorization
-      // scale diagonal for subsequent factorizations and solves
-      if (i > 0) problem.scaleDiagonal();
+    r_val = solver.initialize(rowBegin, columns, startGID, numProcSolver);
+    if (r_val == 0) {
       MPI_Barrier(comm);
-      startTime = clockIt();
-      solver.factorize(values);
-      MPI_Barrier(comm);
-      elapsedTime = clockIt() - startTime;
-      std::string text = std::to_string(i) + ": d3_solver numeric factorization";
-      printTiming(text, myPID, elapsedTime);
-      // solve
-      MPI_Barrier(comm);
-      startTime = clockIt();
-      solver.solve(rhs, sol);
-      MPI_Barrier(comm);
-      elapsedTime = clockIt() - startTime;
-      text = std::to_string(i)             + ": d3_solver solve                ";
-      printTiming(text, myPID, elapsedTime);
-      solver.gatherScatterSol(sol, solAll);
-      checkSolution(rowBegin, columns, values, rhs, solAll, comm);
+      double elapsedTime = clockIt() - startTime;
+      printTiming("initialization", myPID, elapsedTime);
+      const int numRows = rowBegin.size() - 1;
+      std::vector<double> sol(numRows), solAll;
+      for (int i=0; i<num_factorizations && r_val == 0; i++) {
+        // factorization
+        // scale diagonal for subsequent factorizations and solves
+        if (i > 0) problem.scaleDiagonal();
+        MPI_Barrier(comm);
+        startTime = clockIt();
+        r_val = solver.factorize(values);
+        MPI_Barrier(comm);
+        elapsedTime = clockIt() - startTime;
+        std::string text = std::to_string(i) + ": d3_solver numeric factorization";
+        printTiming(text, myPID, elapsedTime);
+        if (r_val == 0) {
+          // solve
+          MPI_Barrier(comm);
+          startTime = clockIt();
+          solver.solve(rhs, sol);
+          MPI_Barrier(comm);
+          elapsedTime = clockIt() - startTime;
+          text = std::to_string(i)             + ": d3_solver solve                ";
+          printTiming(text, myPID, elapsedTime);
+          solver.gatherScatterSol(sol, solAll);
+          checkSolution(rowBegin, columns, values, rhs, solAll, comm);
+        }
+      }
+      // solver timers
+      solver.output_timers();
     }
-    // solver timers
-    solver.output_timers();
-    
   }
   
   MPI_Finalize();
