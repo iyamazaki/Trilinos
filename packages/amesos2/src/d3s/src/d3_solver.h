@@ -34,7 +34,7 @@ public:
   int factorize(const std::vector<double> & values);
   
   void solve(const std::vector<double> & rhs,
-             std::vector<double> & sol,
+                   std::vector<double> & sol,
              const int numRhs=1);
 
   void gatherScatterSol(std::vector<double> & sol,

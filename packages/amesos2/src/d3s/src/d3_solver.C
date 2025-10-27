@@ -1992,7 +1992,7 @@ void D3Solver::scatterSubSolI()
 }  
 
 void D3Solver::solve(const std::vector<double> & rhs,
-                     std::vector<double> & sol,
+                           std::vector<double> & sol,
                      const int numRhs)
 {
   ThrowAssert(numRhs == 1, "solver currently setup for only a single rhs");

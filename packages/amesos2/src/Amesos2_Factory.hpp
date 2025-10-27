@@ -100,6 +100,10 @@
 #include "Amesos2_CssMKL.hpp"
 #endif
 
+#ifdef HAVE_AMESOS2_D3S // D3S solver
+#include "Amesos2_D3S.hpp"
+#endif
+
 #ifdef HAVE_AMESOS2_LAPACK
 #include "Amesos2_Lapack.hpp"
 #endif
@@ -567,6 +571,12 @@ struct throw_no_matrix_support_exception {
     if((solverName == "amesos2_klu2") || (solverName == "klu2") ||
         (solverName == "amesos2_klu")  || (solverName == "klu")){
       return handle_solver_matrix_and_type_support<KLU2,Matrix,Vector>::apply(A, X, B);
+    }
+#endif
+
+#ifdef HAVE_AMESOS2_D3S
+    if((solverName == "amesos2_d3s") || (solverName == "d3s")){
+      return handle_solver_matrix_and_type_support<D3S,Matrix,Vector>::apply(A, X, B);
     }
 #endif
 
