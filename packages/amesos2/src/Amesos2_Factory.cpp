@@ -51,6 +51,13 @@ namespace Amesos2 {
     }
 #endif
 
+#ifdef HAVE_AMESOS2_D3S
+    if (solverName == "amesos2_d3s" ||
+        solverName == "d3s") {
+      return true;
+    }
+#endif
+
 #ifdef HAVE_AMESOS2_SUPERLUDIST
     if (solverName == "amesos2_superludist" ||
         solverName == "superludist" ||
