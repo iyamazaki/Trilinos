@@ -385,6 +385,20 @@ IF (${PACKAGE_NAME}_ENABLE_CSS_MKL)
   )
 ENDIF()
 
+IF (${PACKAGE_NAME}_ENABLE_D3S)
+  APPEND_SET(HEADERS
+    Amesos2_D3S.hpp
+    Amesos2_D3S_FunctionMap.hpp
+    Amesos2_D3S_TypeMap.hpp
+    Amesos2_D3S_decl.hpp
+    Amesos2_D3S_def.hpp
+    )
+
+  APPEND_SET(SOURCES
+    Amesos2_D3S.cpp
+  )
+ENDIF()
+
 IF (${PACKAGE_NAME}_ENABLE_MUMPS)
    APPEND_SET(HEADERS
    Amesos2_MUMPS.hpp
