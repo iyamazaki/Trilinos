@@ -38,7 +38,7 @@ int GatherToRootSimple::getMyPID()
 }
 
 void GatherToRootSimple::gatherMatrix(const std::vector<double> & values,
-                                           std::vector<double> & valuesRoot)
+                                            std::vector<double> & valuesRoot)
 {
   std::vector<int> displs;
   getDispls(nnzProc, displs);
