@@ -40,7 +40,7 @@ D3S<Matrix,Vector>::D3S(
   , msg_level_(0)
   , num_threads_(1)
   , reorder_option_(2)
-  , debugLevel_(1)
+  , debugLevel_(0)
 {
   // Matrix info
   Teuchos::RCP<const Teuchos::Comm<int> > matComm = this->matrixA_->getComm ();
@@ -75,7 +75,7 @@ D3S<Matrix,Vector>::D3S(
   MPI_Comm D3SComm = *(matMpiComm->getRawMpiComm ());
   D3SComm_ = MPI_Comm_c2f(D3SComm);
 
-  solver = Teuchos::rcp (new D3Solver(D3SComm, msg_level_, num_threads_, reorder_option_, debugLevel_));
+  solver = Teuchos::rcp (new D3Solver(D3SComm));
 }
 
 
@@ -110,6 +110,10 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
 {
   int info = 0;
   {
+    solver->setNumThreads(num_threads_);
+    solver->setOrderingOption(reorder_option_);
+    solver->setVerbose(msg_level_, debugLevel_);
+
     int nnz = colind_view_.extent(0);
     std::vector<int> rowBegin(rowptr_view_.data(), rowptr_view_.data()+(numRows_+1));
     std::vector<int> columns (colind_view_.data(), colind_view_.data()+(nnz));
@@ -240,11 +244,23 @@ D3S<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::ParameterList
     transFlag_ = getIntegralValue<int>(*parameterList, "Trans");
   }
 
+  if( parameterList->isParameter("MessageLevel") ){
+    msg_level_ = parameterList->get<int>("MessageLevel");
+  }
+  if( parameterList->isParameter("DebugLevel") ){
+    debugLevel_ = parameterList->get<int>("DebugLevel");
+  }
+
+  if( parameterList->isParameter("NumThreads") ){
+    num_threads_ = parameterList->get<int>("NumThreads");
+  }
+
+  if( parameterList->isParameter("OrderingOption") ){
+    reorder_option_ = parameterList->get<int>("OrderingOption");
+  }
+
   if( parameterList->isParameter("IsContiguous") ){
     is_contiguous_ = parameterList->get<bool>("IsContiguous");
-  }
-  if( parameterList->isParameter("UseCustomGather") ){
-    use_gather_ = parameterList->get<bool>("UseCustomGather");
   }
 }
 
@@ -266,7 +282,11 @@ D3S<Matrix,Vector>::getValidParameters_impl() const
 
     pl->set("Equil", true, "Whether to equilibrate the system before solve, does nothing now");
     pl->set("IsContiguous", true, "Whether GIDs contiguous");
-    pl->set("UseCustomGather", true, "Whether to use new matrix-gather routine");
+
+    pl->set("MessageLevel", 0, "Message Level");
+    pl->set("DebugLevel", 0, "Debug Message Level");
+    pl->set("NumThreads", 1, "Number of threads");
+    pl->set("OrderingOption", 2, "Reordering option (0 minumum degree, 2 nested dissection, 3 parallel OpenMP ND)");
 
     setStringToIntegralParameter<int>("Trans", "NOTRANS",
                                       "Solve for the transpose system or not",
