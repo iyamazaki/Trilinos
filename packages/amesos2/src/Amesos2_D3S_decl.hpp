@@ -204,6 +204,8 @@ private:
   typedef Kokkos::View<int*,       HostExecSpaceType>    host_ordinal_type_array;
   typedef Kokkos::View<d3s_dtype*, HostExecSpaceType>    host_value_type_array;
 
+private:
+
   /// Stores the values of the nonzero entries for D3S
   host_value_type_array nzvals_view_;
   host_value_type_array nzvals_temp_;
