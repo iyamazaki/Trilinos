@@ -18,14 +18,14 @@
 class D3Solver
 {
 public:
-  D3Solver(MPI_Comm commIn,
-           const int msg_levelIn,
-           const int num_threadsIn,
-           const int reorder_optionIn=2, // nested dissection
-           const int debug_levelIn=0);
+  D3Solver(MPI_Comm commIn);
 
   ~D3Solver();
-  
+
+  void setNumThreads(const int num_threadsIn);
+  void setOrderingOption(const int reorder_optionIn);
+  void setVerbose(const int msg_levelIn, const int debug_levelIn=0);
+
   int initialize(const std::vector<int> & rowBegin_in,
                  const std::vector<int> & columns_in,
                  const int startGID_in,

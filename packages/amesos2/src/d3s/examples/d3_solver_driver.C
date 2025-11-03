@@ -123,7 +123,14 @@ int main(int argc, char *argv[]){
   }
   int r_val = 0;
   {
-    D3Solver solver(comm, msg_level, num_threads, reorder_option, debugLevel);
+    // create solver
+    D3Solver solver(comm);
+
+    // set solver options
+    solver.setNumThreads(num_threads);
+    solver.setOrderingOption(reorder_option);
+    solver.setVerbose(msg_level, debugLevel);
+
     // initialization
     MPI_Barrier(comm);
     double startTime = clockIt();
@@ -156,10 +163,14 @@ int main(int argc, char *argv[]){
           printTiming(text, myPID, elapsedTime);
           solver.gatherScatterSol(sol, solAll);
           checkSolution(rowBegin, columns, values, rhs, solAll, comm);
+        } else if (myPID == 0) {
+          printf( "\n ** Numerical failed **\n\n" );
         }
       }
       // solver timers
       solver.output_timers();
+    } else if (myPID == 0) {
+      printf( "\n ** Initialize failed **\n\n" );
     }
   }
   
