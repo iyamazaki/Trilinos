@@ -19,25 +19,21 @@
 // domain decomposition concepts.
 // Author: Clark R. Dohrmann
 
-D3Solver::D3Solver(MPI_Comm commIn,
-                   const int msg_levelIn,
-                   const int num_threadsIn,
-                   const int reorder_optionIn,
-                   const int debug_levelIn) :
-  comm(commIn),
-  debug_level(debug_levelIn)
+D3Solver::D3Solver(MPI_Comm commIn) :
+  comm(commIn)
 {
 #ifndef USE_INTEL_PARDISO
   ThrowAssert(0, "d3_solver currently requires an Intel build with MKL/Pardiso");
 #endif
-  msg_level = msg_levelIn;
-  num_threads = num_threadsIn;
-  debug_level = debug_levelIn;
-  reorder_option = reorder_optionIn;
   MPI_Comm_rank(comm, &myPID);
   int numProc;
   MPI_Comm_size(comm, &numProc);
   ThrowAssert(numProc > 1, "d3_solver currently must be run on at least 2 MPI processes");
+
+  msg_level = 0;
+  debug_level = 0;
+  num_threads = 1;
+  reorder_option = 2;
 }
 
 D3Solver::~D3Solver()
@@ -50,6 +46,19 @@ D3Solver::~D3Solver()
       MPI_Comm_free(&comm_level[i]);
     }
   }
+}
+
+void D3Solver::setNumThreads(const int num_threadsIn) {
+  num_threads = num_threadsIn;
+}
+
+void D3Solver::setOrderingOption(const int reorder_optionIn) {
+  reorder_option = reorder_optionIn;
+}
+
+void D3Solver::setVerbose(const int msg_levelIn, const int debug_levelIn) {
+  msg_level = msg_levelIn;
+  debug_level = debug_levelIn;
 }
 
 int D3Solver::getLocalID_unsorted(const int gID,
@@ -1354,8 +1363,10 @@ void D3Solver::getSubMatrices(const std::vector<int> & rowBegin,
   // subdomain matrices [A_{II} A_{IB}; A_{BI} 0]
   std::vector<std::vector<int>> num_rows_recv, row_GIDs_recv,
     column_counts_recv, column_GIDs_recv;
+  // redistribution from 2D block row to nested-dissection
   phase1(rowBegin, columns, num_rows_recv, row_GIDs_recv,
          column_counts_recv, column_GIDs_recv);
+  //
   generateSubMatrices(row_GIDs_recv, column_counts_recv, column_GIDs_recv,
                       in_rowBeginSub, in_columnsSub, in_valuesSub, rowGIDsSub);
   phase1_rhs();  
@@ -1719,6 +1730,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
   numRows_proc = rowBegin_in.size() - 1;
   numProcSolver = numProcSolver_in;
   num_level = std::log2(numProcSolver);
+  // call METIS to get nested-dissection
   getRowSubIDs(rowBegin_in, columns_in);
   getProcName();
   numProcSolver = setNumProcSolver(numProcSolver_in);
@@ -1727,11 +1739,14 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
   const std::vector<int> & rowBegin = *rowBeginPtr;
   const std::vector<int> & columns = *columnsPtr;
   assignTargetMPIs(rowBegin);
+
   std::vector<int> rowGIDsSub;
   getSubMatrices(rowBegin, columns, rowBeginSub, columnsSub, valuesSub,
                  rowGIDsSub);
   const int num_rows_sub = rowBeginSub.size() - 1;
   resize_vectors();
+
+  // calling Pardiso Initialize
   double startTime = clockIt();
   if (num_rows_sub > 0) {
     // at this point the matrix is structurally symmetric by construction
@@ -1746,6 +1761,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
 #endif
   }
   timer_pardiso_symbolic = clockIt() - startTime;
+  MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
   if (r_val == 0) {
     int level = 0;
     sc_GIDs[0] = getRowGIDsSubB(rowGIDsSub);
