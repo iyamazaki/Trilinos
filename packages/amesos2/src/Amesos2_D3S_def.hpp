@@ -119,8 +119,10 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
     std::vector<int> columns (colind_view_.data(), colind_view_.data()+(nnz));
     info = solver->initialize(rowBegin, columns, startGID_, numProcSolver_);
   }
+  TEUCHOS_TEST_FOR_EXCEPTION( info != 0, std::runtime_error,
+      "D3S symbolic factorization failed(info="+std::to_string(info)+")");
 
-  return(info);
+  return(0);
 }
 
 
