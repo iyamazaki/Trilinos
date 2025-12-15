@@ -35,6 +35,14 @@ TRIBITS_ADD_EXECUTABLE(
   COMM serial mpi
 )
 
+TRIBITS_ADD_EXECUTABLE(
+  Tacho_TestRocSolver.x
+  NOEXESUFFIX
+  NOEXEPREFIX
+  SOURCES Tacho_TestRocSolver.cpp
+  COMM serial mpi
+)
+
 #
 # External Interface
 # 
