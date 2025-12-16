@@ -8,6 +8,8 @@
 #include "mpi.h"
 #include "gather_to_root_simple.h"
 
+#include "trilinos_btf_decl.h"
+
 // Note: logic still needed to not define USE_INTEL_PARDISO for non-Intel builds
 #define USE_INTEL_PARDISO
 
@@ -23,7 +25,7 @@ public:
   ~D3Solver();
 
   void setNumThreads(const int num_threadsIn);
-  void setOrderingOption(const int reorder_optionIn);
+  void setOrderingOption(const int matching_optionIn, const int reorder_optionIn);
   void setVerbose(const int msg_levelIn, const int debug_levelIn=0);
 
   int initialize(const std::vector<int> & rowBegin_in,
@@ -57,11 +59,16 @@ public:
   int getLocalID_unsorted(const int gID,
                           const std::vector<int> & vec) const;
   
+  int getLocalID_col(const int gID,
+                     const std::vector<int> & vec) const;
+  
   void getDispls(const std::vector<int> & numEntriesProc,
                  std::vector<int> & displs) const;
   
   void getGraphForMetis(const std::vector<int> & rowBegin,
                         const std::vector<int> & columns,
+                        std::vector<idx_t> & rowperm,
+                        std::vector<idx_t> & irowperm,
                         std::vector<idx_t> & rowBeginMetis,
                         std::vector<idx_t> & columnsMetis,
                         std::vector<std::pair<int,int>> & additional_edges);
@@ -72,10 +79,11 @@ public:
   
   void extractRowSubIDs(const std::vector<int> & node_begin,
                         const std::vector<int> & node_sub_id,
-                        const std::vector<idx_t> & order,
+                        const std::vector<idx_t> & iperm,
                         std::vector<int> & row_sub_id) const;
   
   void checkRowSubIDs(const std::vector<int> & rowSubIDs,
+                      const std::vector<idx_t> & rowperm,
                       const std::vector<int> & rowBegin,
                       const std::vector<int> & columns) const;
   
@@ -308,6 +316,9 @@ public:
   int get_sep_number(const int sep_start,
                      const int recv_index) const;
   
+  void permsolve(const std::vector<int> perm,
+                 const std::vector<double> & rhs,
+                       std::vector<double> & rhsRe);
   void backsolve(const int level);
   
   void scatter_sol(const int level);
@@ -352,12 +363,19 @@ public:
   void assign_graph(const std::vector<int> & rowBegin,
                     const std::vector<int> & columns,
                     const std::vector<int> & extraEdges);
+  void assign_graph(const std::vector<int> & rowBegin_in,
+                    const std::vector<int> & columns_in,
+                    const std::vector<int> & rowBegin,
+                    const std::vector<int> & columns,
+                    const std::vector<int> & extraEdges);
   
   void update_graph(const std::vector<int> & rowBegin,
                     const std::vector<int> & columns,
                     const std::vector<int> & extraEdges);
   
   void assign_values(const std::vector<double> & values_in);
+  void assign_values(const std::vector<int> & rowBegin_in,
+                     const std::vector<double> & values_in);
   
   int get_proc_for_row(const int row,
                        const std::vector<int> & numRowsAll,
@@ -384,13 +402,35 @@ public:
 private:
 
   MPI_Comm comm;
-  int myPID, msg_level, num_threads, reorder_option, debug_level, numRows_proc,
-    startGID, numProcSolver, num_level, structurally_symmetric, num_extra_edges;
+  int myPID, numProcs, numProcSolver, num_threads;
+  int numRows_global, numRows_proc, startGID, num_level;
+
+  bool robust_option;
+  int matching_option, reorder_option;
+  int msg_level, debug_level;
+
+  int structurally_symmetric, num_extra_edges;
+  std::vector<int> permMatching, ipermMatching;
+
+  // 1D block row after row-matching
+  std::vector<int> rowBeginRe, columnsRe;
+  std::vector<double> valuesRe;
+
+  // comm for matching
+  std::vector<int> fstRows;
+  std::vector<int> sendcounts;
+  std::vector<int> senddispls;
+  std::vector<int> recvcounts;
+  std::vector<int> recvdispls;
+
+
   std::vector<int> rowSubIDs, sepIDs, sepRows, sepBegin, rowsB, targetMPIs,
     rowsISub, rowsBSub;
   std::vector<int> rowBeginSub, columnsSub, my_send_PIDs_sub, my_recv_PIDs_sub,
-    my_send_PIDs_rhs, my_recv_PIDs_rhs, old_to_new_indices, n1a, n2a,
-    rowBeginUse, columnsUse, rowBeginOrig;
+    my_send_PIDs_rhs, my_recv_PIDs_rhs, old_to_new_indices, n1a, n2a;
+
+  std::vector<int> rowBeginUse, columnsUse;
+  std::vector<int> rowBeginOrig;
   std::vector<double> valuesSub, rhsSub, rhsI, rhs_pardiso, sol_pardiso,
     timer_factor, timer_factor_dla, timer_solve, timer_solve_dla, valuesUse;
   std::vector<std::vector<int>> sep_map, sep_map_recv, rhs_index_send, sc_GIDs,
