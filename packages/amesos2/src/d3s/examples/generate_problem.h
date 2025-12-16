@@ -9,7 +9,8 @@ class GenerateProblem
 {
 public:
   GenerateProblem(MPI_Comm comm_in,
-                  const std::string & input_file);
+                  const std::string & input_file,
+                  const bool sort_colinds = false);
 
   void scaleDiagonal();
   
@@ -26,6 +27,8 @@ public:
   int getRemoveSomeEntries() const {return remove_some_entries;}
 
   int getMessageLevel() const {return msg_level;}
+
+  int getMatchingOption() const {return matching_option;}
 
   int getReorderOption() const {return reorder_option;}
 
@@ -52,7 +55,7 @@ public:
                  std::vector<int> & displs) const;
   
   void scatterMatrix(const std::vector<std::tuple<int,int,double>> & A,
-                     std::vector<int> & numRowsProc);
+                     std::vector<int> & numRowsProc, const bool sort_colinds);
   
   void scatterRhs(const std::vector<int> & numRowsProc,
                   const std::vector<double> & rhs_mm);
@@ -128,8 +131,11 @@ public:
   std::vector<double> values, rhs;
   int myPID=-1, numProc=-1, root=0, startGID=-1;
 
-  int matrix_option, numProcSolver, msg_level, num_threads, reorder_option, debugLevel, add_nonsymmetry,
-    remove_some_entries, zero_some_entries, num_factorizations, output_elem_matrix, output_matrix;
+  int matrix_option, add_nonsymmetry, remove_some_entries, zero_some_entries;
+  int numProcSolver, num_threads;
+  int msg_level, debugLevel;
+  int matching_option, reorder_option;
+  int num_factorizations, output_elem_matrix, output_matrix;
   std::string filenameBase, filenameBaseRhs, problem_type;
   std::vector<int> numElemDir;
 
