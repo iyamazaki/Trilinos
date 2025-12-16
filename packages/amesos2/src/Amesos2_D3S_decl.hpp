@@ -230,6 +230,7 @@ private:
 
   int msg_level_;
   int num_threads_;
+  int matching_option_;
   int reorder_option_;
   int debugLevel_;
 

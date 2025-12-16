@@ -26,14 +26,21 @@ D3Solver::D3Solver(MPI_Comm commIn) :
   ThrowAssert(0, "d3_solver currently requires an Intel build with MKL/Pardiso");
 #endif
   MPI_Comm_rank(comm, &myPID);
-  int numProc;
-  MPI_Comm_size(comm, &numProc);
-  ThrowAssert(numProc > 1, "d3_solver currently must be run on at least 2 MPI processes");
+  MPI_Comm_size(comm, &numProcs);
+  ThrowAssert(numProcs > 1, "d3_solver currently must be run on at least 2 MPI processes");
 
+  num_threads = 1;
+
+  // option for pardiso to enhance stability
+  robust_option = true;
+
+  // ordering option
+  matching_option = 0;
+  reorder_option = 2;
+
+  // message level
   msg_level = 0;
   debug_level = 0;
-  num_threads = 1;
-  reorder_option = 2;
 }
 
 D3Solver::~D3Solver()
@@ -52,7 +59,8 @@ void D3Solver::setNumThreads(const int num_threadsIn) {
   num_threads = num_threadsIn;
 }
 
-void D3Solver::setOrderingOption(const int reorder_optionIn) {
+void D3Solver::setOrderingOption(const int matching_optionIn, const int reorder_optionIn) {
+  matching_option = matching_optionIn;
   reorder_option = reorder_optionIn;
 }
 
@@ -102,7 +110,7 @@ int D3Solver::getLocalID(const int gID,
     return -1;
   }
   if (valid == false) {
-    std::cout << "myPID, gID = " << myPID << " " << gID << std::endl;
+    std::cout << " Invalid getLocalID: myPID, gID = " << myPID << " " << gID << std::endl;
   }
   ThrowAssert(valid, "index not found");
   return std::distance(array, it);
@@ -113,12 +121,10 @@ void D3Solver::gatherScatterSol(std::vector<double> & sol,
 {
   const int numRows = sol.size();
   ThrowAssert(numRows == numRows_proc, "incompatible number of rows");
-  int numProc;
-  MPI_Comm_size(comm, &numProc);
   std::vector<int> numRowsProc;
   const int root = 0;
   if (myPID == root) {
-    numRowsProc.resize(numProc);
+    numRowsProc.resize(numProcs);
   }
   MPI_Gather(&numRows, 1, MPI_INT, numRowsProc.data(), 1, MPI_INT, root, comm);
   int numRowsRoot(0);
@@ -147,19 +153,76 @@ void D3Solver::getDispls(const std::vector<int> & numEntriesProc,
 
 void D3Solver::getGraphForMetis(const std::vector<int> & rowBegin,
                                 const std::vector<int> & columns,
+                                std::vector<int> &rowperm,
+                                std::vector<int> &irowperm,
                                 std::vector<idx_t> & rowBeginMetis,
                                 std::vector<idx_t> & columnsMetis,
                                 std::vector<std::pair<int,int>> & additional_edges)
 {
-  // remove edges to self
   const int numRows = rowBegin.size() - 1;
+  std::vector<int> sort_perm;
+  std::vector<int> sortedCols(numRows);
+  if (matching_option == 0) {
+    // No matching
+    for (int i=0; i<numRows; i++) rowperm[i] = i;
+  } else {
+    // Max-cardinarity matching
+    int nMatch = 0;
+    double work;
+    double maxwork = 0.0;
+    std::vector<int> workspace(5*numRows, 0);
+    int *perm  = const_cast <int*> (rowperm.data());
+    int *iwork = const_cast <int*> (workspace.data());
+    if (matching_option == 1) {
+      // Compute max-cardinarity matching for col-permutation
+      int *col_ptr = const_cast <int*> (rowBegin.data());
+      int *row_idx = const_cast <int*> (columns.data());
+      /*if (sort_columns_before_matching) {
+        ns_sorted.resize(nnz, 0);
+        for (int i=0; i<numRows; i++) {
+          const int num_cols = rowBegin[i+1] - rowBegin[i];
+          int index = rowBegin[i];
+          for (int j=0; j<num_cols; j++) sortedCols[j] = columnsMetis[index++];
+          std::sort(sortedCols.begin(), sortedCols.begin() + num_cols);
+          index = rowBegin[i];
+          for (int j=0; j<num_cols; j++) columns_sorted[index++] = sortedCols[j];
+        }
+        row_idx = const_cast <int*> (columns_sorted.data());
+      }*/
+      nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr, row_idx, maxwork, &work, perm, iwork);
+    } else {
+      // Compute max-cardinarity matching for row-permutation
+      std::vector<int> rowBeginT, columnsT;
+      getGraphTranspose(rowBegin, columns, rowBeginT, columnsT);
+
+      int *col_ptr = const_cast <int*> (rowBeginT.data());
+      int *row_idx = const_cast <int*> (columnsT.data());
+      nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr, row_idx, maxwork, &work, perm, iwork);
+    }
+    printf( " nMatch = %d / %d\n",nMatch,numRows );
+  }
+  // inverse-matching
+  for (int i=0; i<numRows; i++) irowperm[rowperm[i]] = i;
+//#define MATRIX_OUT
+#ifdef MATRIX_OUT
+  {
+    FILE *fp = fopen("G.dat", "w");
+    for (int i=0; i<numRows; i++) {
+      for (int k=rowBegin[i]; k<rowBegin[i+1]; k++)
+        fprintf(fp,"%d %d\n",i,columns[k]);
+    }
+    fclose(fp);
+  }
+#endif
+  // remove edges to self (row or col matching is incorporated)
   int numTerms = rowBegin[numRows];
   std::vector<int> rowBeginG(numRows+1, 0);
   std::vector<int> columnsG(numTerms);
   numTerms = 0;
   for (int i=0; i<numRows; i++) {
-    for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
-      const int col = columns[j];
+    int row = (matching_option > 1 ? rowperm[i] : i); //row-matching
+    for (int j=rowBegin[row]; j<rowBegin[row+1]; j++) {
+      const int col = (matching_option == 1 ? irowperm[columns[j]] : columns[j]); //col-matching
       if (col != i) {
         columnsG[numTerms++] = col;
       }
@@ -167,6 +230,16 @@ void D3Solver::getGraphForMetis(const std::vector<int> & rowBegin,
     rowBeginG[i+1] = numTerms;
   }
   columnsG.resize(numTerms);
+#ifdef MATRIX_OUT
+  {
+    FILE *fp = fopen("G_2.dat", "w");
+    for (int i=0; i<numRows; i++) {
+      for (int k=rowBeginG[i]; k<rowBeginG[i+1]; k++)
+        fprintf(fp,"%d %d\n",i,columnsG[k]);
+    }
+    fclose(fp);
+  }
+#endif
   // next, make sure graph is symmetric
   std::vector<int> rowBeginGT, columnsGT;
   getGraphTranspose(rowBeginG, columnsG, rowBeginGT, columnsGT);
@@ -209,7 +282,6 @@ void D3Solver::getGraphForMetis(const std::vector<int> & rowBegin,
     for (int j=rowBeginG[i]; j<rowBeginG[i+1]; j++) colFlag[columnsG[j]] = false;
   }
   // sort columns
-  std::vector<int> sortedCols(numRows);
   for (int i=0; i<numRows; i++) {
     const int num_cols = rowBeginMetis[i+1] - rowBeginMetis[i];
     int index = rowBeginMetis[i];
@@ -258,58 +330,71 @@ void D3Solver::getLevelsAndLocations(const int numProc,
 
 void D3Solver::extractRowSubIDs(const std::vector<int> & node_begin,
                                 const std::vector<int> & node_sub_id,
-                                const std::vector<idx_t> & order,
-                                std::vector<int> & row_sub_id) const
+                                const std::vector<idx_t> & iperm,
+                                std::vector<int> & out_rowSubIDs) const
 {
-  const int numRows = order.size();
-  row_sub_id.resize(numRows);
+  const int numRows = iperm.size();
+  out_rowSubIDs.resize(numRows);
   const int numSubs = node_begin.size() - 1;
   for (int i=0; i<numRows; i++) {
     int id = -1;
+    // i (input for METIS, after matching) -> row (post-order, METIS)
+    //  iperm: ith row of original is iperm[i] row after ND
+    int row = iperm[i];
     for (int j=0; j<numSubs; j++) {
-      if ((order[i] >= node_begin[j]) && (order[i] < node_begin[j+1])) {
+      if ((row >= node_begin[j]) && (row < node_begin[j+1])) {
         id = j;
         break;
       }
     }
     ThrowAssert(id != -1, "row not found in bounds of node_begin");
-    row_sub_id[i] = node_sub_id[id];
+    // node_sub_id maps from post-order (METIS) to bottom-up
+    // subdomain ID for i in oridinal ordering
+    out_rowSubIDs[i] = node_sub_id[id];
   }
 }
 
 void D3Solver::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
+                              const std::vector<idx_t> & rowperm,
                               const std::vector<int> & rowBegin,
                               const std::vector<int> & columns) const
 {
   int maxSubID = 0;
-  for (size_t i=0; i<in_rowSubIDs.size(); i++) {
-    const int sub = std::abs(in_rowSubIDs[i]);
-    if (sub > maxSubID) maxSubID = sub;
-  }
-  const int num_group = maxSubID + 1;
   std::vector<std::vector<int>> subI(numProcSolver);
   for (size_t i=0; i<in_rowSubIDs.size(); i++) {
-    const int sub = in_rowSubIDs[i];
+    int sub = in_rowSubIDs[i];
     if (sub >= 0) {
+      // push ith row into subdomain, if not separator
       subI[sub].push_back(i);
     }
+    sub = std::abs(in_rowSubIDs[i]);
+    if (sub > maxSubID) maxSubID = sub;
   }
+  char msg[100];
+  const int num_group = maxSubID + 1;
+  // numProcSolver == # of interior subdomains
   for (int i=0; i<numProcSolver; i++) {
     std::vector<int> adj_sub(num_group, 0);
     for (size_t j=0; j<subI[i].size(); j++) {
-      const int row = subI[i][j];
+      // subI stores row ids after matching
+      // rowperm: ith row after matching is rowperm[i] of original
+      const int row = rowperm[subI[i][j]];
       for (int k=rowBegin[row]; k<rowBegin[row+1]; k++) {
         const int col = columns[k];
         const int sub2 = std::abs(in_rowSubIDs[col]);
         adj_sub[sub2] = 1;
       }
     }
+    // checking if this interior is not connected to another interior
+    //  (numProcSolver == # of interior subdomains)
     for (int j=0; j<numProcSolver; j++) {
       if (j == i) {
-        ThrowAssert(adj_sub[j] == 1, "subdomain has no interior unknowns");
+        sprintf(msg, "%d: subdomain %d has no interior unknowns", myPID,i);
+        ThrowAssert(adj_sub[j] == 1, msg);
       }
       else {
-        ThrowAssert(adj_sub[j] == 0, "partitioning error");
+        sprintf(msg, "%d:%d: partitioning error for subdomain %d", myPID,i,j);
+        ThrowAssert(adj_sub[j] == 0, msg);
       }
     }
   }
@@ -412,47 +497,56 @@ int D3Solver::get_proc_for_row(const int row,
 
 void D3Solver::assign_graph(const std::vector<int> & rowBegin,
                             const std::vector<int> & columns,
+                            const std::vector<int> & extraEdges) {
+  assign_graph(rowBegin, columns, rowBegin, columns, extraEdges);
+}
+
+void D3Solver::assign_graph(const std::vector<int> & rowBegin_in, // original input distributed matrix
+                            const std::vector<int> & columns_in,
+                            const std::vector<int> & rowBegin,    // after matching
+                            const std::vector<int> & columns,
                             const std::vector<int> & extraEdges)
 {
   num_extra_edges = extraEdges.size() / 2;
-  if (num_extra_edges == 0) {
+  if (num_extra_edges == 0 && matching_option == 0) {
     rowBeginPtr = &rowBegin;
     columnsPtr = &columns;
   }
   else {
+    // update graph to be the symmetrized version by adding extra edges
     update_graph(rowBegin, columns, extraEdges);
-    rowBeginPtr = &rowBeginUse;
+    rowBeginPtr = &rowBeginUse; // output (after matching then symmetrized)
     columnsPtr = &columnsUse;
-    rowBeginOrig = rowBegin;
+    rowBeginOrig = rowBegin_in; // input (original)
   }
 }
 
 void D3Solver::scatter_additional_edges(const std::vector<std::pair<int,int>> & additional_edges,
                                         std::vector<int> & extraEdges)
 {
-  int numProc, root(0);
-  MPI_Comm_size(comm, &numProc);
+  int root(0);
   std::vector<int> numRowsAll, count, displs;
   if (myPID == root) {
-    numRowsAll.resize(numProc);
-    count.resize(numProc, 0);
-    displs.resize(numProc, 0);
+    numRowsAll.resize(numProcs);
+    count.resize(numProcs, 0);
+    displs.resize(numProcs, 0);
   }
   MPI_Gather(&numRows_proc, 1, MPI_INT, numRowsAll.data(), 1, MPI_INT, root, comm);
   std::vector<int> row_col_pair_send;
   if (myPID == root) {
-    for (int i=1; i<numProc; i++) {
+    for (int i=1; i<numProcs; i++) {
       displs[i] = displs[i-1] + numRowsAll[i-1];
     }
+    // additional edges are for input to METIS (after Matching, but before ND)
     const int num_additional_edges = additional_edges.size();
     row_col_pair_send.resize(2*num_additional_edges);
     int first_proc(0), first_row(0), index(0);
     for (int i=0; i<num_additional_edges; i++) {
-      const int row = additional_edges[i].first;
-      const int col = additional_edges[i].second;
+      int row = additional_edges[i].first;   // after row matching
+      int col = additional_edges[i].second;  // additional elemnts to symmetrize matrix after matching, after col matching
       row_col_pair_send[index++] = row;
       row_col_pair_send[index++] = col;
-      const int proc = get_proc_for_row(row, numRowsAll, numProc, first_proc, first_row);
+      const int proc = get_proc_for_row(row, numRowsAll, numProcs, first_proc, first_row);
       count[proc] += 2;
     }
   }
@@ -460,7 +554,7 @@ void D3Solver::scatter_additional_edges(const std::vector<std::pair<int,int>> & 
   MPI_Scatter(count.data(), 1, MPI_INT, &num_extra, 1, MPI_INT, root, comm);
   extraEdges.resize(num_extra);
   if (myPID == root) {
-    for (int i=1; i<numProc; i++) {
+    for (int i=1; i<numProcs; i++) {
       displs[i] = displs[i-1] + count[i-1];
     }
   }
@@ -492,6 +586,7 @@ void D3Solver::update_graph(const std::vector<int> & rowBegin,
   const int numTerms = rowBeginUse[numRows_proc];
   columnsUse.resize(numTerms);
   valuesUse.resize(numTerms, 0);
+  // original distributed matrix (in 1D block row)
   for (int i=0; i<numRows_proc; i++) {
     for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
       const int index = rowBeginUse[i] + count[i];
@@ -503,33 +598,92 @@ void D3Solver::update_graph(const std::vector<int> & rowBegin,
     const int row = extraEdges[2*i];
     const int col = extraEdges[2*i+1];
     const int local_row = row - startGID;
-
     const int index = rowBeginUse[local_row] + count[local_row];
     columnsUse[index] = col;
     count[local_row]++;
   }
 }
 
-void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin,
-                            const std::vector<int> & columns)
+void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
+                            const std::vector<int> & columns)  // original
 {
+  // Gather graph to root: (rowBegin, columns) in 1D block row -> (rowBeginRoot, columnsRoot) gathered
   GatherToRootSimple gatherer(rowBegin, columns, comm);
   gatherer.initialize();
-  const std::vector<int> & rowBeginRoot = gatherer.getRowBeginRoot();
-  const std::vector<int> & columnsRoot = gatherer.getColumnsRoot();
+  const std::vector<int> & rowBeginRoot = gatherer.getRowBeginRoot(); // original
+  const std::vector<int> & columnsRoot = gatherer.getColumnsRoot();   // original
   std::vector<std::pair<int,int>> additional_edges;
   int numRows, numSep, numTerms, numRowsB;
+
   if (myPID == 0) {
-    std::vector<idx_t> rowBeginMetis, columnsMetis;
-    getGraphForMetis(rowBeginRoot, columnsRoot, rowBeginMetis, columnsMetis, additional_edges);
     numRows = rowBeginRoot.size() - 1;
+    std::vector<idx_t> rowBeginMetis, columnsMetis;
+    permMatching.resize(numRows, 0);
+    ipermMatching.resize(numRows, 0);
+    // Prepar graph for calling Metis
+    getGraphForMetis(rowBeginRoot, columnsRoot, permMatching, ipermMatching,
+                     rowBeginMetis, columnsMetis, additional_edges);
+    // calling Metis
     std::vector<idx_t> options(METIS_NOPTIONS), perm(numRows), iperm(numRows), sizes(2*numProcSolver);
     int info = METIS_SetDefaultOptions(options.data());
     ThrowAssert(info == METIS_OK, "METIS_SetDefaultOptions failed");
     idx_t* vwgt = nullptr;
-    METIS_NodeNDP(numRows, rowBeginMetis.data(), columnsMetis.data(), vwgt,
-                  numProcSolver, options.data(), perm.data(), iperm.data(), 
-                  sizes.data());
+    if (true) {
+      // sort for debugging
+      std::vector<int> sortedCols(numRows);
+      std::vector<idx_t> columnsSorted(columnsMetis.size());
+      for (int i=0; i<numRows; i++) {
+        const int num_cols = rowBeginMetis[i+1] - rowBeginMetis[i];
+        int index = rowBeginMetis[i];
+        for (int j=0; j<num_cols; j++) sortedCols[j] = columnsMetis[index++];
+        std::sort(sortedCols.begin(), sortedCols.begin() + num_cols);
+        index = rowBeginMetis[i];
+        for (int j=0; j<num_cols; j++) columnsSorted[index++] = sortedCols[j];
+      }
+      METIS_NodeNDP(numRows, rowBeginMetis.data(), columnsSorted.data(), vwgt,
+                    numProcSolver, options.data(), perm.data(), iperm.data(), 
+                    sizes.data());
+#ifdef MATRIX_OUT
+      {
+        FILE *fp = fopen("G_Metis.dat", "w");
+        for (int i=0; i<numRows; i++) {
+          for (int k=rowBeginMetis[i]; k<rowBeginMetis[i+1]; k++)
+            fprintf(fp,"%d %d\n",columnsSorted[k],i);
+        }
+        fclose(fp);
+      }
+#endif
+    } else {
+      METIS_NodeNDP(numRows, rowBeginMetis.data(), columnsMetis.data(), vwgt,
+                    numProcSolver, options.data(), perm.data(), iperm.data(), 
+                    sizes.data());
+#ifdef MATRIX_OUT
+      {
+        FILE *fp = fopen("G_Metis.dat", "w");
+        for (int i=0; i<numRows; i++) {
+          for (int k=rowBeginMetis[i]; k<rowBeginMetis[i+1]; k++)
+            fprintf(fp,"%d %d\n",columnsMetis[k],i);
+        }
+        fclose(fp);
+      }
+#endif
+    }
+#ifdef MATRIX_OUT
+    if (matching_option) {
+      printf("\n");
+      for (int i=0; i<2*numProcSolver; i++) printf("%d\n",sizes[i]);
+      FILE *fp = fopen("p_metis.dat", "w");
+      for (int i=0; i<numRows; i++) fprintf(fp, "%d %d %d\n",i,perm[i],iperm[i] );
+      fclose(fp);
+
+      fp = fopen("G_orig.dat", "w");
+      for (int i=0; i<numRows; i++) {
+        for (int k=rowBeginRoot[i]; k<rowBeginRoot[i+1]; k++)
+          fprintf(fp,"%d %d\n",i,columnsRoot[k]);
+      }
+      fclose(fp);
+    }
+#endif
     int lowerIndex = 2*numProcSolver - 2;
     int numSepLevel(1), interfaceSize(0);
     const int numLevel = std::log2(numProcSolver) + 1;
@@ -561,6 +715,9 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin,
       start_level[i] = start_level[i-1] + delta;
       delta /= 2;
     }
+
+    // Map from post-order (METIS) to bottom-up ordering of nested-dissection tree of subdomains, 
+    //  e.g., [0, 1 | -4 | 2, 3 | -5 | -6] with 4 MPIs
     const int num_node = location.size();
     std::vector<int> node_size(num_node), node_sub_id(num_node), node_begin(num_node+1, 0);
     for (int i=0; i<num_node; i++) {
@@ -569,8 +726,25 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin,
       if (level[i] > 0) node_sub_id[i] *= -1;
       node_begin[i+1] = node_begin[i] + node_size[i];
     }
+
+    // Mapping of rows to subdomains (interior or separators)
+    //   perm: ith row after ND is perm[i] of original
+    //  iperm: ith row of original is iperm[i] row after ND
     extractRowSubIDs(node_begin, node_sub_id, iperm, rowSubIDs);
-    checkRowSubIDs(rowSubIDs, rowBeginRoot, columnsRoot);
+#ifdef MATRIX_OUT
+    {
+      FILE *fp = fopen("rowperm.dat", "w");
+      for (int i=0; i<numRows; i++) {
+        fprintf(fp,"%d %d %d\n",i,permMatching[i],ipermMatching[i]);
+      }
+      fclose(fp);
+    }
+#endif
+
+    // Checking (to make sure each iterior is not connected to another interior)
+    checkRowSubIDs(rowSubIDs, permMatching, rowBeginRoot, columnsRoot);
+
+    //
     get_separators(rowSubIDs, sepIDs, sepBegin, sepRows);
     //    getS2I(rowSubIDs, rowBeginRoot, columnsRoot, sepIDs, s2i, s2iBegin);
     numSep = sepIDs.size();
@@ -588,9 +762,15 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin,
     for (int i=0; i<numProcSolver/2; i++) {
       std::vector<bool> adjacent_sep(numProcSolver/2, false);
       for (int j=sepBegin[i]; j<sepBegin[i+1]; j++) {
-        const int row = sepRows[j];
+        int row = sepRows[j]; // after row-matching
+        if (matching_option == 2) {
+          row = permMatching[sepRows[j]]; // to original
+        }
         for (int k=rowBeginRoot[row]; k<rowBeginRoot[row+1]; k++) {
-          const int col = columnsRoot[k];
+          int col = columnsRoot[k]; // original
+          if (matching_option == 1) {
+            col = ipermMatching[col]; // after col-matching
+          }
           const int sub = rowSubIDs[col];
           if (sub < 0) {
             const int sep2 = -sub - numProcSolver;
@@ -601,11 +781,128 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin,
     }
   }
   MPI_Barrier(comm);
-  std::vector<int> extraEdges; // extra edges on each proc
-  scatter_additional_edges(additional_edges, extraEdges);
-  assign_graph(rowBegin, columns, extraEdges);
 
+  // symmetrize the original local matrix
+  std::vector<int> extraEdges; // extra edges on each proc (to make it structurally-symmetric)
+  scatter_additional_edges(additional_edges, extraEdges);
+
+  // global DoFs
   MPI_Bcast(&numRows, 1, MPI_INT, 0, comm);
+  numRows_global = numRows;
+
+  // symmetrize local graph
+  if (matching_option == 0) {
+    // add additional edges to the original distributed matrix (1D block row) to make it symmetric
+    assign_graph(rowBegin, columns, extraEdges);
+  } else {
+    if (myPID != 0) {
+      permMatching.resize(numRows, 0);
+      ipermMatching.resize(numRows, 0);
+    }
+    MPI_Bcast( permMatching.data(), numRows, MPI_INT, 0, comm);
+    MPI_Bcast(ipermMatching.data(), numRows, MPI_INT, 0, comm);
+
+    // row-distribution
+    fstRows.resize(numProcs+1, 0);
+    MPI_Allgather(&startGID, 1, MPI_INT, fstRows.data(), 1, MPI_INT, comm);
+    fstRows[numProcs] = numRows_global;
+
+    int nnz = rowBegin[numRows_proc];
+    if (matching_option == 1) {
+      // Apply column matching
+      rowBeginRe.resize(numRows_proc+1, 0);
+      columnsRe.resize(nnz, 0);
+      valuesRe.resize(nnz, 0);
+      for (int i=0; i<numRows_proc; i++) {
+        for (int k=rowBegin[i]; k<rowBegin[i+1]; k++) {
+          int col = ipermMatching[columns[k]]; // after col-matching
+          columnsRe[k] = col;
+        }
+        rowBeginRe[i+1] = rowBegin[i+1];
+      }
+    } else {
+      // Redistribute to apply row matching
+      // count nnz to send
+      sendcounts.resize(numProcs, 0);
+      for (int i=0; i<numRows_proc; i++) {
+        int row = ipermMatching[startGID+i]; // perm original i to row
+        for (int p=0; p<numProcs; p++) {
+          if (row >= fstRows[p] && row < fstRows[p+1]) {
+            sendcounts[p] += rowBegin[i+1]-rowBegin[i];
+            break;
+          }
+        }
+      }
+      senddispls.resize(numProcs+1, 0);
+      for (int p=0; p<numProcs; p++) {
+        sendcounts[p] *= 2;
+        senddispls[p+1] = senddispls[p] + sendcounts[p];
+      }
+
+      // fill send-buffer
+      std::vector<int> sendbuf;
+      sendbuf.resize(2*nnz, 0);
+      for (int i=0; i<numRows_proc; i++) {
+        int row = ipermMatching[startGID+i]; // perm origina i to row
+        for (int p=0; p<numProcs; p++) {
+          if (row >= fstRows[p] && row < fstRows[p+1]) {
+            nnz = senddispls[p];
+            for (int k=0; k<rowBegin[i+1]-rowBegin[i]; k++) {
+              int col = columns[rowBegin[i]+k];
+              sendbuf[nnz + 2*k+0] = row;
+              sendbuf[nnz + 2*k+1] = col;
+            }
+            senddispls[p] += 2*(rowBegin[i+1]-rowBegin[i]);
+            break;
+          }
+        }
+      }
+      // shift back
+      for (int p=numProcs; p>0; p--) {
+        senddispls[p] = senddispls[p-1];
+      }
+      senddispls[0] = 0;
+
+      // setup counts/displs to receive
+      recvcounts.resize(numProcs,   0);
+      recvdispls.resize(numProcs+1, 0);
+      MPI_Alltoall(sendcounts.data(), 1, MPI_INT, recvcounts.data(), 1, MPI_INT, comm);
+      for (int p=0; p<numProcs; p++) {
+        recvdispls[p+1] = recvdispls[p] + recvcounts[p];
+      }
+
+      // communicate !!
+      nnz = recvdispls[numProcs];
+      std::vector<int> recvbuf;
+      recvbuf.resize(nnz, 0);
+      MPI_Alltoallv(sendbuf.data(), sendcounts.data(), senddispls.data(), MPI_INT,
+                    recvbuf.data(), recvcounts.data(), recvdispls.data(), MPI_INT,
+                    comm);
+
+      // put it into CSR
+      rowBeginRe.resize(numRows_proc+1, 0);
+      columnsRe.resize(nnz, 0);
+      valuesRe.resize(nnz, 0);
+      for (int i=0; i<nnz; i+=2) {
+        int row = recvbuf[i]-startGID;
+        rowBeginRe[1+row]++;
+      }
+      for (int i=0; i<numRows_proc; i++) rowBeginRe[i+1] += rowBeginRe[i];
+      for (int i=0; i<nnz; i+=2) {
+        int row = recvbuf[i]-startGID;
+        int col = recvbuf[i+1];
+        columnsRe[rowBeginRe[row]] = col;
+        rowBeginRe[row] ++;
+      }
+      for (int i=numRows_proc; i>0; i--) rowBeginRe[i] = rowBeginRe[i-1];
+      rowBeginRe[0] = 0;
+    }
+
+    // now add additional edges to make it symmetric
+    assign_graph(rowBegin, columns, rowBeginRe, columnsRe, extraEdges);
+  }
+
+  // communicate rest of parameters
   MPI_Bcast(&numSep, 1, MPI_INT, 0, comm);
   MPI_Bcast(&numTerms, 1, MPI_INT, 0, comm);
   MPI_Bcast(&numRowsB, 1, MPI_INT, 0, comm);
@@ -805,17 +1102,32 @@ void D3Solver::phase1(const std::vector<int> & rowBegin,
   std::vector<std::vector<int>> row_GIDs(numSubs);
   const int numRows = rowBegin.size() - 1;
   // determine active subdomains, row_GIDs, and memory requirements first
+  // > (rowBegin, columns) stored original local distribued matrix in 1D block row
+  //    after symmetrization, no matching nor ND applied
+#ifdef MATRIX_OUT
+  {
+    char filename[100];
+    sprintf(filename, "lG_%d.dat", myPID);
+    FILE *fp = fopen(filename, "w");
+    for (int i=0; i<numRows; i++) {
+      for (int k=rowBegin[i]; k<rowBegin[i+1]; k++)
+        fprintf(fp,"%d %d\n",i,columns[k]);
+    }
+    fclose(fp);
+  }
+#endif
   for (int i=0; i<numRows; i++) {
-    const int gID = startGID + i;
-    const int sub = rowSubIDs[gID];
+    const int gID = startGID + i;   // original
+    const int sub = rowSubIDs[gID]; //
     if (sub >= 0) { // row is in interior of a subdomain
+      int nnzRow = rowBegin[i+1] - rowBegin[i];
       row_GIDs[sub].push_back(gID);
-      num_terms_sub[sub] += rowBegin[i+1] - rowBegin[i];
+      num_terms_sub[sub] += nnzRow;
     }
     else { // row is on the interface
       std::unordered_set<int> sub_set2;
       for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
-        const int gID2 = columns[j];
+        const int gID2 = columns[j];         // called with rowBeginPtr = after matching
         const int sub2 = rowSubIDs[gID2];
         if (sub2 >= 0) {
           sub_set2.insert(sub2);
@@ -849,32 +1161,33 @@ void D3Solver::phase1(const std::vector<int> & rowBegin,
   }
   std::vector<int> num_rows_sub(numActive, 0);
   for (int i=0; i<numRows; i++) {
-    const int gID = startGID + i;
+    const int gID = startGID + i;      // original
     const int sub = rowSubIDs[gID];
     if (sub >= 0) { // row is in interior of a subdomain
       const int local_sub = getLocalID(sub, activeSubs);
-      const int row = num_rows_sub[local_sub];
+      const int row_sub = num_rows_sub[local_sub];
       for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
         const int index = num_terms_sub[local_sub];
-        column_GIDs_send[local_sub][index] = columns[j];
+        const int gID2 = columns[j];         // original
+        column_GIDs_send[local_sub][index] = gID2;
         values_send_index[local_sub][index] = j;
         num_terms_sub[local_sub]++;
-        column_counts_send[local_sub][row]++;
+        column_counts_send[local_sub][row_sub]++;
       }
       num_rows_sub[local_sub]++;
     }
     else { // row is on the interface
       std::unordered_set<int> sub_set_local;
       for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
-        const int gID2 = columns[j];
+        const int gID2 = columns[j];         // original
         const int sub2 = rowSubIDs[gID2];
         if (sub2 >= 0) {
           const int local_sub = getLocalID(sub2, activeSubs);
           sub_set_local.insert(local_sub);
-          const int row = num_rows_sub[local_sub];
-          column_counts_send[local_sub][row]++;
+          const int row_sub = num_rows_sub[local_sub];
+          column_counts_send[local_sub][row_sub]++;
           const int index = num_terms_sub[local_sub];
-          column_GIDs_send[local_sub][index] = columns[j];
+          column_GIDs_send[local_sub][index] = gID2;
           values_send_index[local_sub][index] = j;
           num_terms_sub[local_sub]++;
         }
@@ -991,7 +1304,7 @@ void D3Solver::phase2(const int level,
       const int local_sep = getLocalID(sep, separators, do_not_throw);
       if (local_sep >= 0) { // row is on a separator in list of separators
         const int local_sep_active = getLocalID(local_sep, activeSeps);
-        const int row = num_rows_sep[local_sep_active];
+        const int row_sep = num_rows_sep[local_sep_active];
         for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
           const int gID2 = columns[j];
           const int validRow2 = determine_valid_row(gID2, separators);
@@ -1001,7 +1314,7 @@ void D3Solver::phase2(const int level,
             //            values_send_B[local_sep_active][index] = values[j];
             values_send_B_index[level][local_sep_active][index] = j;
             num_terms_sep[local_sep_active]++;
-            column_counts_send[local_sep_active][row]++;
+            column_counts_send[local_sep_active][row_sep]++;
           }
         }
         num_rows_sep[local_sep_active]++;
@@ -1015,8 +1328,8 @@ void D3Solver::phase2(const int level,
           if (local_sep2 >= 0) {
             const int local_sep2_active = getLocalID(local_sep2, activeSeps);
             local_sep2_set.insert(local_sep2_active);
-            const int row = num_rows_sep[local_sep2_active];
-            column_counts_send[local_sep2_active][row]++;
+            const int row_sep = num_rows_sep[local_sep2_active];
+            column_counts_send[local_sep2_active][row_sep]++;
             const int index = num_terms_sep[local_sep2_active];
             column_GIDs_send[local_sep2_active][index] = columns[j];
             //            values_send_B[local_sep2_active][index] = values[j];
@@ -1361,12 +1674,15 @@ void D3Solver::getSubMatrices(const std::vector<int> & rowBegin,
                               std::vector<int> & rowGIDsSub)
 {
   // subdomain matrices [A_{II} A_{IB}; A_{BI} 0]
+  // redistribution from 2D block row to nested-dissection
   std::vector<std::vector<int>> num_rows_recv, row_GIDs_recv,
     column_counts_recv, column_GIDs_recv;
-  // redistribution from 2D block row to nested-dissection
+
+  // communicate required data (into buffer)
   phase1(rowBegin, columns, num_rows_recv, row_GIDs_recv,
          column_counts_recv, column_GIDs_recv);
-  //
+
+  // split the received data into sub-matrices
   generateSubMatrices(row_GIDs_recv, column_counts_recv, column_GIDs_recv,
                       in_rowBeginSub, in_columnsSub, in_valuesSub, rowGIDsSub);
   phase1_rhs();  
@@ -1710,15 +2026,28 @@ void D3Solver::assignTargetMPIs(const std::vector<int> & rowBegin)
 
 int D3Solver::setNumProcSolver(const int numProcSolver_in)
 {
-  int logInput = static_cast<int>(std::log2(numProcSolver_in));
-  numProcSolver = std::pow(2, logInput);
-  if (numProcSolver != numProcSolver_in) {
+  int numProcSolver_out = numProcSolver_in;
+  if (numProcSolver_out > numProcs) {
     if (msg_level > 0 && myPID == 0) {
-      std::cout << "numProcSolver should be a power of 2" << std::endl;
-      std::cout << "resetting to next lower power of 2" << std::endl;
+      std::cout << std::endl 
+                << std::endl << " ** User-specified number of subdomains is greater "
+                << std::endl << " ** than the number of MPI processes"
+                << std::endl << " ** resetting to be " << numProcs << std::endl
+                << std::endl;
     }
+    numProcSolver_out = numProcs;
   }
-  return numProcSolver;
+  int logInput = static_cast<int>(std::log2(numProcSolver_out));
+  if (std::pow(2, logInput) != numProcSolver_out) {
+    if (msg_level > 0 && myPID == 0) {
+      std::cout << " ** numProcSolver should be a power of 2" << std::endl;
+      std::cout << " ** resetting to next lower power of 2" << std::endl
+                << " ** resetting to be " << std::pow(2, logInput) << std::endl
+                << std::endl;
+    }
+    numProcSolver_out = std::pow(2, logInput);
+  }
+  return numProcSolver_out;
 }
 
 int D3Solver::initialize(const std::vector<int> & rowBegin_in,
@@ -1727,19 +2056,19 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
                          const int numProcSolver_in)
 {
   startGID = startGID_in;
-  numRows_proc = rowBegin_in.size() - 1;
-  numProcSolver = numProcSolver_in;
+  numProcSolver = setNumProcSolver(numProcSolver_in);
   num_level = std::log2(numProcSolver);
+  numRows_proc = rowBegin_in.size() - 1;
   // call METIS to get nested-dissection
   getRowSubIDs(rowBegin_in, columns_in);
   getProcName();
-  numProcSolver = setNumProcSolver(numProcSolver_in);
 
-  int r_val = 0;
+  // rowBeginPtr (after symmetrization of the original matrix)
   const std::vector<int> & rowBegin = *rowBeginPtr;
   const std::vector<int> & columns = *columnsPtr;
   assignTargetMPIs(rowBegin);
 
+  // redistribute to generate DD
   std::vector<int> rowGIDsSub;
   getSubMatrices(rowBegin, columns, rowBeginSub, columnsSub, valuesSub,
                  rowGIDsSub);
@@ -1747,21 +2076,41 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
   resize_vectors();
 
   // calling Pardiso Initialize
+  int r_val = 0;
   double startTime = clockIt();
   if (num_rows_sub > 0) {
     // at this point the matrix is structurally symmetric by construction
     structurally_symmetric = 1;
     sort_and_add_zero_diags(rowBeginSub, columnsSub);
+#ifdef MATRIX_OUT
+    {
+      char filename[100];
+      sprintf(filename, "lT_%d.dat", myPID);
+      FILE *fp = fopen(filename, "w");
+      for (int i=0; i<num_rows_sub; i++) {
+        for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++)
+          fprintf(fp,"%d %d\n",i,columnsSub[k]);
+      }
+      fclose(fp);
+    }
+#endif
 #ifdef USE_INTEL_PARDISO
     bool verbose = (myPID == 0);
     const int num_rows_subB = rowsBSub.size();
     r_val = pardiso_solver.initialize(num_rows_sub, rowBeginSub.data(), columnsSub.data(),
                                       num_rows_subB, rowsBSub.data(), msg_level, num_threads,
-                                      reorder_option, structurally_symmetric, debug_level, verbose);
+                                      reorder_option, structurally_symmetric, robust_option,
+                                      debug_level, verbose);
 #endif
   }
   timer_pardiso_symbolic = clockIt() - startTime;
+  if (msg_level > 0) {
+    printf( " %d: initialize(r_val=%d)\n",myPID, r_val ); fflush(stdout);
+  }
   MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+  if (msg_level > 0) {
+    printf( " => r_val=%d\n",r_val ); fflush(stdout);
+  }
   if (r_val == 0) {
     int level = 0;
     sc_GIDs[0] = getRowGIDsSubB(rowGIDsSub);
@@ -1789,16 +2138,22 @@ void D3Solver::getSubMatrices(const std::vector<double> & values,
   }
 }
 
-void D3Solver::assign_values(const std::vector<double> & values_in)
+void D3Solver::assign_values(const std::vector<double> & values_in) {
+  assign_values(rowBeginOrig, values_in);
+}
+
+void D3Solver::assign_values(const std::vector<int> & rowBegin_in,
+                             const std::vector<double> & values_in)
 {
-  if (num_extra_edges == 0) {
+  if (num_extra_edges == 0 && matching_option == 0) {
     valuesPtr = &values_in;
   }
   else {
-    // Note: extra columns for structural symmetry are at the end of each row
+    // Note: extra columns for structural symmetry (= padded zeros)
+    //       are at the end of each row (and hence no need to assign values)
     for (int i=0; i<numRows_proc; i++) {
       int index = rowBeginUse[i];
-      for (int j=rowBeginOrig[i]; j<rowBeginOrig[i+1]; j++) {
+      for (int j=rowBegin_in[i]; j<rowBegin_in[i+1]; j++) {
         valuesUse[index++] = values_in[j];
       }
     }
@@ -1809,9 +2164,93 @@ void D3Solver::assign_values(const std::vector<double> & values_in)
 int D3Solver::factorize(const std::vector<double> & values_in)
 {
   int r_val = 0;
-  assign_values(values_in);
-  const std::vector<double> & values = *valuesPtr;
   double startTime = clockIt();
+  if (matching_option == 0) {
+    // No matching
+    assign_values(values_in);
+  } else {
+    if (matching_option == 1) {
+      // assign values
+      assign_values(rowBeginRe,values_in);
+#ifdef MATRIX_OUT
+      {
+        char filename[100];
+        sprintf(filename, "lW_%d.dat", myPID);
+        FILE *fp = fopen(filename, "w");
+        //for (int i=0; i<numRows_proc; i++) {
+        //  for (int k=rowBeginRe[i]; k<rowBeginRe[i+1]; k++)
+        //    fprintf(fp,"%d %d %.16e\n",i,columnsRe[k],values_in[k]);
+        //}
+        const int num_rows_sub = rowBeginSub.size() - 1;
+        for (int i=0; i<num_rows_sub; i++) {
+          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++)
+            fprintf(fp,"%d %d %.16e\n",i,columnsSub[k],valuesSub[k]);
+        }
+        fclose(fp);
+      }
+#endif
+    } else {
+      // fill send-buffer
+      int nnz = rowBeginOrig[numRows_proc];
+      std::vector<double> sendbuf;
+      sendbuf.resize(2*nnz, 0);
+      for (int i=0; i<numRows_proc; i++) {
+        int row = ipermMatching[startGID+i]; // perm origina i to row
+        for (int p=0; p<numProcs; p++) {
+          if (row >= fstRows[p] && row < fstRows[p+1]) {
+            nnz = senddispls[p];
+            for (int k=0; k<rowBeginOrig[i+1]-rowBeginOrig[i]; k++) {
+              double val = values_in[rowBeginOrig[i]+k];
+              sendbuf[nnz + 2*k+0] = double(row);
+              sendbuf[nnz + 2*k+1] = val;
+            }
+            senddispls[p] += 2*(rowBeginOrig[i+1]-rowBeginOrig[i]);
+            break;
+          }
+        }
+      }
+
+      // shift back
+      for (int p=numProcs; p>0; p--) {
+        senddispls[p] = senddispls[p-1];
+      }
+      senddispls[0] = 0;
+
+      // communicate !!
+      nnz = recvdispls[numProcs];
+      std::vector<double> recvbuf;
+      recvbuf.resize(nnz, 0);
+      MPI_Alltoallv(sendbuf.data(), sendcounts.data(), senddispls.data(), MPI_DOUBLE,
+                    recvbuf.data(), recvcounts.data(), recvdispls.data(), MPI_DOUBLE,
+                    comm);
+
+      // put it into CSR
+      for (int i=0; i<nnz; i+=2) {
+        int    row = int(recvbuf[i])-startGID;
+        double val = recvbuf[i+1];
+        valuesRe[rowBeginRe[row]] = val;
+        rowBeginRe[row] ++;
+      }
+      for (int i=numRows_proc; i>0; i--) rowBeginRe[i] = rowBeginRe[i-1];
+      rowBeginRe[0] = 0;
+
+      // assign values
+      assign_values(rowBeginRe,valuesRe);
+#ifdef MATRIX_OUT
+      {
+        char filename[100];
+        sprintf(filename, "lW_%d.dat", myPID);
+        FILE *fp = fopen(filename, "w");
+        for (int i=0; i<numRows_proc; i++) {
+          for (int k=rowBeginRe[i]; k<rowBeginRe[i+1]; k++)
+            fprintf(fp,"%d %d %.16e\n",i,columnsRe[k],valuesRe[k]);
+        }
+        fclose(fp);
+      }
+#endif
+    }
+  }
+  const std::vector<double> & values = *valuesPtr;
   getSubMatrices(values, valuesSub);
   timer_gather_matrices = clockIt() - startTime;
   
@@ -2012,7 +2451,33 @@ void D3Solver::solve(const std::vector<double> & rhs,
                      const int numRhs)
 {
   ThrowAssert(numRhs == 1, "solver currently setup for only a single rhs");
-  getSubRhs(rhs);
+
+  std::vector<double> rhsRe;
+  if (matching_option == 0) {
+    getSubRhs(rhs);
+  } else {
+    int lengthRhs = rhs.size();
+    rhsRe.resize(lengthRhs, 0);
+    if (matching_option == 1) {
+      getSubRhs(rhs);
+    } else {
+      permsolve(ipermMatching, rhs, rhsRe);
+      getSubRhs(rhsRe);
+#ifdef MATRIX_OUT
+      {
+        int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+        char filename[250];
+        sprintf(filename,"RHS%d_RE.dat", myRank);
+        FILE *fp = fopen(filename, "w");
+        for (int i=0; i<lengthRhs; i++) {
+          fprintf(fp,"%d %.16e\n",i,rhsRe[i]);
+        }
+        fclose(fp);
+      }
+#endif
+    }
+  }
+
   int num_rows = 0;
 #ifdef USE_INTEL_PARDISO
   num_rows = pardiso_solver.getNumRows();
@@ -2037,7 +2502,11 @@ void D3Solver::solve(const std::vector<double> & rhs,
   int level = 0;
   while (level < num_level) {
     const double startTime = clockIt();
-    calculate_schur_complement_rhs(level, rhs);
+    if (matching_option == 0 || matching_option == 1) {
+      calculate_schur_complement_rhs(level, rhs);
+    } else {
+      calculate_schur_complement_rhs(level, rhsRe);
+    }
     timer_solve[level] += clockIt() - startTime;
     level++;
   }
@@ -2065,6 +2534,79 @@ void D3Solver::solve(const std::vector<double> & rhs,
     rhsI[i] = sol_pardiso[rowsISub[i]];
   }
   putSubSol(sol);
+
+  if (matching_option == 1) {
+    permsolve(permMatching, sol, rhsRe);
+    for (size_t i=0; i<sol.size(); i++) {
+      sol[i] = rhsRe[i];
+    }
+  }
+}
+
+void D3Solver::permsolve(const std::vector<int> perm,
+                         const std::vector<double> & rhs,
+                               std::vector<double> & rhsRe) {
+  int lengthRhs = rhs.size();
+  std::vector<int> sendcounts_rhs;
+  sendcounts_rhs.resize(numProcs, 0);
+  for (int i=0; i<lengthRhs; i++) {
+    int row = perm[startGID+i]; // perm origina i to row
+    for (int p=0; p<numProcs; p++) {
+      if (row >= fstRows[p] && row < fstRows[p+1]) {
+        sendcounts_rhs[p] ++;
+        break;
+      }
+    }
+  }
+  std::vector<int> senddispls_rhs;
+  senddispls_rhs.resize(numProcs+1, 0);
+  for (int p=0; p<numProcs; p++) {
+    sendcounts_rhs[p] *= 2;
+    senddispls_rhs[p+1] = senddispls_rhs[p]+sendcounts_rhs[p];
+  }
+
+  std::vector<int> recvcounts_rhs;
+  std::vector<int> recvdispls_rhs;
+  recvcounts_rhs.resize(numProcs, 0);
+  MPI_Alltoall(sendcounts_rhs.data(), 1, MPI_INT, recvcounts_rhs.data(), 1, MPI_INT, comm);
+  recvdispls_rhs.resize(numProcs+1, 0);
+  for (int p=0; p<numProcs; p++) {
+    recvdispls_rhs[p+1] = recvdispls_rhs[p] + recvcounts_rhs[p];
+  }
+
+  // fill send-buffer
+  std::vector<double> sendbuf;
+  sendbuf.resize(2*lengthRhs, 0);
+  for (int i=0; i<lengthRhs; i++) {
+    int row = perm[startGID+i]; // perm origina i to row
+    for (int p=0; p<numProcs; p++) {
+      if (row >= fstRows[p] && row < fstRows[p+1]) {
+        int nnz = senddispls_rhs[p];
+        sendbuf[nnz + 0] = double(row);
+        sendbuf[nnz + 1] = rhs[i];
+        senddispls_rhs[p] += 2;
+        break;
+      }
+    }
+  }
+  // shift back
+  for (int p=numProcs; p>0; p--) {
+    senddispls_rhs[p] = senddispls_rhs[p-1];
+  }
+  senddispls_rhs[0] = 0;
+
+  // communicate !!
+  std::vector<double> recvbuf;
+  recvbuf.resize(2*lengthRhs, 0);
+  MPI_Alltoallv(sendbuf.data(), sendcounts_rhs.data(), senddispls_rhs.data(), MPI_DOUBLE,
+                recvbuf.data(), recvcounts_rhs.data(), recvdispls_rhs.data(), MPI_DOUBLE,
+                comm);
+
+  for (int i=0; i<lengthRhs; i++) {
+    int    row = int(recvbuf[2*i])-startGID;
+    double val = recvbuf[2*i+1];
+    rhsRe[row] = val;
+  }
 }
 
 void D3Solver::backsolve(const int level)
@@ -2533,6 +3075,11 @@ void D3Solver::eliminate_separator(const int level)
 #ifdef USE_INTEL_PARDISO
     ipiv[level].resize(n1);
     int matrix_layout = LAPACK_COL_MAJOR;
+    //printf("C=[\n");
+    //for (int i=0; i<n1; i++) {
+    //  for (int j=0; j<n1; j++) printf("%.16e ",A11[level][i+j*n1]);
+    //}
+    //printf("];\n");
     MKL_INT info = LAPACKE_dgetrf(matrix_layout, n1, n1, A11[level].data(), n1,
                                   ipiv[level].data());
     ThrowAssert(info == 0, "error in call to LAPACKE_dgetrf");

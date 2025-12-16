@@ -49,7 +49,8 @@ void checkSolution(const std::vector<int> & rowBegin,
     }
     else {
       const double relative_residual = std::sqrt(diff2_sum/rhs2_sum);
-      std::cout << "relative residual = " << relative_residual << std::endl;
+      std::cout << "relative residual = " << std::sqrt(diff2_sum) << " / " << std::sqrt(rhs2_sum)
+                << " = " << relative_residual << std::endl;
     }
   }
 }
@@ -93,13 +94,15 @@ int main(int argc, char *argv[]){
     }
   }
 
-  GenerateProblem problem(comm, inputFile);
+  const bool sort_colinds = true;
+  GenerateProblem problem(comm, inputFile, sort_colinds);
   const int numRowsAll = problem.getNumRowsAll();
   const int numProcSolver = problem.getNumProcSolver();
   const int num_threads = problem.getNumThreads();
   const int add_nonsymmetry = problem.getAddNonsymmetry();
   const int remove_some_entries = problem.getRemoveSomeEntries();
   const int msg_level = problem.getMessageLevel();
+  const int matching_option = problem.getMatchingOption();
   const int reorder_option = problem.getReorderOption();
   const int debugLevel = problem.getDebugLevel();
   const int num_factorizations = problem.getNumFactorizations();
@@ -111,6 +114,8 @@ int main(int argc, char *argv[]){
     std::cout << "number of rows       = " << numRowsAll << std::endl;
     std::cout << "number of subdomains = " << numProcSolver << std::endl;
     std::cout << "number of threads    = " << num_threads << std::endl;
+    std::cout << "matching option      = " << matching_option << std::endl;
+    std::cout << "reordering option    = " << reorder_option << std::endl;
     if (add_nonsymmetry) {
       std::cout << "artificially adding nonsymmetry to matrix (for testing only)" << std::endl;
     }
@@ -128,7 +133,7 @@ int main(int argc, char *argv[]){
 
     // set solver options
     solver.setNumThreads(num_threads);
-    solver.setOrderingOption(reorder_option);
+    solver.setOrderingOption(matching_option, reorder_option);
     solver.setVerbose(msg_level, debugLevel);
 
     // initialization
