@@ -12,7 +12,8 @@
 #include "generate_problem.h"
 
 GenerateProblem::GenerateProblem(MPI_Comm comm_in,
-                                 const std::string & input_file) :
+                                 const std::string & input_file,
+                                 const bool sort_colinds) :
   comm(comm_in)
 {
   MPI_Comm_rank(comm, &myPID);
@@ -30,7 +31,7 @@ GenerateProblem::GenerateProblem(MPI_Comm comm_in,
   else if (matrix_option == 2) {  
     if (myPID == 0 && msg_level > 0) std::cout << "generating matrix on-the-fly" << std::endl;
     generateModelMatrix(A);
-    scatterMatrix(A, numRowsProc);
+    scatterMatrix(A, numRowsProc, sort_colinds);
 
     const int numRows = rowBegin.size() - 1;
     generate_rhs(numRows);
@@ -44,7 +45,7 @@ GenerateProblem::GenerateProblem(MPI_Comm comm_in,
       readMatrixRhs(filenameBaseRhs, num_rows_mm, rhs_mm);
       if (msg_level > 0) std::cout << "done reading Matrix Market file" << std::endl;
     }
-    scatterMatrix(A, numRowsProc);
+    scatterMatrix(A, numRowsProc, sort_colinds);
     scatterRhs(numRowsProc, rhs_mm);    
   }
   makeAdjustments();
@@ -133,7 +134,7 @@ void GenerateProblem::readProcMatrices()
 }
 
 void GenerateProblem::scatterMatrix(const std::vector<std::tuple<int,int,double>> & A,
-                                    std::vector<int> & numRowsProc)
+                                    std::vector<int> & numRowsProc, const bool sort_colinds)
 {
   numRowsProc.resize(numProc);
   std::vector<int> startGIDsProc, numTermsProc, ArowsRoot, AcolsRoot;
@@ -183,6 +184,40 @@ void GenerateProblem::scatterMatrix(const std::vector<std::tuple<int,int,double>
   MPI_Scatterv(AvalsRoot.data(), numTermsProc.data(), displs.data(), MPI_DOUBLE,
                values.data(), numTermsA, MPI_DOUBLE, root, comm);
   extractRowBegin(Arows, numRows);
+  if (sort_colinds) {
+    printf( " ** Sorting column indexes for checking **\n" );
+    std::vector<int>    columns_in(columns.size());
+    std::vector<double> values_in(values.size());
+    for (int i=0; i<columns.size(); i++) columns_in[i] = columns[i];
+    for (int i=0; i<values.size(); i++) values_in[i] = values[i];
+
+    std::vector<int> sortedIDs(numRows);
+    std::vector<int> sortedCols(numRows);
+    for (int i=0; i<numRows; i++) {
+      const int index = rowBegin[i];
+      const int num_cols = rowBegin[i+1] - rowBegin[i];
+
+      sortedIDs.resize(num_cols);
+      sortedCols.resize(num_cols);
+      for (int j=0; j<num_cols; j++) sortedIDs[j] = j;
+      for (int j=0; j<num_cols; j++) sortedCols[j] = columns_in[index+j];
+      std::sort(sortedIDs.begin(), sortedIDs.end(),
+                [&sortedCols](size_t i1, size_t i2) {return sortedCols[i1] < sortedCols[i2];});
+      for (int j=0; j<num_cols; j++) columns[index+j] = columns_in[index+sortedIDs[j]];
+      for (int j=0; j<num_cols; j++) values[index+j] = values_in[index+sortedIDs[j]];
+    }
+  }
+  /*{
+    int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    char filename[100];
+    sprintf(filename, "lAin_%d.dat", myRank);
+    FILE *fp = fopen(filename, "w");
+    for (int i=0; i<numRows; i++) {
+      for (int k=rowBegin[i]; k<rowBegin[i+1]; k++)
+        fprintf(fp,"%d %d %.16e\n",i,columns[k],values[k]);
+    }
+    fclose(fp);
+  }*/
 }
 
 void GenerateProblem::scatterRhs(const std::vector<int> & numRowsProc,
@@ -385,6 +420,7 @@ void GenerateProblem::makeAdjustments()
   fin >> numProcSolver;
   fin >> msg_level;
   fin >> num_threads;
+  fin >> matching_option;
   fin >> reorder_option;
   fin >> debugLevel;
   fin >> add_nonsymmetry;

@@ -123,6 +123,7 @@ int main(int argc, char *argv[]) {
   out << myRank << " : " << Amesos2::version() << " on " << comm->getSize() << " MPIs" << std::endl << std::endl;
 
   // Read matrix
+  if( verbose && myRank == 0) std::cout << "Reading A from " << mat_filename << std::endl;
   RCP<MAT> A;
   if( verbose && myRank == 0) std::cout << "Reading A from " << mat_filename << std::endl;
   if (map_filename == "") {
@@ -146,6 +147,7 @@ int main(int argc, char *argv[]) {
   // Create B
   RCP<MV> B = rcp(new MV(rngmap,numVectors));
   if (rhs_filename == "") {
+    if( verbose && myRank == 0) std::cout << "Setting B to be [10; ..; 10];" << std::endl;
     /*
      * Use RHS:
      *
