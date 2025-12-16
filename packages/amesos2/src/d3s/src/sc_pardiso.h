@@ -25,6 +25,7 @@ public:
                  int num_threads,
                  int reorder_option,
                  int structurally_symmetric,
+                 bool robust_option,
                  int debug_level,
                  bool verbose);
 
@@ -64,6 +65,7 @@ private:
   void set_parameters(const int matrix_type,
                       const int msg_level,
                       const int reorder_option,
+                      const bool robust,
                       const bool verbose);
   
   int analysis_phase();
@@ -82,8 +84,16 @@ private:
   int m_iparam[64];
   int m_matrixType;
   int m_msgLvl;
-  std::vector<double> m_timings, m_schur;
+  std::vector<double> m_timings;
   std::vector<int> m_perm;
 
+  // schur in csr
+  bool m_sparse_schur;
+  int m_schur_nnz;
+  std::vector<int> m_schur_rowptr;
+  std::vector<int> m_schur_colind;
+  std::vector<double> m_schur_values;
+  // schur in dense form
+  std::vector<double> m_schur;
 };
 

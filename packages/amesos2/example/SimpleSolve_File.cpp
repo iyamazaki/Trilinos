@@ -113,10 +113,12 @@ int main(int argc, char *argv[]) {
   out << myRank << " : " << Amesos2::version() << " on " << comm->getSize() << " MPIs" << std::endl << std::endl;
 
   // Read matrix
+  if( verbose && myRank == 0) std::cout << "Reading A from " << mat_filename << std::endl;
   RCP<MAT> A;
   if (map_filename == "") {
     A = MMReader::readSparseFile(mat_filename, comm);
   } else {
+    if( verbose && myRank == 0) std::cout << " using map file " << map_filename << std::endl;
     RCP<const Map<LO,GO> > rowMap = MMReader::readMapFile(map_filename, comm);
     RCP<const Map<LO,GO> > colMap = Teuchos::null;
     A = MMReader::readSparseFile (mat_filename, rowMap, colMap, rowMap, rowMap);
@@ -134,6 +136,7 @@ int main(int argc, char *argv[]) {
   // Create B
   RCP<MV> B = rcp(new MV(rngmap,numVectors));
   if (rhs_filename == "") {
+    if( verbose && myRank == 0) std::cout << "Setting B to be [10; ..; 10];" << std::endl;
     /*
      * Use RHS:
      *
@@ -151,6 +154,7 @@ int main(int argc, char *argv[]) {
       B->putScalar(10);
     }
   } else {
+    if( verbose && myRank == 0) std::cout << "Reading B from " << rhs_filename << std::endl;
     B = MMReader::readDenseFile (rhs_filename, comm, rngmap);
     numVectors = B->getNumVectors();
   }
