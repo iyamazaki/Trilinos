@@ -39,6 +39,7 @@ D3S<Matrix,Vector>::D3S(
   , use_gather_(true)
   , msg_level_(0)
   , num_threads_(1)
+  , matching_option_(0)
   , reorder_option_(2)
   , debugLevel_(0)
 {
@@ -111,7 +112,7 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
   int info = 0;
   {
     solver->setNumThreads(num_threads_);
-    solver->setOrderingOption(reorder_option_);
+    solver->setOrderingOption(matching_option_, reorder_option_);
     solver->setVerbose(msg_level_, debugLevel_);
 
     int nnz = colind_view_.extent(0);
@@ -257,6 +258,10 @@ D3S<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::ParameterList
     num_threads_ = parameterList->get<int>("NumThreads");
   }
 
+  if( parameterList->isParameter("MatchingOption") ){
+    matching_option_ = parameterList->get<int>("MatchingOption");
+  }
+
   if( parameterList->isParameter("OrderingOption") ){
     reorder_option_ = parameterList->get<int>("OrderingOption");
   }
@@ -288,6 +293,7 @@ D3S<Matrix,Vector>::getValidParameters_impl() const
     pl->set("MessageLevel", 0, "Message Level");
     pl->set("DebugLevel", 0, "Debug Message Level");
     pl->set("NumThreads", 1, "Number of threads");
+    pl->set("MatchingOption", 0, "Matching option (0 none, 1 cardinarity)");
     pl->set("OrderingOption", 2, "Reordering option (0 minumum degree, 2 nested dissection, 3 parallel OpenMP ND)");
 
     setStringToIntegralParameter<int>("Trans", "NOTRANS",
