@@ -111,7 +111,8 @@ template <> struct LDL<Uplo::Lower, Algo::OnDevice> {
 #if defined(KOKKOS_ENABLE_HIP)
     if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
       if (W.span() == 0) {
-        r_val = 2;
+        //r_val = 2;
+        r_val = std::ceil(double(sizeof(rocblas_int))/ double(sizeof(value_type))); // to store devInfo (rocblas_int)
       } else
         r_val = rocsolver_invoke(member, A, P, W);
     }

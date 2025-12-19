@@ -36,7 +36,6 @@ template <> struct LU<Algo::OnDevice> {
     if (m > 0 && n > 0) {
       int *devInfo = (int *)W.data();
       value_type *workspace = W.data() + 1;
-      // int lwork = (W.span()-1);
       r_val = Lapack<value_type>::getrf(handle, m, n, A.data(), A.stride(1), workspace, P.data(), devInfo);
     }
     return r_val;
@@ -106,7 +105,8 @@ template <> struct LU<Algo::OnDevice> {
 #if defined(KOKKOS_ENABLE_HIP)
     if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
       if (W.span() == 0) {
-        r_val = 2;
+        //r_val = 2;
+        r_val = std::ceil(double(sizeof(rocblas_int))/double(sizeof(value_type))); // to store devInfo (rocblas_int)
       } else
         r_val = rocsolver_invoke(member, A, P, W);
     }

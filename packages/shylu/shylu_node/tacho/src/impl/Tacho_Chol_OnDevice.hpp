@@ -40,7 +40,7 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
     if (m > 0) {
       int *devInfo = (int *)W.data();
       value_type *workspace = W.data() + 1;
-      int lwork = W.span() - 1;
+      int lwork = (W.span() - 1);
       r_val = Lapack<value_type>::potrf(handle, ArgUplo::cublas_param, m, A.data(), A.stride(1), workspace, lwork,
                                         devInfo);
     }
@@ -99,7 +99,7 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
       if (W.span() == 0) {
         int lwork;
         r_val = cusolver_buffer_size(member, A, &lwork);
-        r_val = lwork + 1;
+        r_val = lwork + 1; // to store devInfo (int)
       } else {
         r_val = cusolver_invoke(member, A, W);
       }
@@ -109,7 +109,8 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
 #if defined(KOKKOS_ENABLE_HIP)
     if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
       if (W.span() == 0) {
-        r_val = 2;
+        //r_val = 2;
+        r_val = std::ceil(double(sizeof(rocblas_int))/double(sizeof(value_type))); // to store devInfo (rocblas_int)
       } else
         r_val = rocsolver_invoke(member, A, W);
     }

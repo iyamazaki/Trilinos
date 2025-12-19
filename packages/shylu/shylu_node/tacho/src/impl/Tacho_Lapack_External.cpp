@@ -85,7 +85,7 @@ int Lapack<float>::potrf(cusolverDnHandle_t handle, const cublasFillMode_t uplo,
 template <>
 int Lapack<float>::potrf(rocblas_handle handle, const rocblas_fill uplo, const int m, float *a, const int lda,
                          int *dev) {
-  const int r_val = rocsolver_spotrf(handle, uplo, m, a, lda, dev);
+  const int r_val = rocsolver_spotrf(handle, uplo, m, a, lda, (rocblas_int*)dev);
   return r_val;
 }
 #endif
@@ -116,7 +116,7 @@ template <>
 int Lapack<float>::sytrf(rocblas_handle handle, const rocblas_fill uplo, const int m, float *a, const int lda,
                          int *ipiv, int *dev) {
 #if defined(TACHO_ENABLE_ROCSOLVER_SYTRF)
-  const int r_val = rocsolver_ssytrf(handle, uplo, m, a, lda, ipiv, dev);
+  const int r_val = rocsolver_ssytrf(handle, uplo, m, a, lda, ipiv, (rocblas_int*)dev);
   return r_val;
 #else
   throw std::logic_error("Error: sytrf is not avail in old ROCM");
@@ -149,7 +149,7 @@ int Lapack<float>::getrf(cusolverDnHandle_t handle, const int m, const int n, fl
 template <>
 int Lapack<float>::getrf(rocblas_handle handle, const int m, const int n, float *a, const int lda, int *ipiv,
                          int *dev) {
-  const int r_val = rocsolver_sgetrf(handle, m, n, a, lda, ipiv, dev);
+  const int r_val = rocsolver_sgetrf(handle, m, n, a, lda, ipiv, (rocblas_int*)dev);
   return r_val;
 }
 #endif
@@ -177,8 +177,8 @@ int Lapack<double>::potrf(cusolverDnHandle_t handle, const cublasFillMode_t uplo
 template <>
 int Lapack<double>::potrf(rocblas_handle handle, const rocblas_fill uplo, const int m, double *a, const int lda,
                           int *dev) {
-  const int r_val = rocsolver_dpotrf(handle, uplo, m, a, lda, dev);
-  return r_val;
+  const int r_val = rocsolver_dpotrf(handle, uplo, m, a, lda, (rocblas_int*)dev);
+  return r_val; // rocblas_status is 0?
 }
 #endif
 
@@ -207,7 +207,7 @@ template <>
 int Lapack<double>::sytrf(rocblas_handle handle, const rocblas_fill uplo, const int m, double *a, const int lda,
                           int *ipiv, int *dev) {
 #if defined(TACHO_ENABLE_ROCSOLVER_SYTRF)
-  const int r_val = rocsolver_dsytrf(handle, uplo, m, a, lda, ipiv, dev);
+  const int r_val = rocsolver_dsytrf(handle, uplo, m, a, lda, ipiv, (rocblas_int*)dev);
   return r_val;
 #else
   throw std::logic_error("Error: sytrf is not avail in old ROCM");
@@ -240,7 +240,7 @@ int Lapack<double>::getrf(cusolverDnHandle_t handle, const int m, const int n, d
 template <>
 int Lapack<double>::getrf(rocblas_handle handle, const int m, const int n, double *a, const int lda, int *ipiv,
                           int *dev) {
-  const int r_val = rocsolver_dgetrf(handle, m, n, a, lda, ipiv, dev);
+  const int r_val = rocsolver_dgetrf(handle, m, n, a, lda, ipiv, (rocblas_int*)dev);
   return r_val;
 }
 #endif
@@ -272,7 +272,7 @@ int Lapack<Kokkos::complex<float>>::potrf(cusolverDnHandle_t handle, const cubla
 template <>
 int Lapack<Kokkos::complex<float>>::potrf(rocblas_handle handle, const rocblas_fill uplo, const int m,
                                           Kokkos::complex<float> *a, const int lda, int *dev) {
-  const int r_val = rocsolver_cpotrf(handle, uplo, m, (rocblas_float_complex *)a, lda, dev);
+  const int r_val = rocsolver_cpotrf(handle, uplo, m, (rocblas_float_complex *)a, lda, (rocblas_int*)dev);
   return r_val;
 }
 #endif
@@ -305,7 +305,7 @@ template <>
 int Lapack<Kokkos::complex<float>>::sytrf(rocblas_handle handle, const rocblas_fill uplo, const int m,
                                           Kokkos::complex<float> *a, const int lda, int *ipiv, int *dev) {
 #if defined(TACHO_ENABLE_ROCSOLVER_SYTRF)
-  const int r_val = rocsolver_csytrf(handle, uplo, m, (rocblas_float_complex *)a, lda, ipiv, dev);
+  const int r_val = rocsolver_csytrf(handle, uplo, m, (rocblas_float_complex *)a, lda, ipiv, (rocblas_int*)dev);
   return r_val;
 #else
   throw std::logic_error("Error: sytrf is not avail in old ROCM");
@@ -341,7 +341,7 @@ int Lapack<Kokkos::complex<float>>::getrf(cusolverDnHandle_t handle, const int m
 template <>
 int Lapack<Kokkos::complex<float>>::getrf(rocblas_handle handle, const int m, const int n, Kokkos::complex<float> *a,
                                           const int lda, int *ipiv, int *dev) {
-  const int r_val = rocsolver_cgetrf(handle, m, n, (rocblas_float_complex *)a, lda, ipiv, dev);
+  const int r_val = rocsolver_cgetrf(handle, m, n, (rocblas_float_complex *)a, lda, ipiv, (rocblas_int*)dev);
   return r_val;
 }
 #endif
@@ -373,7 +373,7 @@ int Lapack<Kokkos::complex<double>>::potrf(cusolverDnHandle_t handle, const cubl
 template <>
 int Lapack<Kokkos::complex<double>>::potrf(rocblas_handle handle, const rocblas_fill uplo, const int m,
                                            Kokkos::complex<double> *a, const int lda, int *dev) {
-  const int r_val = rocsolver_zpotrf(handle, uplo, m, (rocblas_double_complex *)a, lda, dev);
+  const int r_val = rocsolver_zpotrf(handle, uplo, m, (rocblas_double_complex *)a, lda, (rocblas_int*)dev);
   return r_val;
 }
 #endif
@@ -407,7 +407,7 @@ template <>
 int Lapack<Kokkos::complex<double>>::sytrf(rocblas_handle handle, const rocblas_fill uplo, const int m,
                                            Kokkos::complex<double> *a, const int lda, int *ipiv, int *dev) {
 #if defined(TACHO_ENABLE_ROCSOLVER_SYTRF)
-  const int r_val = rocsolver_zsytrf(handle, uplo, m, (rocblas_double_complex *)a, lda, ipiv, dev);
+  const int r_val = rocsolver_zsytrf(handle, uplo, m, (rocblas_double_complex *)a, lda, ipiv, (rocblas_int*)dev);
   return r_val;
 #else
   throw std::logic_error("Error: sytrf is not avail in old ROCM");
@@ -443,7 +443,7 @@ int Lapack<Kokkos::complex<double>>::getrf(cusolverDnHandle_t handle, const int 
 template <>
 int Lapack<Kokkos::complex<double>>::getrf(rocblas_handle handle, const int m, const int n, Kokkos::complex<double> *a,
                                            const int lda, int *ipiv, int *dev) {
-  const int r_val = rocsolver_zgetrf(handle, m, n, (rocblas_double_complex *)a, lda, ipiv, dev);
+  const int r_val = rocsolver_zgetrf(handle, m, n, (rocblas_double_complex *)a, lda, ipiv, (rocblas_int*)dev);
   return r_val;
 }
 #endif
