@@ -8,6 +8,14 @@
 #include "mpi.h"
 #include "gather_to_root_simple.h"
 
+#include "Amesos2_Solver.hpp"
+
+#include "Tpetra_Core.hpp"
+#include "Tpetra_Map.hpp"
+#include "Tpetra_MultiVector.hpp"
+#include "Tpetra_CrsMatrix.hpp"
+
+#include "KokkosSparse_CrsMatrix.hpp"
 #include "trilinos_btf_decl.h"
 
 // Note: logic still needed to not define USE_INTEL_PARDISO for non-Intel builds
@@ -16,6 +24,9 @@
 #ifdef USE_INTEL_PARDISO
   #include "sc_pardiso.h"
 #endif
+
+#ifndef D3SOLVER_HPP
+#define D3SOLVER_HPP
 
 class D3Solver
 {
@@ -26,7 +37,8 @@ public:
 
   void setNumThreads(const int num_threadsIn);
   void setOrderingOption(const int matching_optionIn, const int reorder_optionIn);
-  void setVerbose(const int msg_levelIn, const int debug_levelIn=0);
+  void setVerbose(const int msg_levelIn, const int debug_levelIn);
+  void setInteriorSolverName(const std::string solvername_in);
 
   int initialize(const std::vector<int> & rowBegin_in,
                  const std::vector<int> & columns_in,
@@ -35,9 +47,9 @@ public:
   
   int factorize(const std::vector<double> & values);
   
-  void solve(const std::vector<double> & rhs,
-                   std::vector<double> & sol,
-             const int numRhs=1);
+  int solve(const std::vector<double> & rhs,
+                  std::vector<double> & sol,
+            const int numRhs=1);
 
   void gatherScatterSol(std::vector<double> & sol,
                         std::vector<double> & solAll) const;
@@ -165,7 +177,7 @@ public:
                            std::vector<double> & values,
                            std::vector<int> & rowGIDs);
   
-  void extractMatrix(const int level,
+  void extractMatrixStructures(const int level,
                      const std::vector<std::vector<int>> & row_GIDs_recv,
                      const std::vector<std::vector<int>> & column_counts_recv,
                      const std::vector<std::vector<int>> & column_GIDs_recv,
@@ -174,7 +186,7 @@ public:
                      std::vector<double> & values,
                      std::vector<int> & rowGIDs);
   
-  void extractMatrix(const int level);
+  void extractMatrixValues(const int level);
   
   void extractRhs(const int level);
   
@@ -222,17 +234,17 @@ public:
                              std::vector<T> & recv_data,
                              MPI_Comm comm_here);
     
-  void calculate_schur_complement(const int level,
-                                  const std::vector<int> & rowBegin,
-                                  const std::vector<int> & columns,
-                                  const std::vector<int> & rowGIDsSubB,
-                                  std::vector<int> & not_in_sep);
+  void initialize_schur_complement(const int level,
+                                   const std::vector<int> & rowBegin,
+                                   const std::vector<int> & columns,
+                                   const std::vector<int> & rowGIDsSubB,
+                                   std::vector<int> & not_in_sep);
   
-  void calculate_schur_complement(const int level,
-                                  const std::vector<double> & values);
+  void compute_schur_complement(const int level,
+                                const std::vector<double> & values);
   
-  void calculate_schur_complement_rhs(const int level,
-                                      const std::vector<double> & rhs);
+  void solve_schur_complement(const int level,
+                              const std::vector<double> & rhs);
   
   void assemble_rhs(const int level);
   
@@ -407,7 +419,7 @@ private:
 
   bool robust_option;
   int matching_option, reorder_option;
-  int msg_level, debug_level;
+  int msg_level;
 
   int structurally_symmetric, num_extra_edges;
   std::vector<int> permMatching, ipermMatching;
@@ -442,7 +454,11 @@ private:
   std::vector<std::vector<std::vector<double>>> values_send_B, values_recv_B,
     rhs_send_sep, rhs_recv_sep;
   std::vector<std::vector<double>> AS, values_send, values_recv, AS_rhs,
-    A11, A12, A21, A22, sc, sc_recv, rhs_send, rhs_recv, rhs_sc, rhs_sc_recv,
+    A11, A12, A21, A22;
+  // Schur complement
+  std::vector<std::vector<double>> sc, sc_recv;
+  // rhs vectors
+  std::vector<std::vector<double>> rhs_send, rhs_recv, rhs_sc, rhs_sc_recv,
     rhs_sep, values_B;
   std::vector<MPI_Comm> comm_level;
   std::string node_name;
@@ -455,5 +471,43 @@ private:
   #ifdef USE_INTEL_PARDISO
     std::vector<std::vector<MKL_INT>> ipiv;
     sc_pardiso pardiso_solver;
-  #endif  
+  #endif
+
+  // Interior Amesos2 solver
+  int debug_level_interior;
+  std::string solvername;
+  using SC = double;
+  using LO = Tpetra::Map<>::local_ordinal_type;
+  using GO =  Tpetra::Map<>::global_ordinal_type;
+  using NO = Tpetra::Map<>::node_type;
+  using MAT = Tpetra::CrsMatrix<SC,LO,GO>;
+  using MV = Tpetra::MultiVector<SC,LO,GO>;
+  using map_type = Tpetra::Map<LO, GO, NO>;
+  Kokkos::View<int*> m_parts;
+  Teuchos::RCP<const map_type > localMap;
+  Teuchos::RCP<MAT> A;
+  Teuchos::RCP<MV> X;
+  Teuchos::RCP<MV> B;
+  Teuchos::RCP<Amesos2::Solver<MAT,MV>> amesos2_solver;
+
+  using crsmat_t = typename MAT::local_matrix_device_type;
+  using graph_t = typename crsmat_t::StaticCrsGraphType;
+  using rowmap_view_t = typename graph_t::row_map_type::non_const_type;
+  using colind_view_t = typename graph_t::entries_type::non_const_type;
+  using values_view_t = typename crsmat_t::values_type::non_const_type;
+  // [D, G; H, S]
+  // D in csrmat
+  rowmap_view_t rowmap_view_D;
+  colind_view_t colind_view_D;
+  values_view_t values_view_D;
+  // F in csrmat
+  rowmap_view_t rowmap_view_F;
+  colind_view_t colind_view_F;
+  values_view_t values_view_F;
+
+  using mv_view_type = typename MV::host_view_type::non_const_type;
+  mv_view_type E_view, F_view;
+  mv_view_type G_view, S_view;
 };
+
+#endif //D3SOLVER_HPP
