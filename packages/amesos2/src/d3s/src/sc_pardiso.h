@@ -5,6 +5,10 @@
 #include "mkl.h"
 #include "mkl_pardiso.h"
 
+
+#ifndef D3SOLVER_SC_PARDISO
+#define D3SOLVER_SC_PARDISO
+
 enum timingsLinSolver {SYMBOLIC, NUMERIC, REFACTOR, SOLVE, LENGTH_LINSOLVER_TIMINGS};
 
 class sc_pardiso
@@ -21,7 +25,6 @@ public:
                  int* columns,
                  int numRowsB,
                  int* rowsB,
-                 int msg_level,
                  int num_threads,
                  int reorder_option,
                  int structurally_symmetric,
@@ -63,7 +66,7 @@ private:
   void isFailed(int ierr, const char* where) const;
   
   void set_parameters(const int matrix_type,
-                      const int msg_level,
+                      const int debug_level,
                       const int reorder_option,
                       const bool robust,
                       const bool verbose);
@@ -97,3 +100,4 @@ private:
   std::vector<double> m_schur;
 };
 
+#endif //D3SOLVER_SC_PARDISO
