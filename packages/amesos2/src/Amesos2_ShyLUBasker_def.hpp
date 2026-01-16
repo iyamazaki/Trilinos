@@ -323,7 +323,7 @@ ShyLUBasker<Matrix,Vector>::numericFactorization_impl()
 
   //global_size_type info_st = as<global_size_type>(info);
   TEUCHOS_TEST_FOR_EXCEPTION(info != 0,
-    std::runtime_error, " ShyLUBasker::numericFactorization failed.");
+    std::runtime_error, " ShyLUBasker::numericFactorization failed (with info = " + std::to_string(info) + ")");
 
   return(info);
 }

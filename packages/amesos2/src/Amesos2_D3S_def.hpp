@@ -37,11 +37,12 @@ D3S<Matrix,Vector>::D3S(
   , transFlag_(0)
   , is_contiguous_(true)
   , use_gather_(true)
+  , solvername_("")
   , msg_level_(0)
   , num_threads_(1)
   , matching_option_(0)
   , reorder_option_(2)
-  , debugLevel_(0)
+  , debug_level_(0)
 {
   // Matrix info
   Teuchos::RCP<const Teuchos::Comm<int> > matComm = this->matrixA_->getComm ();
@@ -113,7 +114,8 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
   {
     solver->setNumThreads(num_threads_);
     solver->setOrderingOption(matching_option_, reorder_option_);
-    solver->setVerbose(msg_level_, debugLevel_);
+    solver->setVerbose(msg_level_, debug_level_);
+    solver->setInteriorSolverName(solvername_);
 
     int nnz = colind_view_.extent(0);
     std::vector<int> rowBegin(rowptr_view_.data(), rowptr_view_.data()+(numRows_+1));
@@ -251,7 +253,11 @@ D3S<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::ParameterList
     msg_level_ = parameterList->get<int>("MessageLevel");
   }
   if( parameterList->isParameter("DebugLevel") ){
-    debugLevel_ = parameterList->get<int>("DebugLevel");
+    debug_level_ = parameterList->get<int>("DebugLevel");
+  }
+
+  if( parameterList->isParameter("InteriorSolverName") ){
+    solvername_ = parameterList->get<std::string>("InteriorSolverName");
   }
 
   if( parameterList->isParameter("NumThreads") ){
@@ -290,6 +296,7 @@ D3S<Matrix,Vector>::getValidParameters_impl() const
     pl->set("Equil", true, "Whether to equilibrate the system before solve, does nothing now");
     pl->set("IsContiguous", true, "Whether GIDs contiguous");
 
+    pl->set("InteriorSolverName", "", "Name of the solver used for solving interior/leaf problem");
     pl->set("MessageLevel", 0, "Message Level");
     pl->set("DebugLevel", 0, "Debug Message Level");
     pl->set("NumThreads", 1, "Number of threads");
