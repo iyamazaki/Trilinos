@@ -228,11 +228,12 @@ private:
   bool is_contiguous_;
   bool use_gather_;
 
+  std::string solvername_;
   int msg_level_;
   int num_threads_;
   int matching_option_;
   int reorder_option_;
-  int debugLevel_;
+  int debug_level_;
 
   int numProcSolver_;
   int numRows_;

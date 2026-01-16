@@ -4,7 +4,8 @@
 
 #include <mpi.h>
 
-sc_pardiso::sc_pardiso()
+sc_pardiso::sc_pardiso() :
+  m_msgLvl(0)
 {
   m_timings.resize(LENGTH_LINSOLVER_TIMINGS, 0);
 }
@@ -155,13 +156,13 @@ int sc_pardiso::numeric_phase()
 #ifdef MATRIX_OUT
   {
     int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-    if (myRank == 0) {
+    if (myRank == 1) {
       //printf("s=[\n");
       //for (int i=0; i<m_numRowsB; i++) {
       //  for (int j=m_schur_rowptr[i]; j<m_schur_rowptr[i+1]; j++) printf("%d %d %e",i,m_schur_colind[j],m_schur_values[j]);
       //}
       //printf("];\n");
-      printf("S=[\n");
+      printf("Pardiso:: S=[\n");
       for (int i=0; i<m_numRowsB; i++) {
         for (int j=0; j<m_numRowsB; j++) printf("%e ",m_schur[i+j*m_numRowsB]);
         printf("\n");
@@ -289,7 +290,6 @@ int sc_pardiso::initialize(const int numRows,
                            int* columns,
                            int numRowsB,
                            int* rowsB,
-                           int msg_level,
                            int num_threads,
                            int reorder_option,
                            int structurally_symmetric,
@@ -304,15 +304,14 @@ int sc_pardiso::initialize(const int numRows,
   m_numRowsB = numRowsB;
   m_rowsB = rowsB;
   m_schur.resize(numRowsB*numRowsB, 0);
-  m_debug_level = debug_level;
   // matrix_type = 1:  real and structurally symmetric
   // matrix_type = 11: real and nonsymmetric
   int r_val = -1;
   int matrix_type;
   if (structurally_symmetric && !robust_option) matrix_type = 1;
   else matrix_type = 11;
-  set_parameters(matrix_type, msg_level, reorder_option, robust_option, verbose);
-  if (m_debug_level > 0 && verbose) {
+  set_parameters(matrix_type, debug_level, reorder_option, robust_option, verbose);
+  if (verbose) {
     std::cout << "performing MKL/Pardiso analysis phase" << std::endl;
   }
 
@@ -343,14 +342,14 @@ sc_pardiso::~sc_pardiso()
 }
 
 void sc_pardiso::set_parameters(const int matrix_type,
-                                const int msg_level,
+                                const int debug_level,
                                 const int reorder_option,
                                 const bool robust,
                                 const bool verbose)
 {
   m_sparse_schur = false;
   m_matrixType = matrix_type;
-  m_msgLvl = msg_level;
+  m_debug_level = debug_level;
   for (int i=0; i<64; i++) {
     m_iparam[i] = 0;
     m_pt[i] = 0;
@@ -380,7 +379,7 @@ void sc_pardiso::set_parameters(const int matrix_type,
       m_iparam[12] = 1; // use weighted matchings
     }
   }
-  if (m_debug_level > 0 && verbose) {
+  if (verbose) {
     std::cout << "setting MKL/Pardiso parameters (reorder_option = " << reorder_option << ")" << std::endl;
   }
 }
