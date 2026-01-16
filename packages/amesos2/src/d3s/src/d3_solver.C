@@ -14,6 +14,9 @@
 #include <unordered_set>
 
 #include "d3_solver.h"
+#include "KokkosBlas3_gemm.hpp"
+#include "KokkosSparse_spmv.hpp"
+#include "Amesos2.hpp"
 
 // Direct Domain Decomposition Solver, a sparse distributed memory direct solver based on
 // domain decomposition concepts.
@@ -40,7 +43,10 @@ D3Solver::D3Solver(MPI_Comm commIn) :
 
   // message level
   msg_level = 0;
-  debug_level = 0;
+  debug_level_interior = 0;
+
+  // interior solver
+  solvername = "";
 }
 
 D3Solver::~D3Solver()
@@ -66,7 +72,11 @@ void D3Solver::setOrderingOption(const int matching_optionIn, const int reorder_
 
 void D3Solver::setVerbose(const int msg_levelIn, const int debug_levelIn) {
   msg_level = msg_levelIn;
-  debug_level = debug_levelIn;
+  debug_level_interior = debug_levelIn;
+}
+
+void D3Solver::setInteriorSolverName(const std::string solvername_in) {
+    solvername = solvername_in;
 }
 
 int D3Solver::getLocalID_unsorted(const int gID,
@@ -291,7 +301,7 @@ void D3Solver::getGraphForMetis(const std::vector<int> & rowBegin,
     for (int j=0; j<num_cols; j++) columnsMetis[index++] = sortedCols[j];
   }
   if (num_additional_edges > 0) {
-    if (msg_level > 0 && debug_level > 0) {
+    if (msg_level > 0) {
       std::cout << "number of additional edges added to graph for Metis = "
                 << num_additional_edges << std::endl;
     }
@@ -418,7 +428,7 @@ void D3Solver::get_separators(const std::vector<int> & in_rowSubIDs,
       count[sepID]++;
     }
   }
-  if (msg_level > 0 && debug_level > 0) {
+  if (msg_level > 0) {
     std::cout << "number of separators = " << num_sep << std::endl;
   }
   in_sepBegin.resize(num_sep+1, 0);
@@ -688,7 +698,7 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
     int numSepLevel(1), interfaceSize(0);
     const int numLevel = std::log2(numProcSolver) + 1;
     for (int level=0; level<numLevel; level++) {
-      if (msg_level > 0 && debug_level > 0) {
+      if (msg_level > 0) {
         if (level < numLevel-1) {
           std::cout << "separator sizes for level " << level << ": \n";
         }
@@ -698,12 +708,12 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
       }
       for (int i=0; i<numSepLevel; i++) {
         const int sepSize = sizes[lowerIndex--];
-        if (msg_level > 0 && debug_level > 0) std::cout << sepSize << std::endl;
+        if (msg_level > 0) std::cout << sepSize << std::endl;
         if (level < numLevel-1) interfaceSize += sepSize;
       }
       numSepLevel *= 2;
     }
-    if (msg_level > 0 && debug_level > 0) {
+    if (msg_level > 0) {
       std::cout << "total interface size = " << interfaceSize << std::endl;
     }
     std::vector<int> level, location;
@@ -1562,7 +1572,7 @@ void D3Solver::sort_cols_and_indices(int* cols,
   }
 }
 
-void D3Solver::extractMatrix(const int level,
+void D3Solver::extractMatrixStructures(const int level,
                              const std::vector<std::vector<int>> & row_GIDs_recv,
                              const std::vector<std::vector<int>> & column_counts_recv,
                              const std::vector<std::vector<int>> & column_GIDs_recv,
@@ -1608,7 +1618,6 @@ void D3Solver::extractMatrix(const int level,
         const int index = rowBegin[local_row] + count[local_row];
         index_map[i][num_terms_data++] = index;
         columns[index] = localCol;
-        //        values[index] = value;
         count[local_row]++;
       }
     }
@@ -1629,7 +1638,7 @@ void D3Solver::extractRhs(const int level)
   }
 }
 
-void D3Solver::extractMatrix(const int level)
+void D3Solver::extractMatrixValues(const int level)
 {
   const std::vector<std::vector<int>> & index_map = index_map_B[level];
   std::vector<double> & values = values_B[level];
@@ -1706,7 +1715,7 @@ void D3Solver::output_sub_matrices(const std::vector<int> & rowBegin,
                                    const std::vector<int> & columns,
                                    const std::vector<double> & values)
 {
-  if (msg_level == 0 || debug_level < 2) return;
+  if (msg_level < 2) return;
   const int numRows = rowsISub.size() + rowsBSub.size();
   if (numRows > 0) {
     output_rows("rowsI", rowsISub);
@@ -2014,7 +2023,7 @@ void D3Solver::assignTargetMPIs(const std::vector<int> & rowBegin)
     auto iter = std::unique(target_copy.begin(), target_copy.end());
     target_copy.erase(iter, target_copy.end());
     ThrowAssert(target_copy.size() == targetMPIs.size(), "duplicate MPIs in targetMPIs");
-    if (msg_level > 0 && debug_level > 0) {
+    if (msg_level > 0) {
       for (int i=0; i<numProcSolver; i++) {
         std::cout << "subdomain " << i << " is on node " << node_names[targetMPIs[i]]
                   << " and has MPI rank " << targetMPIs[i] << std::endl;
@@ -2055,6 +2064,12 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
                          const int startGID_in,
                          const int numProcSolver_in)
 {
+  if (msg_level > 0) {
+    MPI_Barrier(comm);
+    if (myPID == 0) {
+      printf( "\n -- D3Solver::initialize -- \n" ); fflush(stdout);
+    }
+  }
   startGID = startGID_in;
   numProcSolver = setNumProcSolver(numProcSolver_in);
   num_level = std::log2(numProcSolver);
@@ -2094,14 +2109,141 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
       fclose(fp);
     }
 #endif
+    if (solvername == "") {
+      // PardisoMKL initialize
 #ifdef USE_INTEL_PARDISO
-    bool verbose = (myPID == 0);
-    const int num_rows_subB = rowsBSub.size();
-    r_val = pardiso_solver.initialize(num_rows_sub, rowBeginSub.data(), columnsSub.data(),
-                                      num_rows_subB, rowsBSub.data(), msg_level, num_threads,
-                                      reorder_option, structurally_symmetric, robust_option,
-                                      debug_level, verbose);
+      bool verbose = (myPID == 0 && msg_level > 0);
+      const int num_rows_subB = rowsBSub.size();
+      r_val = pardiso_solver.initialize(num_rows_sub, rowBeginSub.data(), columnsSub.data(),
+                                        num_rows_subB, rowsBSub.data(), num_threads,
+                                        reorder_option, structurally_symmetric, robust_option,
+                                        debug_level_interior, verbose);
 #endif
+    } else {
+      // Amesos2 Symbolic factorization
+      using comm_type = Teuchos::MpiComm<int>;
+#if 0
+      int n = num_rows_sub;
+      int nnz = rowBeginSub[n];
+      Kokkos::resize(rowmap_view, n+1);
+      Kokkos::resize(colind_view, nnz);
+      Kokkos::resize(values_view, nnz);
+      for (int i=0; i<=n; i++) rowmap_view(i) = rowBeginSub[i];
+      for (int i=0; i<nnz; i++) colind_view(i) = columnsSub[i];
+
+      // wrap them into kokkos crsmatrix
+      graph_t static_graph(colind_view, rowmap_view);
+      crsmat_t crsmat("CrsMatrix", n, values_view, static_graph);
+
+      // wrap it into tpetra crsmatrix
+      int indexBase = 0;
+      Teuchos::RCP<const comm_type> localComm = Teuchos::rcp(new comm_type(MPI_COMM_SELF));
+      localMap = Teuchos::rcp(new map_type(n, indexBase, localComm, Tpetra::GloballyDistributed));
+#else
+      size_t n = rowBeginSub.size()-1;
+      int n2 = rowsBSub.size();
+      // mark separtor nodes
+      Kokkos::resize(m_parts, n);
+      Kokkos::deep_copy(m_parts, 0);
+      for (int i=0; i<n2; i++) m_parts(rowsBSub[i]) = -1;
+
+      n2 = 1;
+      int n1 = 0;
+      int nnzD = 0;
+      int nnzF = 0;
+      for (int i=0; i<n; i++) {
+        if (m_parts(i) == 0) { // interior
+          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+            if (m_parts(columnsSub[k]) >= 0) nnzD ++;
+          }
+          m_parts(i) = n1;
+          n1++;
+        } else { // separator
+          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+            if (m_parts(columnsSub[k]) >= 0) nnzF++;
+          }
+          m_parts(i) = -n2;
+          n2++;
+        }
+      }
+      n2--;
+      if (n2 != rowsBSub.size()) printf( " D3S: ERROR n2 mismatch(%d vs %d)\n",n2,int(rowsBSub.size()) );
+      if (n1+n2 != n) printf( " D3S: ERROR n1 mismatch(%d vs %d)\n",n1,int(n-n2) );
+      n2 = rowsBSub.size();
+
+      // extract interior part of local subdomain
+      // [D, G; H, S]
+      Kokkos::resize(rowmap_view_D, n1+1);
+      Kokkos::resize(colind_view_D, nnzD);
+      Kokkos::resize(values_view_D, nnzD);
+
+      Kokkos::resize(E_view, n1,n2);
+      #ifdef D3S_DENSE_F
+        Kokkos::resize(F_view, n2,n1);
+      #else
+        Kokkos::resize(rowmap_view_F, n2+1);
+        Kokkos::resize(colind_view_F, nnzF);
+        Kokkos::resize(values_view_F, nnzF);
+      #endif
+      Kokkos::resize(G_view, n1,n2);
+      Kokkos::resize(S_view, n2,n2);
+      nnzD = 0;
+      nnzF = 0;
+      rowmap_view_D(0) = 0;
+      rowmap_view_F(0) = 0;
+      for (int i=0; i<n; i++) {
+        int row = m_parts(i);
+        if (m_parts(i) >= 0) { // interior rows
+          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+            int col = m_parts(columnsSub[k]);
+            if (col >= 0) {
+              // interior, D
+              colind_view_D(nnzD) = col;
+              nnzD++;
+            }
+          }
+          rowmap_view_D(row+1)=nnzD;
+        } else {
+          #ifndef D3S_DENSE_F
+          row = -row-1;
+          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+            int col = m_parts(columnsSub[k]);
+            if (col >= 0) {
+              // interface, F
+              colind_view_F(nnzF) = col;
+              nnzF++;
+            }
+          }
+          rowmap_view_F(row+1)=nnzF;
+          #endif
+        }
+      }
+
+      // wrap them into kokkos crsmatrix
+      graph_t static_graph(colind_view_D, rowmap_view_D);
+      crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
+
+      // wrap it into tpetra crsmatrix
+      int indexBase = 0;
+      Teuchos::RCP<const comm_type> localComm = Teuchos::rcp(new comm_type(MPI_COMM_SELF));
+      localMap = Teuchos::rcp(new map_type(n1, indexBase, localComm, Tpetra::GloballyDistributed));
+#endif
+      A = Teuchos::rcp(new MAT(crsmat, localMap,localMap));
+
+      amesos2_solver = Amesos2::create<MAT,MV>(solvername, A);
+      {
+        Teuchos::ParameterList amesos2Params;
+        amesos2Params.setName("Amesos2");
+
+        Teuchos::ParameterList &solverParams = amesos2Params.sublist(solvername);
+        //if (msg_level > 0) {
+        //  solverParams.set("verbose",(myPID == 1));
+        //}
+        //solverParams.set("replace_tiny_pivot",true);
+        amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
+      }
+      amesos2_solver->symbolicFactorization();
+    }
   }
   timer_pardiso_symbolic = clockIt() - startTime;
   if (msg_level > 0) {
@@ -2115,11 +2257,15 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
     int level = 0;
     sc_GIDs[0] = getRowGIDsSubB(rowGIDsSub);
     while (level < num_level) {
-      calculate_schur_complement(level, rowBegin, columns, sc_GIDs[level], sc_GIDs[level+1]);
+      initialize_schur_complement(level, rowBegin, columns, sc_GIDs[level], sc_GIDs[level+1]);
       level++;
     }
     columnsUse.resize(0);
     columnsUse.shrink_to_fit();
+  }
+  if (msg_level > 0) {
+    MPI_Barrier(comm);
+    if (myPID == 0) printf(" Initialize done\n");
   }
   return r_val;
 }
@@ -2164,6 +2310,12 @@ void D3Solver::assign_values(const std::vector<int> & rowBegin_in,
 int D3Solver::factorize(const std::vector<double> & values_in)
 {
   int r_val = 0;
+  if (msg_level > 0) {
+    MPI_Barrier(comm);
+    if (myPID == 0) {
+      printf( "\n -- D3Solver::factorize -- \n" ); fflush(stdout);
+    }
+  }
   double startTime = clockIt();
   if (matching_option == 0) {
     // No matching
@@ -2177,10 +2329,6 @@ int D3Solver::factorize(const std::vector<double> & values_in)
         char filename[100];
         sprintf(filename, "lW_%d.dat", myPID);
         FILE *fp = fopen(filename, "w");
-        //for (int i=0; i<numRows_proc; i++) {
-        //  for (int k=rowBeginRe[i]; k<rowBeginRe[i+1]; k++)
-        //    fprintf(fp,"%d %d %.16e\n",i,columnsRe[k],values_in[k]);
-        //}
         const int num_rows_sub = rowBeginSub.size() - 1;
         for (int i=0; i<num_rows_sub; i++) {
           for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++)
@@ -2257,20 +2405,205 @@ int D3Solver::factorize(const std::vector<double> & values_in)
   output_sub_matrices(rowBeginSub, columnsSub, valuesSub);
 
   startTime = clockIt();
+  bool verbose = (myPID == 0 && msg_level > 0);
+  if (solvername == "") {
+    if (pardiso_solver.getNumRows() != 0) {
 #ifdef USE_INTEL_PARDISO
-  if (pardiso_solver.getNumRows() != 0) {
-    bool verbose = (myPID == 0);
-    r_val = pardiso_solver.factorize(valuesSub.data(), verbose);
-    sc[0] = pardiso_solver.getSchurComplement();
-  }
+      // Pardiso numerical factorization
+      r_val = pardiso_solver.factorize(valuesSub.data(), verbose);
+      sc[0] = pardiso_solver.getSchurComplement();
+#ifdef MATRIX_OUT
+      {
+        char filename[250];
+        sprintf(filename,"S_P%d.dat", myPID);
+        FILE *fp = fopen(filename,"w");;
+        for (int k=0; k<sc[0].size(); k++) fprintf(fp,"%d %.16e\n",k,sc[0][k]);
+        fclose(fp);
+      }
 #endif
+#endif
+    }
+  } else {
+    // Amesos2 numerical factorization
+    size_t n = rowBeginSub.size()-1;
+    if (msg_level > 0) {
+      MPI_Barrier(comm);
+      printf("%d: n=%d\n",myPID,int(n)); fflush(stdout);
+      if (myPID == 0) {
+        printf( " > Amesos2:factorize\n" ); fflush(stdout);
+      }
+    }
+    if (n > 0) {
+#if 0
+      size_t n = rowmap_view.extent(0)-1;
+      size_t nnz = colind_view.extent(0);
+      for (int i=0; i<nnz; i++) values_view(i) = valuesSub[i];
+
+      graph_t static_graph(colind_view, rowmap_view);
+      crsmat_t crsmat("CrsMatrix", n, values_view, static_graph);
+#else
+      // [D, E; F, C]
+      Kokkos::deep_copy(E_view, 0);
+      #ifdef D3S_DENSE_F
+        Kokkos::deep_copy(F_view, 0);
+      #else
+        int nnzF = 0;
+      #endif
+      Kokkos::deep_copy(S_view, 0);
+      int nnzD = 0;
+      int n1 = 0;
+      int n2 = 0;
+      for (int i=0; i<n; i++) {
+        int row = m_parts(i);
+        if (row >= 0) {
+          // [D, E]
+          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+            int col = m_parts(columnsSub[k]);
+            if (col >= 0) {
+              // interior D
+              values_view_D(nnzD) = valuesSub[k];
+              nnzD ++;
+            } else {
+              // separator->interior, G
+              E_view(row, -col-1) = valuesSub[k];
+            }
+          }
+          n1++;
+        } else {
+          // [H, C]
+          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+            int col = m_parts(columnsSub[k]);
+            if (col >= 0) {
+              // interior->separator, H
+              #ifdef D3S_DENSE_F
+                F_view(-row-1, col) = valuesSub[k];
+              #else
+                values_view_F(nnzF) = valuesSub[k];
+                nnzF ++;
+              #endif
+            } else {
+              // separtor, S
+              S_view(-row-1, -col-1) = valuesSub[k];
+            }
+          }
+          n2++;
+        }
+      }
+
+      // wrap into Kokkos::CrsMatrix
+      graph_t static_graph(colind_view_D, rowmap_view_D);
+      crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
+#ifdef MATRIX_OUT
+      {
+        char filename[250];
+        FILE *fp;
+        /*sprintf(filename,"A%d.dat", myPID);
+        fp = fopen(filename,"w");;
+        for (int i=0; i<n; i++) for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) fprintf(fp,"%d %d %.16e\n",1+i,1+columnsSub[k],valuesSub[k]);
+        fclose(fp);*/
+        sprintf(filename,"D%d.dat", myPID);
+        fp = fopen(filename,"w");;
+        for (int i=0; i<n1; i++) for (int k=rowmap_view_D(i); k<rowmap_view_D(i+1); k++) fprintf(fp,"%d %d %.16e\n",1+i,1+colind_view_D(k),values_view_D(k));
+        fclose(fp);
+        /*sprintf(filename,"E%d.dat", myPID);
+        fp = fopen(filename,"w");;
+        for (int i=0; i<n1; i++) {
+          for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",E_view(i,j));
+          fprintf(fp,"\n");
+        }
+        fclose(fp);
+        sprintf(filename,"F%d.dat", myPID);
+        fp = fopen(filename,"w");;
+        for (int i=0; i<n2; i++) {
+          for (int j=0; j<n1; j++) fprintf(fp,"%.16e ",F_view(i,j));
+          fprintf(fp,"\n");
+        }
+        fclose(fp);
+        sprintf(filename,"C%d.dat", myPID);
+        fp = fopen(filename,"w");;
+        for (int i=0; i<n2; i++) {
+          for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",S_view(i,j));
+          fprintf(fp,"\n");
+        }
+        fclose(fp);
+        sprintf(filename,"part%d.dat", myPID);
+        fp = fopen(filename,"w");;
+        for (int i=0; i<n; i++) fprintf(fp,"%d\n",m_parts(i));
+        fclose(fp);*/
+      }
+      MPI_Barrier(MPI_COMM_WORLD);
+#endif
+#endif
+
+      // wrap into Tpetra::CrsMatrix
+      A = Teuchos::rcp(new MAT(crsmat, localMap,localMap));
+
+      // keep symbolic, and do numeric
+      amesos2_solver->setA(A, Amesos2::SYMBFACT);
+      amesos2_solver->numericFactorization();
+
+      // for local Schur complement
+      {
+        // apply D^{-1} to right-interface
+        auto E = Teuchos::rcp(new MV(localMap, E_view));
+        auto G = Teuchos::rcp(new MV(localMap, G_view));
+        amesos2_solver->setB(E);
+        amesos2_solver->setX(G);
+        amesos2_solver->solve();
+
+#ifdef MATRIX_OUT
+        {
+          char filename[250];
+          sprintf(filename,"G%d.dat", myPID);
+          FILE *fp = fopen(filename,"w");;
+          for (int i=0; i<n1; i++) {
+            for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",G_view(i,j));
+            fprintf(fp,"\n");
+          }
+          fclose(fp);
+        }
+#endif
+        // S = S - H*G
+        #ifdef D3S_DENSE_F
+          KokkosBlas::gemm("N","N",
+                           -1.0, F_view,
+                                 G_view,
+                            1.0, S_view);
+        #else
+          graph_t static_graph(colind_view_F, rowmap_view_F);
+          crsmat_t crsmat("CrsMatrix", n1, values_view_F, static_graph);
+          KokkosSparse::spmv("N", -1.0, crsmat, G_view, 1.0, S_view);
+        #endif
+#ifdef MATRIX_OUT
+        {
+          char filename[250];
+          sprintf(filename,"S_A%d.dat", myPID);
+          FILE *fp = fopen(filename,"w");;
+          for (int i=0; i<n2; i++) {
+            for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",S_view(i,j));
+            fprintf(fp,"\n");
+          }
+          fclose(fp);
+        }
+#endif
+      }
+
+      // TODO: Skip this
+      // copy Schur complement into D3S internal data-structure
+      //  + sc stores the Schur complement in *** column major **
+      sc[0].resize(n2*n2);
+      for (int i=0; i<n2; i++) {
+        for (int j=0; j<n2; j++) sc[0][j+i*n2] = S_view(i,j);
+      }
+    }
+  }
   timer_pardiso_numeric = clockIt() - startTime;
   
   if (r_val == 0) {
     int level = 0;
     while (level < num_level) {
       startTime = clockIt();
-      calculate_schur_complement(level, values);
+      compute_schur_complement(level, values);
       timer_factor[level] = clockIt() - startTime;
       level++;
     }
@@ -2318,15 +2651,15 @@ void D3Solver::get_comm_data(const int level,
   get_comm_data(level, numSub, mult, send_to_pid, recv_from_pid, recv_index);
 }
 
-void D3Solver::calculate_schur_complement(const int level,
-                                          const std::vector<double> & values)
+void D3Solver::compute_schur_complement(const int level,
+                                        const std::vector<double> & values)
 {
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
   communicateMatrixValuesB(level, values);
-  extractMatrix(level);
+  extractMatrixValues(level);
   bool output_mats = false;
-  if (debug_level >= 2) output_mats = true;
+  if (msg_level >= 2) output_mats = true;
   if (output_mats) {
     output_matrices("A_BB", rowBegin_B[level], columns_B[level], values_B[level], level);
   }
@@ -2365,8 +2698,8 @@ void D3Solver::get_comm_data(const int level,
   get_comm_pairs(num_proc_level, myPID_level, send_to_pid, recv_from_pid, recv_index);
 }
 
-void D3Solver::calculate_schur_complement_rhs(const int level,
-                                              const std::vector<double> & rhs)
+void D3Solver::solve_schur_complement(const int level,
+                                      const std::vector<double> & rhs)
 {
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
@@ -2446,17 +2779,28 @@ void D3Solver::scatterSubSolI()
   }
 }  
 
-void D3Solver::solve(const std::vector<double> & rhs,
-                           std::vector<double> & sol,
-                     const int numRhs)
+int D3Solver::solve(const std::vector<double> & rhs,
+                          std::vector<double> & sol,
+                    const int numRhs)
 {
   ThrowAssert(numRhs == 1, "solver currently setup for only a single rhs");
 
+  int lengthRhs = rhs.size();
+#ifdef MATRIX_OUT
+  {
+    char filename[250];
+    sprintf(filename,"RHS%d.dat", myPID);
+    FILE *fp = fopen(filename, "w");
+    for (int i=0; i<lengthRhs; i++) {
+      fprintf(fp,"%d %.16e\n",i,rhs[i]);
+    }
+    fclose(fp);
+  }
+#endif
   std::vector<double> rhsRe;
   if (matching_option == 0) {
     getSubRhs(rhs);
   } else {
-    int lengthRhs = rhs.size();
     rhsRe.resize(lengthRhs, 0);
     if (matching_option == 1) {
       getSubRhs(rhs);
@@ -2477,40 +2821,130 @@ void D3Solver::solve(const std::vector<double> & rhs,
 #endif
     }
   }
+#ifdef MATRIX_OUT
+  {
+    char filename[250];
+    sprintf(filename,"RHS_I%d.dat", myPID);
+    FILE *fp = fopen(filename, "w");
+    for (int i=0; i<rowsISub.size(); i++) {
+      fprintf(fp,"%d %.16e\n",i,rhsI[i]);
+    }
+    fclose(fp);
+  }
+#endif
 
-  int num_rows = 0;
-#ifdef USE_INTEL_PARDISO
-  num_rows = pardiso_solver.getNumRows();
-#endif
-  sol_pardiso.resize(num_rows);
+  // initialize rhs to be zero
+  int num_rows = rowBeginSub.size() - 1;
   rhs_pardiso.assign(num_rows, 0);
-  for (size_t i=0; i<rowsISub.size(); i++) {
-    rhs_pardiso[rowsISub[i]] = rhsI[i];
-  }
+  sol_pardiso.resize(num_rows);
+
+  int rval = 0;
+  if (solvername == "") {
+    // == PardisoMKL solves ==
+    // copy interior rhs vector in
+    for (size_t i=0; i<rowsISub.size(); i++) {
+      rhs_pardiso[rowsISub[i]] = rhsI[i];
+    }
 #ifdef USE_INTEL_PARDISO
-  int phase = 331;
-  pardiso_solver.solve(rhs_pardiso.data(), sol_pardiso.data(), phase);
+    // forward solve with Pardiso
+    int phase = 331;
+    pardiso_solver.solve(rhs_pardiso.data(), sol_pardiso.data(), phase);
 #endif
-  for (size_t i=0; i<rowsISub.size(); i++) {
-    const int row = rowsISub[i];
-    rhs_pardiso[row] = sol_pardiso[row];
+#ifdef MATRIX_OUT
+    {
+      char filename[250];
+      sprintf(filename,"solp1_%d.dat", myPID);
+      FILE *fp = fopen(filename,"w");
+      for (size_t i=0; i<rowsISub.size(); i++) fprintf(fp,"%.16e %.16e\n",rhs_pardiso[rowsISub[i]],sol_pardiso[rowsISub[i]]);
+      fclose(fp);
+    }
+#endif
+    // copy interior solution back for backward solve
+    //  (schur complement part is zero)
+    for (size_t i=0; i<rowsISub.size(); i++) {
+      const int row = rowsISub[i];
+      rhs_pardiso[row] = sol_pardiso[row];
+    }
+    // copy boundary solution back for schur complement solve
+    rhs_sc[0].resize(rowsBSub.size());
+    for (size_t i=0; i<rowsBSub.size(); i++) {
+      rhs_sc[0][i] = sol_pardiso[rowsBSub[i]];
+    }
+  } else {
+    // Amesos2 solves
+    int n1 = localMap->getLocalNumElements();
+    int n2 = num_rows - n1;
+    // * copy vectors into views
+    // copy interior rhs vector in
+    for (size_t i=0; i<rowsISub.size(); i++) {
+      rhs_pardiso[i] = rhsI[i];
+    }
+    using UnmanagedViewType = Kokkos::View<double**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+    // solve with interior
+    {
+      using array_type = Teuchos::ArrayView<const double>;
+      Teuchos::RCP<array_type> arrayB = rcp(new array_type(rhs_pardiso));
+      Teuchos::RCP<array_type> arrayX = rcp(new array_type(sol_pardiso));
+      const Teuchos::ArrayView<const array_type> viewB (arrayB.getRawPtr(), numRhs);
+      const Teuchos::ArrayView<const array_type> viewX (arrayX.getRawPtr(), numRhs);
+      // * wrap vectors into MV
+      auto B = Teuchos::rcp(new MV(localMap, viewB, numRhs));
+      auto X = Teuchos::rcp(new MV(localMap, numRhs));
+      //auto X = Teuchos::rcp(new MV(localMap, viewX, numRhs));
+      // * call Amesos2 solve for the interior solve
+      amesos2_solver->setB(B);
+      amesos2_solver->setX(X);
+      amesos2_solver->solve();
+      {
+        // copying out (TODO: fix)
+        auto localX = X->getLocalViewHost(Tpetra::Access::ReadOnly);
+        for (int j=0; j<numRhs; j++) {
+          for (int i=0; i<n1; i++) sol_pardiso[i+j*n1] = localX(i,j);
+        }
+      }
+#ifdef MATRIX_OUT
+      {
+        char filename[250];
+        sprintf(filename,"sol1_%d.dat", myPID);
+        FILE *fp = fopen(filename,"w");
+        for (int i=0; i<n1; i++) fprintf(fp,"%.16e %.16e\n",rhs_pardiso[i],sol_pardiso[i]);
+        fclose(fp);
+      }
+#endif
+    }
+    // * update rhs for the Schur solve, b2 -= F*x1
+    {
+      rhs_sc[0].resize(rowsBSub.size());
+      UnmanagedViewType X1 (&sol_pardiso[0],  n1, numRhs);
+      UnmanagedViewType B2 (&rhs_sc[0][0],    n2, numRhs);
+      #ifdef D3S_DENSE_F
+        KokkosBlas::gemm("N","N",
+                         -1.0, F_view,
+                               X1,
+                          0.0, B2);
+      #else
+        graph_t static_graph(colind_view_F, rowmap_view_F);
+        crsmat_t crsmat("CrsMatrix", n1, values_view_F, static_graph);
+        KokkosSparse::spmv("N", -1.0, crsmat, X1, 0.0, B2);
+      #endif
+    }
   }
-  rhs_sc[0].resize(rowsBSub.size());
-  for (size_t i=0; i<rowsBSub.size(); i++) {
-    rhs_sc[0][i] = sol_pardiso[rowsBSub[i]];
-  }
+
+  // forward solve Schur complement
+  //  (solve_schur_complement will communicate original rhs to add to rhs_sc[0])
   int level = 0;
   while (level < num_level) {
     const double startTime = clockIt();
     if (matching_option == 0 || matching_option == 1) {
-      calculate_schur_complement_rhs(level, rhs);
+      solve_schur_complement(level, rhs);
     } else {
-      calculate_schur_complement_rhs(level, rhsRe);
+      solve_schur_complement(level, rhsRe);
     }
     timer_solve[level] += clockIt() - startTime;
     level++;
   }
-  // At this point, we have the root separator solution.
+  // backward  solve Schur complement
+  //  (at this point, we have the root separator solution)
   level = num_level - 1;
   communicate_solution(level, sol);
   while (level >= 0) {
@@ -2520,20 +2954,70 @@ void D3Solver::solve(const std::vector<double> & rhs,
     timer_solve[level] += clockIt() - startTime;
     level--;
   }
+
   // Finally, calculate solution in subdomain interior
   ThrowAssert(rowsBSub.size() == rhs_sc[0].size(), "inconsistent sizes");
-  for (size_t i=0; i<rowsBSub.size(); i++) {
-    const int row = rowsBSub[i];
-    rhs_pardiso[row] = rhs_sc[0][i];
-  }
+  if (solvername == "") {
+    // copy in boundary solution to rhs
+    for (size_t i=0; i<rowsBSub.size(); i++) {
+      const int row = rowsBSub[i];
+      rhs_pardiso[row] = rhs_sc[0][i];
+    }
 #ifdef USE_INTEL_PARDISO
-  phase = 333;
-  pardiso_solver.solve(rhs_pardiso.data(), sol_pardiso.data(), phase);
+    int phase = 333; // backward solve
+    pardiso_solver.solve(rhs_pardiso.data(), sol_pardiso.data(), phase);
 #endif
-  for (size_t i=0; i<rowsISub.size(); i++) {
-    rhsI[i] = sol_pardiso[rowsISub[i]];
+    // copy back interior solution
+    for (size_t i=0; i<rowsISub.size(); i++) {
+      rhsI[i] = sol_pardiso[rowsISub[i]];
+    }
+  } else {
+    // With Amesos2, the interior part of U is I.
+#ifdef MATRIX_OUT
+    {
+      char filename[250];
+      sprintf(filename,"sol2_%d.dat", myPID);
+      FILE *fp = fopen(filename,"w");
+      for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e\n",i,rhs_pardiso[i],sol_pardiso[i]);
+      fclose(fp);;
+    }
+#endif
+    // * update rhs for the interior solve, b1 -= G*x2
+    int n1 = rowsISub.size(); // interior
+    int n2 = rowsBSub.size(); // boundary
+    using UnmanagedViewType = Kokkos::View<double**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+    UnmanagedViewType B1 (&sol_pardiso[0], n1, numRhs);
+    UnmanagedViewType X2 (&rhs_sc[0][0], n2, numRhs);
+    KokkosBlas::gemm("N","N",
+                     -1.0, G_view,
+                           X2,
+                      1.0, B1);
+#ifdef MATRIX_OUT
+    {
+      char filename[250];
+      sprintf(filename,"solI3_%d.dat", myPID);
+      FILE *fp = fopen(filename,"w");
+      for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e\n",i,rhs_pardiso[i],sol_pardiso[i]);
+      fclose(fp);
+      sprintf(filename,"solB3_%d.dat", myPID);
+      fp = fopen(filename,"w");
+      for (size_t i=0; i<n2; i++) fprintf(fp,"%.16e \n",rhs_sc[0][i]);
+      fclose(fp);
+    }
+#endif
+    // copy back interior solution
+    for (size_t i=0; i<rowsISub.size(); i++) {
+      rhsI[i] = sol_pardiso[i];
+    }
   }
   putSubSol(sol);
+#ifdef MATRIX_OUT
+  if (myPID == 0) {
+    printf("SOL=[\n");
+    for (size_t i=0; i<sol.size(); i++) printf("%d %e\n",i,sol[i]);
+    printf("];\n");
+  }
+#endif
 
   if (matching_option == 1) {
     permsolve(permMatching, sol, rhsRe);
@@ -2541,6 +3025,7 @@ void D3Solver::solve(const std::vector<double> & rhs,
       sol[i] = rhsRe[i];
     }
   }
+  return rval;
 }
 
 void D3Solver::permsolve(const std::vector<int> perm,
@@ -2909,7 +3394,7 @@ void D3Solver::output_dense_matrix(const std::string prefix,
                                    const std::vector<double> & A) const
 {
   if (numRows == 0) return;
-  if (debug_level < 2) return;
+  if (msg_level < 2) return;
   std::string fname = prefix + "_proc_" + std::to_string(myPID) + "_level"
     + std::to_string(level) + ".dat";
   std::ofstream fout;
@@ -2930,7 +3415,7 @@ void D3Solver::output_matrices(const std::string prefix,
                                const std::vector<double> & values,
                                const int level) const
 {
-  if (debug_level < 2) return;
+  if (msg_level < 2) return;
   const int numRows = rowBegin.size() - 1;
   if (numRows > 0) {
     std::string fname = prefix + "_proc_" + std::to_string(myPID) + "_level"
@@ -2963,11 +3448,11 @@ void D3Solver::get_color_and_key(const int numSub,
   }
 }
 
-void D3Solver::calculate_schur_complement(const int level,
-                                          const std::vector<int> & rowBegin,
-                                          const std::vector<int> & columns,
-                                          const std::vector<int> & rowGIDsSubB,
-                                          std::vector<int> & not_in_sep)
+void D3Solver::initialize_schur_complement(const int level,
+                                           const std::vector<int> & rowBegin,
+                                           const std::vector<int> & columns,
+                                           const std::vector<int> & rowGIDsSubB,
+                                           std::vector<int> & not_in_sep)
 {
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
@@ -2983,7 +3468,7 @@ void D3Solver::calculate_schur_complement(const int level,
 
   std::vector<int> rowGIDsB;
   
-  extractMatrix(level, row_GIDs_recv, column_counts_recv, column_GIDs_recv,
+  extractMatrixStructures(level, row_GIDs_recv, column_counts_recv, column_GIDs_recv,
                 rowBegin_B[level], columns_B[level], values_B[level], rowGIDsB);
 
   // split communicator

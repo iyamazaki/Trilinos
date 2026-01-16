@@ -31,12 +31,6 @@
 
 #include "Amesos2_TypeMap.hpp"
 
-namespace D3S {
-
-#include "klu2_ext.hpp"	// for Dtype_t declaration
-
-} // end namespace KLU
-
 namespace Amesos2 {
 
 template <class, class> class D3S;
