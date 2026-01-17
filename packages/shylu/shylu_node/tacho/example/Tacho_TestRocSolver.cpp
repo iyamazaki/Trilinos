@@ -2,8 +2,36 @@
 #include <hip/hip_runtime_api.h> // for hip functions
 #include <rocsolver/rocsolver.h> // for all the rocsolver C interfaces and type declarations
 #include <rocblas/rocblas.h>
-#include <stdio.h>               // for printf
-#include <stdlib.h>              // for malloc
+
+#include <cstdlib>
+#include <cstdio>
+#include <iostream>
+
+#define HIP_CHECK(expression)                  \
+{                                              \
+    const hipError_t status = expression;      \
+    if(status != hipSuccess){                  \
+        std::cerr << "HIP error "              \
+                  << status << ": "            \
+                  << hipGetErrorString(status) \
+                  << " at " << __FILE__ << ":" \
+                  << __LINE__ << std::endl;    \
+        exit(0);                               \
+    }                                          \
+}
+
+#define ROC_CHECK(expression)                  \
+{                                              \
+    const rocblas_status status = expression;  \
+    if(status != rocblas_status_success){      \
+        std::cerr << "rocBLAS error "          \
+                  << status << ": "            \
+                  << " at " << __FILE__ << ":" \
+                  << __LINE__ << std::endl;    \
+        exit(0);                               \
+    }                                          \
+}
+
 
 int main(int argc, char **argv) {
   int verbose = 0;
@@ -31,13 +59,13 @@ int main(int argc, char **argv) {
   rocblas_handle *handles = (rocblas_handle*)malloc(nstreams * sizeof(rocblas_handle));
   hipStream_t *streams = (hipStream_t*)malloc(nstreams * sizeof(hipStream_t));
   for (int k=0; k<nstreams; k++) {
-    rocblas_create_handle(&handles[k]);
+    ROC_CHECK(rocblas_create_handle(&handles[k]));
     if (option == 1) {
-      hipStreamCreateWithFlags(&streams[k], hipStreamDefault);
-      rocblas_set_stream(handles[k], streams[k]);
+      HIP_CHECK(hipStreamCreateWithFlags(&streams[k], hipStreamDefault));
+      ROC_CHECK(rocblas_set_stream(handles[k], streams[k]));
     } else if (option == 2) {
-      hipStreamCreateWithFlags(&streams[k], hipStreamNonBlocking);
-      rocblas_set_stream(handles[k], streams[k]);
+      HIP_CHECK(hipStreamCreateWithFlags(&streams[k], hipStreamNonBlocking));
+      ROC_CHECK(rocblas_set_stream(handles[k], streams[k]));
     }
   }
 
@@ -57,7 +85,7 @@ int main(int argc, char **argv) {
   double **dB = (double**)malloc(nb * sizeof(double*));
   // info
   rocblas_int *dInfo;
-  hipMalloc((void**)&dInfo, nb*sizeof(rocblas_int));
+  HIP_CHECK(hipMalloc((void**)&dInfo, nb*sizeof(rocblas_int)));
   // block sizes
   int *n1 = (int*)malloc(nb * sizeof(int));
   int *n2 = (int*)malloc(nb * sizeof(int));
@@ -143,12 +171,12 @@ int main(int argc, char **argv) {
     }
     // Allocate matrix & vector on device
     // > matrix
-    hipMalloc((void**)&(dA[k]), sizeof(double) * n1[k]*n1[k]);
-    hipMalloc((void**)&(dE[k]), sizeof(double) * n1[k]*n2[k]);
-    hipMalloc((void**)&(dD[k]), sizeof(double) * n2[k]*n2[k]);
+    HIP_CHECK(hipMalloc((void**)&(dA[k]), sizeof(double) * n1[k]*n1[k]));
+    HIP_CHECK(hipMalloc((void**)&(dE[k]), sizeof(double) * n1[k]*n2[k]));
+    HIP_CHECK(hipMalloc((void**)&(dD[k]), sizeof(double) * n2[k]*n2[k]));
     // > vector
     int n = n1[k] + n2[k];
-    hipMalloc((void**)&(dB[k]), sizeof(double) * n);
+    HIP_CHECK(hipMalloc((void**)&(dB[k]), sizeof(double) * n));
   } // End of generating matrix & vectors
   if (fp) fclose(fp);
 
@@ -161,9 +189,9 @@ int main(int argc, char **argv) {
 
     // Copy matrix from host to device
     for (int k=0; k<nb; k++) {
-      hipMemcpy(dA[k], hA[k], sizeof(double) * n1[k]*n1[k], hipMemcpyHostToDevice);
-      hipMemcpy(dE[k], hE[k], sizeof(double) * n1[k]*n2[k], hipMemcpyHostToDevice);
-      hipMemcpy(dD[k], hD[k], sizeof(double) * n2[k]*n2[k], hipMemcpyHostToDevice);
+      HIP_CHECK(hipMemcpy(dA[k], hA[k], sizeof(double) * n1[k]*n1[k], hipMemcpyHostToDevice));
+      HIP_CHECK(hipMemcpy(dE[k], hE[k], sizeof(double) * n1[k]*n2[k], hipMemcpyHostToDevice));
+      HIP_CHECK(hipMemcpy(dD[k], hD[k], sizeof(double) * n2[k]*n2[k], hipMemcpyHostToDevice));
     }
 
     // !!! factor the 2-by-2 blocks !!!
@@ -172,32 +200,33 @@ int main(int argc, char **argv) {
     for (int k=0; k<nb; k++) {
       // factor the first diagonal blocks, R := chol(A)
       int qid = k%nstreams;
-      rocsolver_dpotrf(handles[qid], rocblas_fill_upper, n1[k], dA[k], n1[k], &dInfo[k]);
+      ROC_CHECK(rocsolver_dpotrf(handles[qid], rocblas_fill_upper, n1[k], dA[k], n1[k], &dInfo[k]));
     }
-    if (fence) hipDeviceSynchronize();
+    if (fence) HIP_CHECK(hipDeviceSynchronize());
     for (int k=0; k<nb; k++) {
       // compute the off-diagonal factor, E := R^{-1}*E
       int qid = k%nstreams;
-      rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
-                    rocblas_operation_transpose, rocblas_diagonal_non_unit,
-                    n1[k], n2[k], &one, dA[k], n1[k], dE[k], n1[k]);
+      ROC_CHECK(rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
+                              rocblas_operation_transpose, rocblas_diagonal_non_unit,
+                              n1[k], n2[k], &one, dA[k], n1[k], dE[k], n1[k]));
       // update the second diagonal, D -= E'*E
-      rocblas_dsyrk(handles[qid], rocblas_fill_upper, rocblas_operation_transpose,
-                    n2[k], n1[k], &mone, dE[k], n1[k], &one, dD[k], n2[k]);
+      ROC_CHECK(rocblas_dsyrk(handles[qid], rocblas_fill_upper, rocblas_operation_transpose,
+                              n2[k], n1[k], &mone, dE[k], n1[k], &one, dD[k], n2[k]));
     }
-    if (fence) hipDeviceSynchronize();
+    if (fence) HIP_CHECK(hipDeviceSynchronize());
     for (int k=0; k<nb; k++) {
       // factor the second diagonal block, chol(D)
       int qid = k%nstreams;
-      rocsolver_dpotrf(handles[qid], rocblas_fill_upper, n2[k], dD[k], n2[k], &dInfo[k]);
+      ROC_CHECK(rocsolver_dpotrf(handles[qid], rocblas_fill_upper, n2[k], dD[k], n2[k], &dInfo[k]));
     }
 
     // !!! check (on stream-0) !!!
-    hipDeviceSynchronize();
+    HIP_CHECK(hipDeviceSynchronize());
+    HIP_CHECK(hipPeekAtLastError());
     // Copy vector from host to device
     for (int k=0; k<nb; k++) {
       int n = n1[k] + n2[k];
-      hipMemcpy(dB[k], hB[k], sizeof(double) * n, hipMemcpyHostToDevice);
+      HIP_CHECK(hipMemcpy(dB[k], hB[k], sizeof(double) * n, hipMemcpyHostToDevice));
     }
 
     // Solve [A,E; E' D] [x1;x2] = [b1;b2]
@@ -206,44 +235,46 @@ int main(int argc, char **argv) {
       int n = n1[k]+n2[k];
       // --- step 1 --
       // b(1) := L(A)\b(1)
-      rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
-                    rocblas_operation_transpose, rocblas_diagonal_non_unit,
-                    n1[k], nrhs, &one, dA[k], n1[k], &dB[k][0], n);
+      ROC_CHECK(rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
+                              rocblas_operation_transpose, rocblas_diagonal_non_unit,
+                              n1[k], nrhs, &one, dA[k], n1[k], &dB[k][0], n));
 
       // --- step 2 --
       // b(2) := b(2) - E'*b(1)
-      rocblas_dgemm(handles[qid], rocblas_operation_transpose, rocblas_operation_none,
-                    n2[k], nrhs, n1[k], &mone, dE[k], n1[k], &dB[k][0], n, &one, &dB[k][n1[k]], n);
+      ROC_CHECK(rocblas_dgemm(handles[qid], rocblas_operation_transpose, rocblas_operation_none,
+                              n2[k], nrhs, n1[k], &mone, dE[k], n1[k], &dB[k][0], n, &one, &dB[k][n1[k]], n));
 
       // --- step 3 --
       // b(2) = L(D)\b(2)
-      rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
-                    rocblas_operation_transpose, rocblas_diagonal_non_unit,
-                    n2[k], nrhs, &one, dD[k], n2[k], &dB[k][n1[k]], n);
+      ROC_CHECK(rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
+                              rocblas_operation_transpose, rocblas_diagonal_non_unit,
+                              n2[k], nrhs, &one, dD[k], n2[k], &dB[k][n1[k]], n));
       // x(2) = U(D)\x(2)
-      rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
-                    rocblas_operation_none, rocblas_diagonal_non_unit,
-                    n2[k], nrhs, &one, dD[k], n2[k], &dB[k][n1[k]], n);
+      ROC_CHECK(rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
+                              rocblas_operation_none, rocblas_diagonal_non_unit,
+                              n2[k], nrhs, &one, dD[k], n2[k], &dB[k][n1[k]], n));
 
       // --- step 4 --
       // b(1) = b(1) - E*x(2)
-      rocblas_dgemm(handles[qid], rocblas_operation_none, rocblas_operation_none,
-                    n1[k], nrhs, n2[k], &mone, dE[k], n1[k], &dB[k][n1[k]], n, &one, &dB[k][0], n);
+      ROC_CHECK(rocblas_dgemm(handles[qid], rocblas_operation_none, rocblas_operation_none,
+                              n1[k], nrhs, n2[k], &mone, dE[k], n1[k], &dB[k][n1[k]], n, &one, &dB[k][0], n));
 
       // --- step 5 --
       // x(1) = U(A)\b(1)
-      rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
-                    rocblas_operation_none, rocblas_diagonal_non_unit,
-                    n1[k], nrhs, &one, dA[k], n1[k], &dB[k][0], n);
+      ROC_CHECK(rocblas_dtrsm(handles[qid], rocblas_side_left, rocblas_fill_upper,
+                              rocblas_operation_none, rocblas_diagonal_non_unit,
+                              n1[k], nrhs, &one, dA[k], n1[k], &dB[k][0], n));
     }
 
     // Compute the residual norm
-    hipDeviceSynchronize();
+    HIP_CHECK(hipDeviceSynchronize());
+    HIP_CHECK(hipPeekAtLastError());
+    // Copy vector from host to device
     for (int k=0; k<nb; k++) {
       // Copy solution and error code to host
       rocblas_int hInfo;
-      hipMemcpy(hX[k], dB[k], sizeof(double) * (n1[k]+n2[k]), hipMemcpyDeviceToHost);
-      hipMemcpy(&hInfo, &dInfo[k], sizeof(rocblas_int), hipMemcpyDeviceToHost);
+      HIP_CHECK(hipMemcpy(hX[k], dB[k], sizeof(double) * (n1[k]+n2[k]), hipMemcpyDeviceToHost));
+      HIP_CHECK(hipMemcpy(&hInfo, &dInfo[k], sizeof(rocblas_int), hipMemcpyDeviceToHost));
       if (verbose == 1) {
         printf("A=[\n");
         for (int i = 0; i < n1[k]; ++i) {
@@ -313,22 +344,37 @@ int main(int argc, char **argv) {
   }
   // Free memory
   for (int k=0; k<nb; k++) {
+    // matrix
     free(hA[k]);
-    free(hB[k]);
+    free(hE[k]);
+    free(hD[k]);
+    HIP_CHECK(hipFree(dA[k]));
+    HIP_CHECK(hipFree(dE[k]));
+    HIP_CHECK(hipFree(dD[k]));
+    // vector
     free(hX[k]);
-
-    hipFree(dA[k]);
-    hipFree(dB[k]);
+    free(hB[k]);
+    HIP_CHECK(hipFree(dB[k]));
   }
+  free(n1);
+  free(n2);
+  // matrices
   free(hA);
-  free(hB);
-  free(hX);
+  free(hE);
+  free(hD);
   free(dA);
+  free(dE);
+  free(dD);
+  // vectors
+  free(hX);
+  free(hB);
   free(dB);
-  hipFree(dInfo);
+  HIP_CHECK(hipFree(dInfo));
   for (int k=0; k<nstreams; k++) {
-    rocblas_destroy_handle(handles[k]);
-    hipStreamDestroy(streams[k]);
+    ROC_CHECK(rocblas_destroy_handle(handles[k]));
+    if (option != 0) {
+      HIP_CHECK(hipStreamDestroy(streams[k]));
+    }
   }
   free(handles);
   free(streams);
