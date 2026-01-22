@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
   bool fence = false;
   for (int i=0; i<argc; i++) {
     if (0 == strcmp(argv[i], "--fence"))    fence = true;
-    if (0 == strcmp(argv[i], "--verbose"))  verbose = 1;
+    if (0 == strcmp(argv[i], "--verbose"))  verbose = atoi(argv[++i]);
     if (0 == strcmp(argv[i], "--file"))     filename = argv[++i];
     if (0 == strcmp(argv[i], "--option"))   option = atoi(argv[++i]);
     if (0 == strcmp(argv[i], "--n1"))       N1 = atoi(argv[++i]);
@@ -96,6 +96,8 @@ int main(int argc, char **argv) {
     printf( " READING block sizes from %s\n",filename );
     fp = fopen(filename,"r");
   }
+  // Set random seed for determistic matrix blocks
+  std::srand(1);
   for (int k=0; k<nb; k++) {
     // Matrix dimension
     if (fp) {
@@ -168,6 +170,39 @@ int main(int argc, char **argv) {
       for (rocblas_int j=0; j<n2[k]; j++) {
         hB[k][n1[k]+i] += hD[k][i+j*n2[k]];
       }
+    }
+    if (verbose == 1) {
+      char filename[250];
+      FILE *fp;
+
+      sprintf(filename,"A_%d.dat", k);
+      fp = fopen(filename,"w");
+      for (int i = 0; i < n1[k]; ++i) {
+        for (int j = 0; j < n1[k]; ++j) fprintf(fp,"%.16e ",hA[k][i+j*n1[k]]);
+        fprintf(fp,"\n");
+      }
+      fclose(fp);
+
+      sprintf(filename,"E_%d.dat", k);
+      fp = fopen(filename,"w");
+      for (int i = 0; i < n1[k]; ++i) {
+        for (int j = 0; j < n2[k]; ++j) fprintf(fp,"%.16e ",hE[k][i+j*n1[k]]);
+        fprintf(fp,"\n");
+      }
+      fclose(fp);
+
+      sprintf(filename,"D_%d.dat", k);
+      fp = fopen(filename,"w");
+      for (int i = 0; i < n2[k]; ++i) {
+        for (int j = 0; j < n2[k]; ++j) fprintf(fp,"%.16e ",hD[k][i+j*n2[k]]);
+        fprintf(fp,"\n");
+      }
+      fclose(fp);
+
+      sprintf(filename,"b_%d.dat", k);
+      fp = fopen(filename,"w");
+      for (int i = 0; i < n1[k]+n2[k]; ++i) fprintf(fp,"%d %.16e\n",i,hB[k][i]);
+      fclose(fp);
     }
     // Allocate matrix & vector on device
     // > matrix
@@ -275,26 +310,8 @@ int main(int argc, char **argv) {
       rocblas_int hInfo;
       HIP_CHECK(hipMemcpy(hX[k], dB[k], sizeof(double) * (n1[k]+n2[k]), hipMemcpyDeviceToHost));
       HIP_CHECK(hipMemcpy(&hInfo, &dInfo[k], sizeof(rocblas_int), hipMemcpyDeviceToHost));
-      if (verbose == 1) {
-        printf("A=[\n");
-        for (int i = 0; i < n1[k]; ++i) {
-          for (int j = 0; j < n1[k]; ++j) printf("%.16e ",hA[k][i+j*n1[k]]);
-          printf("\n");
-        }
-        printf("];\n");
-        printf("E=[\n");
-        for (int i = 0; i < n1[k]; ++i) {
-          for (int j = 0; j < n2[k]; ++j) printf("%.16e ",hE[k][i+j*n1[k]]);
-          printf("\n");
-        }
-        printf("];\n");
-        printf("D=[\n");
-        for (int i = 0; i < n2[k]; ++i) {
-          for (int j = 0; j < n2[k]; ++j) printf("%.16e ",hD[k][i+j*n2[k]]);
-          printf("\n");
-        }
-        printf("];\n");
-        printf("ixb=[\n");
+      if (verbose == 2) {
+        printf("x%d=[\n",k);
         for (int i = 0; i < n1[k]+n2[k]; ++i) printf("%d %.16e %.16e\n",i,hX[k][i],hB[k][i]);
         printf("];\n");
       }
