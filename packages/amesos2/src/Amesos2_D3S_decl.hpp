@@ -22,8 +22,6 @@
 #include "Amesos2_SolverCore.hpp"
 #include "Amesos2_D3S_FunctionMap.hpp"
 
-#include "d3_solver.h"
-
 namespace Amesos2 {
 
 
@@ -60,7 +58,7 @@ public:
                                  global_ordinal_type,
                                  node_type>                        map_type;
 
-  typedef TypeMap<Amesos2::D3S,scalar_type>                    type_map;
+  typedef TypeMap<Amesos2::D3S,scalar_type>                        type_map;
 
   /*
    * The D3S interface will need two other typedef's, which are:
@@ -70,7 +68,7 @@ public:
   typedef typename type_map::type                                 d3s_type;
   typedef typename type_map::dtype                               d3s_dtype;
 
-  typedef FunctionMap<Amesos2::D3S,d3s_type>                 function_map;
+  typedef FunctionMap<Amesos2::D3S,d3s_dtype>                  function_map;
 
   typedef Matrix                                                matrix_type;
   typedef MatrixAdapter<matrix_type>                    matrix_adapter_type;
@@ -216,10 +214,10 @@ private:
 
   mutable int nrhs_;
   /// Persisting, contiguous, 1D store for X
-  mutable Teuchos::Array<scalar_type> xvals_;
-  mutable Teuchos::Array<scalar_type> tvals_;
+  mutable Teuchos::Array<d3s_dtype> xvals_;
+  mutable Teuchos::Array<d3s_dtype> tvals_;
   /// Persisting, contiguous, 1D store for B
-  mutable Teuchos::Array<scalar_type> bvals_;
+  mutable Teuchos::Array<d3s_dtype> bvals_;
 
   /// Transpose flag
   /// 0: Non-transpose, 1: Transpose, 2: Conjugate-transpose
