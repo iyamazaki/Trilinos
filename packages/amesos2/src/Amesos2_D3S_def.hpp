@@ -146,7 +146,7 @@ D3S<Matrix,Vector>::numericFactorization_impl()
 #endif
     int nnz = nzvals_view_.extent(0);
     std::vector<d3s_dtype> values(nzvals_view_.data(), nzvals_view_.data()+(nnz));
-    info = solver->factorize(values);
+    info = function_map::factorize(solver, values);
   }
 
   /* All processes should have the same error code */
@@ -196,7 +196,7 @@ D3S<Matrix,Vector>::solve_impl(
       std::vector<d3s_dtype> rhs (bvals_.getRawPtr()+(j*ld_rhs), bvals_.getRawPtr()+((j+1)*ld_rhs));
       std::vector<d3s_dtype> sol (tvals_.getRawPtr()+(j*ld_rhs), tvals_.getRawPtr()+((j+1)*ld_rhs));
 
-      solver->solve(rhs, sol);
+      function_map::solve(solver, rhs, sol);
 
       //TODO
       for(int i=0; i<numRows_; i++) xvals_[i + j*ld_rhs] = sol[i];
