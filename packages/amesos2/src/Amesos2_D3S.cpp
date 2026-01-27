@@ -17,6 +17,10 @@
 
 namespace Amesos2 {
 
+#ifdef HAVE_AMESOS2_EPETRA
+  AMESOS2_SOLVER_EPETRA_INST(D3S);
+#endif
+
   #define AMESOS2_D3S_LOCAL_INSTANT(S,LO,GO,N) \
   template class Amesos2::D3S<Tpetra::CrsMatrix<S, LO, GO, N>, \
                               Tpetra::MultiVector<S, LO, GO, N> >;
