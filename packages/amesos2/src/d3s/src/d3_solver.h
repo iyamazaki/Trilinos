@@ -488,13 +488,28 @@ private:
   Teuchos::RCP<MAT> A;
   Teuchos::RCP<MV> X;
   Teuchos::RCP<MV> B;
-  Teuchos::RCP<Amesos2::Solver<MAT,MV>> amesos2_solver;
 
+#define D3S_USE_KOKKOS_BACKEND
+#ifdef D3S_USE_KOKKOS_BACKEND
+  using execution_space = typename NO::execution_space;
+  using memory_space = typename NO::memory_space;
+  using device_t = Kokkos::Device<execution_space, memory_space>;
+
+  using crsmat_t = KokkosSparse::CrsMatrix<double, int, device_t>;
+  using mv_view_t = Kokkos::View<double**, Kokkos::LayoutLeft, device_t>;
+  Teuchos::RCP<Amesos2::Solver<crsmat_t,mv_view_t>> amesos2_solver;
+#else
   using crsmat_t = typename MAT::local_matrix_device_type;
+  using mv_view_t = typename MV::host_view_type::non_const_type;
+  Teuchos::RCP<Amesos2::Solver<MAT,MV>> amesos2_solver;
+#endif
   using graph_t = typename crsmat_t::StaticCrsGraphType;
   using rowmap_view_t = typename graph_t::row_map_type::non_const_type;
   using colind_view_t = typename graph_t::entries_type::non_const_type;
   using values_view_t = typename crsmat_t::values_type::non_const_type;
+
+  using UnmanagedViewType = Kokkos::View<double**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+
   // [D, G; H, S]
   // D in csrmat
   rowmap_view_t rowmap_view_D;
@@ -505,9 +520,11 @@ private:
   colind_view_t colind_view_F;
   values_view_t values_view_F;
 
-  using mv_view_type = typename MV::host_view_type::non_const_type;
-  mv_view_type E_view, F_view;
-  mv_view_type G_view, S_view;
+  mv_view_t E_view, F_view;
+  mv_view_t G_view, S_view;
+
+  mv_view_t X_view;
+  mv_view_t B_view;
 };
 
 #endif //D3SOLVER_HPP
