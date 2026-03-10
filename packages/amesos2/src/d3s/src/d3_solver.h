@@ -240,11 +240,11 @@ public:
                                    const std::vector<int> & rowGIDsSubB,
                                    std::vector<int> & not_in_sep);
   
-  void compute_schur_complement(const int level,
-                                const std::vector<double> & values);
+  int compute_schur_complement(const int level,
+                               const std::vector<double> & values);
   
-  void solve_schur_complement(const int level,
-                              const std::vector<double> & rhs);
+  int solve_schur_complement(const int level,
+                             const std::vector<double> & rhs);
   
   void assemble_rhs(const int level);
   
@@ -262,9 +262,9 @@ public:
   
   void resize_vectors();
   
-  void eliminate_separator(const int level);
+  int eliminate_separator(const int level);
   
-  void eliminate_separator_rhs(const int level);
+  int eliminate_separator_rhs(const int level);
   
   void convert_to_row_major(const std::vector<double> & A_col_major,
                             const int num_rows,

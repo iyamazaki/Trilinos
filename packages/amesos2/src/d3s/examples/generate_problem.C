@@ -77,11 +77,11 @@ void GenerateProblem::readProcMatrices()
   fin.open(filename);
   if (fin.is_open() == false) {
     std::cout << "could not open file " << filename << std::endl;
-    ThrowAssert(0, "error opening file");
+    ThrowAssert(true, 0, "error opening file");
   }
   int numRows, numCols, numTerms;
   fin >> numRows >> numCols >> numTerms;
-  ThrowAssert(numRows == numCols, "number of rows/cols must be equal");
+  ThrowAssert(true, numRows == numCols, "number of rows/cols must be equal");
   rowBegin.resize(numRows+1, 0);
   columns.resize(numTerms);
   values.resize(numTerms);
@@ -120,11 +120,11 @@ void GenerateProblem::readProcMatrices()
   fin.open(filename);
   if (fin.is_open() == false) {
     std::cout << "could not open file " << filename << std::endl;
-    ThrowAssert(0, "error opening file");
+    ThrowAssert(true, 0, "error opening file");
   }
   int numRowsRhs;
   fin >> numRowsRhs;
-  ThrowAssert(numRowsRhs == numRows, "number of rows not consistent");
+  ThrowAssert(true, numRowsRhs == numRows, "number of rows not consistent");
   rhs.resize(numRows);
   std::cout << "reading " << filename << std::endl;
   for (int i=0; i<numRows; i++) {
@@ -292,8 +292,8 @@ void GenerateProblem::readMatrixRhs(const std::string & rhsFile,
     // Read header (matrix dimensions and number of non-zero entries)
     if (!header_read) {
       iss >> num_rows >> num_cols;
-      ThrowAssert(num_rows == numRows, "inconsistent dimensions");
-      ThrowAssert(num_cols == 1, "number of columns must be 1");
+      ThrowAssert(true, num_rows == numRows, "inconsistent dimensions");
+      ThrowAssert(true, num_cols == 1, "number of columns must be 1");
       header_read = true;
       rhs_mm.resize(num_rows);
       continue;
@@ -402,14 +402,14 @@ void GenerateProblem::makeAdjustments()
   fin.open(inputFile);
   if (fin.is_open() == false) {
     std::cout << "could not open file " << inputFile << std::endl;
-    ThrowAssert(0, "error opening file");
+    ThrowAssert(true, 0, "error opening file");
   }
   if (myPID == root) {
     std::cout << std::endl << "Reading Example options from " << inputFile << std::endl;
   }
   numElemDir.resize(3);
   fin >> matrix_option;
-  ThrowAssert((matrix_option >= 1) && (matrix_option <= 3),
+  ThrowAssert(true, (matrix_option >= 1) && (matrix_option <= 3),
               "matrix_option must be 1, 2, or 3");
   fin >> filenameBase;
   fin >> filenameBaseRhs;
@@ -470,9 +470,9 @@ int GenerateProblem::getNumNodeElem(const int dim) const
 std::vector<double> GenerateProblem::getElemMatrix(const int dim) const
 {
   std::cout << "problem type = " << problem_type << std::endl;
-  ThrowAssert((problem_type == "Scalar") || (problem_type == "Elasticity"),
+  ThrowAssert(true, (problem_type == "Scalar") || (problem_type == "Elasticity"),
               "problem_type must be Scalar or Elasticity");
-  ThrowAssert((dim == 2) || (dim == 3), "dimension must be 2 or 3");
+  ThrowAssert(true, (dim == 2) || (dim == 3), "dimension must be 2 or 3");
   int numDofNode = 1; // for Scalar problems
   if (problem_type == "Elasticity") numDofNode = dim;
   const int numNodeElem = getNumNodeElem(dim);
@@ -595,7 +595,7 @@ void GenerateProblem::getNumTermsProc(const std::vector<std::tuple<int,int,doubl
     else {
       currentProc++;
       maxRow += numRowsProc[currentProc];
-      ThrowAssert(row < maxRow, "logic error extracting matrix");
+      ThrowAssert(true, row < maxRow, "logic error extracting matrix");
       numTermsProc[currentProc]++;
     }
   }
@@ -742,7 +742,7 @@ void GenerateProblem::generateMatrix(const std::vector<std::vector<int>> & elemC
     const int col1 = std::get<1>(A[i-1]);
     const int row2 = std::get<0>(A[i]);
     const int col2 = std::get<1>(A[i]);
-    ThrowAssert((row2 != row1) || (col2 != col1), "repeated matrix entries");
+    ThrowAssert(true, (row2 != row1) || (col2 != col1), "repeated matrix entries");
   }
   // remove zero entries
   int numTerms = 0;
