@@ -111,7 +111,7 @@ int
 D3S<Matrix,Vector>::symbolicFactorization_impl()
 {
   int info = 0;
-  {
+  try {
     solver->setNumThreads(num_threads_);
     solver->setOrderingOption(matching_option_, reorder_option_);
     solver->setVerbose(msg_level_, debug_level_);
@@ -121,7 +121,13 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
     std::vector<int> rowBegin(rowptr_view_.data(), rowptr_view_.data()+(numRows_+1));
     std::vector<int> columns (colind_view_.data(), colind_view_.data()+(nnz));
     info = solver->initialize(rowBegin, columns, startGID_, numProcSolver_);
+  } catch (...) {
+    info = -1;
   }
+
+  /* All processes should have the same error code */
+  Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &info);
+
   TEUCHOS_TEST_FOR_EXCEPTION( info != 0, std::runtime_error,
       "D3S symbolic factorization failed(info="+std::to_string(info)+")");
 
@@ -140,19 +146,21 @@ D3S<Matrix,Vector>::numericFactorization_impl()
   // Only rank 0 has valid pointers, TODO: for D3S
 
   int info = 0;
-  { // Do factorization
+  try { // Do factorization
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor numFactTimer(this->timers_.numFactTime_);
 #endif
     int nnz = nzvals_view_.extent(0);
     std::vector<d3s_dtype> values(nzvals_view_.data(), nzvals_view_.data()+(nnz));
     info = function_map::factorize(solver, values);
+  } catch (...) {
+    info = -1;
   }
 
   /* All processes should have the same error code */
   Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &info);
 
-  TEUCHOS_TEST_FOR_EXCEPTION(info > 0, std::runtime_error,
+  TEUCHOS_TEST_FOR_EXCEPTION(info != 0, std::runtime_error,
       "D3S numeric factorization failed(info="+std::to_string(info)+")");
 
   return(info);
@@ -188,7 +196,7 @@ D3S<Matrix,Vector>::solve_impl(
         Teuchos::ptrInArg(*d3s_rowmap_));
   }
 
-  {
+  try {
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor solveTimer(this->timers_.solveTime_);
 #endif
@@ -196,12 +204,20 @@ D3S<Matrix,Vector>::solve_impl(
       std::vector<d3s_dtype> rhs (bvals_.getRawPtr()+(j*ld_rhs), bvals_.getRawPtr()+((j+1)*ld_rhs));
       std::vector<d3s_dtype> sol (tvals_.getRawPtr()+(j*ld_rhs), tvals_.getRawPtr()+((j+1)*ld_rhs));
 
-      function_map::solve(solver, rhs, sol);
+      ierr = function_map::solve(solver, rhs, sol);
 
       //TODO
       for(int i=0; i<numRows_; i++) xvals_[i + j*ld_rhs] = sol[i];
     }
-  } //end else
+  } catch (...) {
+    ierr = -1;
+  }
+
+  /* All processes should have the same error code */
+  Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &ierr);
+
+  TEUCHOS_TEST_FOR_EXCEPTION(ierr != 0, std::runtime_error,
+      "D3S solve failed(ierr="+std::to_string(ierr)+")");
 
   /* Get values to X */
   {

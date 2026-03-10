@@ -79,16 +79,19 @@ int sc_pardiso::cleanup()
   return ierr;
 }
 
+// ---------------------------------
 int sc_pardiso::solve(double* rhs,
                       double* sol,
                       const int phase)
 {
+  const int one(1);
+
   if (m_numRows == 0) return 0;
-  int ierr = 0;
   m_phase = phase;
-  int one(1);
-  int nrhs(1);
+
+  int ierr = 0;
   int n = m_numRows;
+  int nrhs(1);
 
   if (m_sparse_schur) {
     m_iparam[35] = 2; // to skip Schur complement
@@ -116,12 +119,14 @@ int sc_pardiso::solve(double* rhs,
   return ierr;
 }
 
+// ---------------------------------
 int sc_pardiso::numeric_phase()
 {
-  int ierr = 0;
+  const int one(1);
+  const int nrhs(1);
+
   m_phase = 22;
-  int one(1);
-  int nrhs(1);
+  int ierr = 0;
   int n = m_numRows;
   double ddum;
 #ifdef MATRIX_OUT
@@ -140,47 +145,52 @@ int sc_pardiso::numeric_phase()
 
   double startTime = clockIt();
   if (m_sparse_schur) {
-    m_iparam[10] = 0;
-    m_iparam[12] = 0;
+    m_iparam[10] = 0;  // disable to call two-level
+    m_iparam[12] = 0;  // disable to call two-level
     m_iparam[23] = 1;  // two-level factorization algorithm
-    m_iparam[35] = -1; //-2; // to compute Schur complement
+    m_iparam[35] = -schur_option; //-2; // to compute Schur complement
     pardiso((_MKL_DSS_HANDLE_t*)m_pt, &one, &one,
             &m_matrixType, &m_phase, &n, m_values, m_rowBegin, m_columns,
             m_perm.data(), &nrhs, m_iparam, &m_msgLvl, &ddum, &ddum, &ierr);
+    isFailed(ierr, "numeric");
+
+    // extracting Schur into dense format
+    //  column-major
+    for (int i=0; i<m_numRowsB; i++) {
+      for (int k=m_schur_rowptr[i]; k<m_schur_rowptr[i+1]; k++) {
+        m_schur[i*m_numRowsB + m_schur_colind[k]] = m_schur_values[k];
+      }
+    }
   } else {
     pardiso((_MKL_DSS_HANDLE_t*)m_pt, &one, &one,
             &m_matrixType, &m_phase, &n, m_values, m_rowBegin, m_columns,
             m_perm.data(), &nrhs, m_iparam, &m_msgLvl, &ddum, m_schur.data(), &ierr);
+    isFailed(ierr, "numeric");
   }
   m_timings[NUMERIC] += clockIt() - startTime;
 #ifdef MATRIX_OUT
   {
     int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-    if (myRank == 1) {
-      //printf("s=[\n");
-      //for (int i=0; i<m_numRowsB; i++) {
-      //  for (int j=m_schur_rowptr[i]; j<m_schur_rowptr[i+1]; j++) printf("%d %d %e",i,m_schur_colind[j],m_schur_values[j]);
-      //}
-      //printf("];\n");
-      printf("Pardiso:: S=[\n");
-      for (int i=0; i<m_numRowsB; i++) {
-        for (int j=0; j<m_numRowsB; j++) printf("%e ",m_schur[i+j*m_numRowsB]);
-        printf("\n");
-      }
-      printf("];\n");
+    char filename[250];
+    sprintf(filename,"PardisoS%d.dat", myRank);
+    FILE *fp = fopen(filename,"w");
+    for (int i=0; i<m_numRowsB; i++) { // column-major
+      for (int j=0; j<m_numRowsB; j++) fprintf(fp,"%.16e ",m_schur[j + i*m_numRowsB]);
+      fprintf(fp,"\n");
     }
+    fclose(fp);
   }
 #endif
-
-  isFailed(ierr, "numeric");
   return ierr;
 }
 
-int sc_pardiso::analysis_phase()
+// ---------------------------------
+int sc_pardiso::analysis_phase(const bool verbose)
 {
-  int ierr = 0;
+  const int one(1);
+
   m_phase = 11;
-  int one(1);
+  int ierr = 0;
   int n = m_numRows;
   m_perm.resize(n, 0);
   for (int i=0; i<m_numRowsB; i++) m_perm[m_rowsB[i]] = 1;
@@ -190,9 +200,10 @@ int sc_pardiso::analysis_phase()
   {
     int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
     {
+      FILE *fp;
       char filename[250];
       sprintf(filename,"G%d.dat", myRank);
-      FILE *fp = fopen(filename, "w");
+      fp = fopen(filename, "w");
       for (int i=0; i<n; i++) {
         for (int k=m_rowBegin[i]; k<m_rowBegin[i+1]; k++)
           fprintf(fp,"%d, %d %d\n",k, i,m_columns[k]);
@@ -224,16 +235,23 @@ int sc_pardiso::analysis_phase()
     }
   }
   double startTime = clockIt();
+  if (m_debug_level > 0) {
+    printf( " m_size = %d /  %d\n",m_numRowsB,n );
+  }
   if (m_sparse_schur) {
-    m_iparam[10] = 0;
-    m_iparam[12] = 0;
+    if (verbose) {
+      std::cout << " MKL/Pardiso analysis phase for sparse schur" << std::endl;
+    }
+    m_iparam[10] = 0;  // disable to call two-level
+    m_iparam[12] = 0;  // disable to call two-level
     m_iparam[23] = 1;  // two-level factorization algorithm
-    m_iparam[35] = -1; //-2; // to compute Schur complement
+    m_iparam[35] = -schur_option; // -1: to compute Schur complement, -2: to compute and factor
     pardiso((_MKL_DSS_HANDLE_t*)m_pt, &one, &one,
             &m_matrixType, &m_phase, &n, values, m_rowBegin, m_columns,
             m_perm.data(), &one, m_iparam, &m_msgLvl, rhs, x, &ierr);
     isFailed(ierr, "analysis");
     if (ierr == 0) {
+      // set up storage for schur
       m_schur_nnz = m_iparam[35];
       m_schur_rowptr.resize(1+m_numRowsB, 0);
       m_schur_colind.resize(m_schur_nnz, 0);
@@ -242,18 +260,19 @@ int sc_pardiso::analysis_phase()
         printf( " m_size = %d, m_schur_nnz = %d\n",m_numRowsB,m_schur_nnz );
       }
       int step = 1;
-      //m_iparam[35] = -1; //-2; // to compute Schur complement
+      //m_iparam[35] = -schur_option; //-2; // to compute Schur complement
       pardiso_export((_MKL_DSS_HANDLE_t*)m_pt, m_schur_values.data(), m_schur_rowptr.data(), m_schur_colind.data(),
                      &step, m_iparam, &ierr);
       isFailed(ierr, "export");
     }
   } else {
-    if (m_debug_level > 0) {
-      printf( " m_size = %d /  %d\n",m_numRowsB,n );
+    if (verbose) {
+      std::cout << " MKL/Pardiso analysis phase for dense schur" << std::endl;
     }
     pardiso((_MKL_DSS_HANDLE_t*)m_pt, &one, &one,
             &m_matrixType, &m_phase, &n, values, m_rowBegin, m_columns,
             m_perm.data(), &one, m_iparam, &m_msgLvl, rhs, x, &ierr);
+    isFailed(ierr, "analysis");
   }
   m_timings[SYMBOLIC] += clockIt() - startTime;
 #ifdef MATRIX_OUT
@@ -274,6 +293,7 @@ int sc_pardiso::analysis_phase()
   return ierr;
 }
 
+// ---------------------------------
 int sc_pardiso::factorize(double* values, bool verbose)
 {
   int r_val = -1;
@@ -285,6 +305,7 @@ int sc_pardiso::factorize(double* values, bool verbose)
   return r_val;
 }
 
+// ---------------------------------
 int sc_pardiso::initialize(const int numRows,
                            int* rowBegin,
                            int* columns,
@@ -303,39 +324,30 @@ int sc_pardiso::initialize(const int numRows,
   m_columns = columns;
   m_numRowsB = numRowsB;
   m_rowsB = rowsB;
-  m_schur.resize(numRowsB*numRowsB, 0);
-  // matrix_type = 1:  real and structurally symmetric
-  // matrix_type = 11: real and nonsymmetric
+
   int r_val = -1;
+  if (verbose) {
+    std::cout << "performing MKL/Pardiso analysis phase" << std::endl;
+    std::cout << " sizeof(int) = " << sizeof(int) << " vs sizeof(MKL_INT) = " << sizeof(MKL_INT) << std::endl;
+  }
+
+  // allocate dense schur
+  m_schur.resize(numRowsB*numRowsB, 0);
+
+  // setup parameters
+  // * matrix_type = 1:  real and structurally symmetric
+  // * matrix_type = 11: real and nonsymmetric
   int matrix_type;
   if (structurally_symmetric && !robust_option) matrix_type = 1;
   else matrix_type = 11;
   set_parameters(matrix_type, debug_level, reorder_option, robust_option, verbose);
-  if (verbose) {
-    std::cout << "performing MKL/Pardiso analysis phase" << std::endl;
-  }
 
-  r_val = analysis_phase();
-  /*
-  m_solver = new MklPardisoSolver();
-  // use Metis nested dissection for fill-reducing ordering
-  m_solver->params()->setIparam(1, 2);
-  m_solver->params()->setMessageLevel(msgLevel);
-
-  double startTime = clockIt();
-  m_solver->wrapAnalysis(numRows, values, rowBegin, columns);
-  m_timings[SYMBOLIC] += clockIt() - startTime;
-
-  startTime = clockIt();
-  m_solver->wrapNumericFactor();
-  m_timings[NUMERIC] += clockIt() - startTime;
-#else
-  ThrowAssert(0, "Pardiso solver only available for Intel builds");
-#endif
-  */
+  // do analysis
+  r_val = analysis_phase(verbose);
   return r_val;
 }
 
+// ---------------------------------
 sc_pardiso::~sc_pardiso()
 {
   //  delete m_solver;
@@ -347,7 +359,7 @@ void sc_pardiso::set_parameters(const int matrix_type,
                                 const bool robust,
                                 const bool verbose)
 {
-  m_sparse_schur = false;
+  m_sparse_schur = false; //true;
   m_matrixType = matrix_type;
   m_debug_level = debug_level;
   for (int i=0; i<64; i++) {
@@ -358,29 +370,38 @@ void sc_pardiso::set_parameters(const int matrix_type,
   // See intel documentation on pardiso for more information:
   const bool valid_reorder = (reorder_option == 0) || (reorder_option == 2) ||
                              (reorder_option == 3);
-  ThrowAssert(valid_reorder, "invalid reordering option");
+  ThrowAssert(true, valid_reorder, "invalid reordering option");
   m_iparam[27] = 0; // double-precision
   m_iparam[34] = 1; // 0-based indexing
-  m_iparam[35] = 2; // calculate Schur complement
+  m_iparam[35] = schur_option; // calculate Schur complement
 
   bool use_default = false; //true;
   if (!use_default) {
     m_iparam[0]  = 1; // do not use solver defaults
     m_iparam[1] = reorder_option; // use Metis for reordering
+
     m_iparam[9] = 13; // pivoting option (default for nonsym, may not be used)
     m_iparam[10] = 0; // scaling option (default for nonsym, may not be used)
-    m_iparam[17] = -1; // print matrix diagnostics
     m_iparam[26] = 1; // check the matrix (can turn off later)
     m_iparam[59] = 0; // use in-core mode
 
     if (robust) {
-      m_iparam[9] = 16; // pivoting option 
+      //m_iparam[9] = 16; // pivoting option 
+      m_iparam[9] = 8; // pivoting option 
       m_iparam[10] = 1; // use scaling option
       m_iparam[12] = 1; // use weighted matchings
     }
-  }
-  if (verbose) {
-    std::cout << "setting MKL/Pardiso parameters (reorder_option = " << reorder_option << ")" << std::endl;
+    if (verbose) {
+      std::cout << "setting MKL/Pardiso parameters (reorder_option = "
+                << reorder_option << (robust ? ", robust mode" : "") << ")" << std::endl;
+    } else {
+      m_iparam[17] = -1; // print matrix diagnostics
+      m_iparam[18] = -1; // print matrix diagnostics
+    }
+  } else {
+    if (verbose) {
+      std::cout << "using MKL/Pardiso default parameters" << std::endl;
+    }
   }
 }
 
