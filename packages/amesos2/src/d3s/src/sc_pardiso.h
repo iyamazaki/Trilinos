@@ -71,7 +71,7 @@ private:
                       const bool robust,
                       const bool verbose);
   
-  int analysis_phase();
+  int analysis_phase(const bool verbose);
   
   int numeric_phase();
 
@@ -91,6 +91,7 @@ private:
   std::vector<int> m_perm;
 
   // schur in csr
+  int schur_option = 1;
   bool m_sparse_schur;
   int m_schur_nnz;
   std::vector<int> m_schur_rowptr;

@@ -26,11 +26,11 @@ D3Solver::D3Solver(MPI_Comm commIn) :
   comm(commIn)
 {
 #ifndef USE_INTEL_PARDISO
-  ThrowAssert(0, "d3_solver currently requires an Intel build with MKL/Pardiso");
+  ThrowAssert(true, 0, "d3_solver currently requires an Intel build with MKL/Pardiso");
 #endif
   MPI_Comm_rank(comm, &myPID);
   MPI_Comm_size(comm, &numProcs);
-  ThrowAssert(numProcs > 1, "d3_solver currently must be run on at least 2 MPI processes");
+  ThrowAssert(true, numProcs > 1, "d3_solver currently must be run on at least 2 MPI processes");
 
   num_threads = 1;
 
@@ -89,7 +89,7 @@ int D3Solver::getLocalID_unsorted(const int gID,
       break;
     }
   }
-  ThrowAssert(index != -1, "index not found");
+  ThrowAssert(true, index != -1, "index not found");
   return index;
 }
 
@@ -122,7 +122,7 @@ int D3Solver::getLocalID(const int gID,
   if (valid == false) {
     std::cout << " Invalid getLocalID: myPID, gID = " << myPID << " " << gID << std::endl;
   }
-  ThrowAssert(valid, "index not found");
+  ThrowAssert(true, valid, "index not found");
   return std::distance(array, it);
 }
 
@@ -130,7 +130,7 @@ void D3Solver::gatherScatterSol(std::vector<double> & sol,
                                 std::vector<double> & solAll) const
 {
   const int numRows = sol.size();
-  ThrowAssert(numRows == numRows_proc, "incompatible number of rows");
+  ThrowAssert(true, numRows == numRows_proc, "incompatible number of rows");
   std::vector<int> numRowsProc;
   const int root = 0;
   if (myPID == root) {
@@ -357,7 +357,7 @@ void D3Solver::extractRowSubIDs(const std::vector<int> & node_begin,
         break;
       }
     }
-    ThrowAssert(id != -1, "row not found in bounds of node_begin");
+    ThrowAssert(true, id != -1, "row not found in bounds of node_begin");
     // node_sub_id maps from post-order (METIS) to bottom-up
     // subdomain ID for i in oridinal ordering
     out_rowSubIDs[i] = node_sub_id[id];
@@ -400,11 +400,11 @@ void D3Solver::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
     for (int j=0; j<numProcSolver; j++) {
       if (j == i) {
         sprintf(msg, "%d: subdomain %d has no interior unknowns", myPID,i);
-        ThrowAssert(adj_sub[j] == 1, msg);
+        ThrowAssert(true, adj_sub[j] == 1, msg);
       }
       else {
         sprintf(msg, "%d:%d: partitioning error for subdomain %d", myPID,i,j);
-        ThrowAssert(adj_sub[j] == 0, msg);
+        ThrowAssert(true, adj_sub[j] == 0, msg);
       }
     }
   }
@@ -461,7 +461,7 @@ void D3Solver::getGraphTranspose(const std::vector<int> & rowBegin,
   for (int i=0; i<numRows; i++) {
     for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
       const int col = columns[j];
-      ThrowAssert(col < numRows, "graph not square");
+      ThrowAssert(true, col < numRows, "graph not square");
       count[col]++;
     }
   }
@@ -501,7 +501,7 @@ int D3Solver::get_proc_for_row(const int row,
       first_proc++;
     }
   }
-  ThrowAssert(proc != -1, "processor not found");
+  ThrowAssert(true, proc != -1, "processor not found");
   return proc;
 }
 
@@ -585,7 +585,7 @@ void D3Solver::update_graph(const std::vector<int> & rowBegin,
   for (int i=0; i<num_extra; i++) {
     const int row = extraEdges[2*i];
     const int local_row = row - startGID;
-    ThrowAssert((local_row >= 0) && (local_row < numRows_proc), "row is out of range");
+    ThrowAssert(true, (local_row >= 0) && (local_row < numRows_proc), "row is out of range");
     count[local_row]++;
   }
   rowBeginUse.resize(numRows_proc+1, 0);
@@ -636,7 +636,7 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
     // calling Metis
     std::vector<idx_t> options(METIS_NOPTIONS), perm(numRows), iperm(numRows), sizes(2*numProcSolver);
     int info = METIS_SetDefaultOptions(options.data());
-    ThrowAssert(info == METIS_OK, "METIS_SetDefaultOptions failed");
+    ThrowAssert(true, info == METIS_OK, "METIS_SetDefaultOptions failed");
     idx_t* vwgt = nullptr;
     if (true) {
       // sort for debugging
@@ -1009,8 +1009,8 @@ void D3Solver::communicateData(const std::vector<std::vector<T>> & data_send,
   if constexpr (std::is_same_v<T, double>) MPI_type = MPI_DOUBLE;
   const int num_recvs = my_recv_PIDs.size();
   const int num_sends = my_send_PIDs.size();
-  ThrowAssert(my_recv_PIDs.size() == data_recv.size(), "incompatible sizes");
-  ThrowAssert(my_send_PIDs.size() == data_send.size(), "incompatible sizes");
+  ThrowAssert(true, my_recv_PIDs.size() == data_recv.size(), "incompatible sizes");
+  ThrowAssert(true, my_send_PIDs.size() == data_send.size(), "incompatible sizes");
   int numProc;
   MPI_Comm_size(comm, &numProc);
   const int tag = 0;
@@ -1495,7 +1495,7 @@ void D3Solver::generateSubMatrices(const std::vector<std::vector<int>> & row_GID
 {
   rowGIDs = getSubRows(row_GIDs_recv); // these are in ascending order
   for (size_t i=1; i<rowGIDs.size(); i++) {
-    ThrowAssert(rowGIDs[i] > rowGIDs[i-1], "rowGIDs not in ascending order");
+    ThrowAssert(true, rowGIDs[i] > rowGIDs[i-1], "rowGIDs not in ascending order");
   }
   int numRows = rowGIDs.size();
   for (int i=0; i<numRows; i++) {
@@ -1533,7 +1533,7 @@ void D3Solver::generateSubMatrices(const std::vector<std::vector<int>> & row_GID
         if ((rowSubIDs[gID] < 0) && (rowSubIDs[col] < 0)) {
           if (col != gID) check = false;
         }
-        ThrowAssert(check, "should not be off-diagonal A_BB entries here");
+        ThrowAssert(true, check, "should not be off-diagonal A_BB entries here");
         const int localCol = getLocalID(col, rowGIDs);
         const int index = rowBegin[local_row] + count[local_row];
         index_map_sub[i][num_terms_data++] = index;
@@ -1546,12 +1546,12 @@ void D3Solver::generateSubMatrices(const std::vector<std::vector<int>> & row_GID
   for (size_t i=0; i<rowsBSub.size(); i++) {
     const int row = rowsBSub[i];
     const int rowGID = rowGIDs[row];
-    ThrowAssert(rowSubIDs[rowGID] < 0, "logic error a");
+    ThrowAssert(true, rowSubIDs[rowGID] < 0, "logic error a");
     for (int j=rowBegin[row]; j<rowBegin[row+1]; j++) {
       const int col = columns[j];
       const int colGID = rowGIDs[col];
       if (colGID != rowGID) {
-        ThrowAssert(rowSubIDs[colGID] >= 0, "logic error b");
+        ThrowAssert(true, rowSubIDs[colGID] >= 0, "logic error b");
       }
     }
   }
@@ -1583,7 +1583,7 @@ void D3Solver::extractMatrixStructures(const int level,
 {
   rowGIDs = getSubRows(row_GIDs_recv); // these are in ascending order
   for (size_t i=1; i<rowGIDs.size(); i++) {
-    ThrowAssert(rowGIDs[i] > rowGIDs[i-1], "rowGIDs not in ascending order");
+    ThrowAssert(true, rowGIDs[i] > rowGIDs[i-1], "rowGIDs not in ascending order");
   }
   int numRows = rowGIDs.size();
   std::vector<int> count(numRows, 0);
@@ -1800,7 +1800,7 @@ void D3Solver::sort_and_add_zero_diags(std::vector<int> & rowBegin,
       const int col = columns[orig_index];
       cols_and_indices[j] = std::make_pair(col, orig_index);
       if (flagB[i]) {
-        ThrowAssert(col != i, "diagonal on interface should not be there");
+        ThrowAssert(true, col != i, "diagonal on interface should not be there");
       }
     }
     if (flagB[i]) {
@@ -1894,7 +1894,7 @@ std::vector<std::vector<int>> D3Solver::gather_node_pids(int & num_nodes)
       my_node = i;
     }
   }
-  ThrowAssert(my_node != -1, "node not found");
+  ThrowAssert(true, my_node != -1, "node not found");
   std::vector<int> node_numbers;
   if (myPID == root) {
     node_numbers.resize(numProc);
@@ -1957,7 +1957,7 @@ int D3Solver::get_best_node(const int sub_start,
       }
     }
   }
-  ThrowAssert(best_node != -1, "logic error");
+  ThrowAssert(true, best_node != -1, "logic error");
   node_flag[best_node] = true;
   return best_node;
 }
@@ -2022,7 +2022,7 @@ void D3Solver::assignTargetMPIs(const std::vector<int> & rowBegin)
     std::sort(target_copy.begin(), target_copy.end());
     auto iter = std::unique(target_copy.begin(), target_copy.end());
     target_copy.erase(iter, target_copy.end());
-    ThrowAssert(target_copy.size() == targetMPIs.size(), "duplicate MPIs in targetMPIs");
+    ThrowAssert(true, target_copy.size() == targetMPIs.size(), "duplicate MPIs in targetMPIs");
     if (msg_level > 0) {
       for (int i=0; i<numProcSolver; i++) {
         std::cout << "subdomain " << i << " is on node " << node_names[targetMPIs[i]]
@@ -2578,20 +2578,34 @@ int D3Solver::factorize(const std::vector<double> & values_in)
 
       // TODO: Skip this
       // copy Schur complement into D3S internal data-structure
-      //  + sc stores the Schur complement in *** column major **
+      //  + sc stores the Schur complement in *** row major **
       sc[0].resize(n2*n2);
       for (int i=0; i<n2; i++) {
         for (int j=0; j<n2; j++) sc[0][j+i*n2] = S_view(i,j);
       }
     }
   }
+#ifdef MATRIX_OUT
+  {
+    char filename[250];
+    sprintf(filename,"S%d.dat", myPID);
+    FILE *fp = fopen(filename,"w");;
+    int n2 = std::sqrt(sc[0].size());
+    for (int i=0; i<n2; i++) {
+      for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",sc[0][j+i*n2]);
+      fprintf(fp,"\n");
+    }
+    fclose(fp);
+  }
+#endif
   timer_pardiso_numeric = clockIt() - startTime;
   
   if (r_val == 0) {
     int level = 0;
     while (level < num_level) {
       startTime = clockIt();
-      compute_schur_complement(level, values);
+      r_val = compute_schur_complement(level, values);
+      if (r_val != 0) break;
       timer_factor[level] = clockIt() - startTime;
       level++;
     }
@@ -2643,9 +2657,10 @@ void D3Solver::get_comm_data(const int level,
   get_comm_data(level, numSub, mult, send_to_pid, recv_from_pid, recv_index);
 }
 
-void D3Solver::compute_schur_complement(const int level,
-                                        const std::vector<double> & values)
+int D3Solver::compute_schur_complement(const int level,
+                                       const std::vector<double> & values)
 {
+  int r_val = 0;
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
   communicateMatrixValuesB(level, values);
@@ -2660,9 +2675,11 @@ void D3Solver::compute_schur_complement(const int level,
   point_to_point_single(send_to_pid, recv_from_pid, sc[level], sc_recv[level], comm_level[level]);
   if (recv_index != -1) {
     const int num_rows = n1a[level] + n2a[level];
+    // assemeble local schurs from neighbors
     assemble_dense(level, num_rows);
+    // add original separator block
     add_sparse_contrib(level, num_rows);
-    eliminate_separator(level);
+    r_val = eliminate_separator(level);
     rhs_sep[level].resize(n1a[level]);
     if (output_mats) {
       output_dense_matrix("Sc", num_rows, level, AS[level]);
@@ -2671,6 +2688,7 @@ void D3Solver::compute_schur_complement(const int level,
       }
     }
   }
+  return r_val;
 }
 
 void D3Solver::get_comm_data(const int level,
@@ -2690,9 +2708,10 @@ void D3Solver::get_comm_data(const int level,
   get_comm_pairs(num_proc_level, myPID_level, send_to_pid, recv_from_pid, recv_index);
 }
 
-void D3Solver::solve_schur_complement(const int level,
-                                      const std::vector<double> & rhs)
+int D3Solver::solve_schur_complement(const int level,
+                                     const std::vector<double> & rhs)
 {
+  int r_val = 0;
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
   communicateRhsValuesB(level, rhs);
@@ -2704,8 +2723,9 @@ void D3Solver::solve_schur_complement(const int level,
   if (recv_index != -1) {
     assemble_rhs(level);
     add_sep_contrib(level);
-    eliminate_separator_rhs(level);
+    r_val = eliminate_separator_rhs(level);
   }
+  return r_val;
 }
 
 void D3Solver::scatter_sol(const int level)
@@ -2775,7 +2795,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
                           std::vector<double> & sol,
                     const int numRhs)
 {
-  ThrowAssert(numRhs == 1, "solver currently setup for only a single rhs");
+  ThrowAssert(true, numRhs == 1, "solver currently setup for only a single rhs");
   int lengthRhs = rhs.size();
   if (msg_level > 0) {
     MPI_Barrier(comm);
@@ -2835,7 +2855,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
   rhs_pardiso.assign(num_rows, 0);
   sol_pardiso.resize(num_rows);
 
-  int rval = 0;
+  int r_val = 0;
   int n1 = rowsISub.size(); // interior
   int n2 = rowsBSub.size(); // boundary
   if (solvername == "") {
@@ -2954,13 +2974,17 @@ int D3Solver::solve(const std::vector<double> & rhs,
   while (level < num_level) {
     const double startTime = clockIt();
     if (matching_option == 0 || matching_option == 1) {
-      solve_schur_complement(level, rhs);
+      r_val = solve_schur_complement(level, rhs);
     } else {
-      solve_schur_complement(level, rhsRe);
+      r_val = solve_schur_complement(level, rhsRe);
     }
+    if (r_val != 0) break;
     timer_solve[level] += clockIt() - startTime;
     level++;
   }
+  MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+  if (r_val != 0) return r_val;
+
   // backward  solve Schur complement
   //  (at this point, we have the root separator solution)
   level = num_level - 1;
@@ -2974,7 +2998,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
   }
 
   // Finally, calculate solution in subdomain interior
-  ThrowAssert(rowsBSub.size() == rhs_sc[0].size(), "inconsistent sizes");
+  ThrowAssert(true, rowsBSub.size() == rhs_sc[0].size(), "inconsistent sizes");
   if (solvername == "") {
     // copy in boundary solution to rhs
     for (size_t i=0; i<rowsBSub.size(); i++) {
@@ -3046,7 +3070,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
     MPI_Barrier(comm);
     if (myPID == 0) printf(" Solve done\n\n");
   }
-  return rval;
+  return r_val;
 }
 
 void D3Solver::permsolve(const std::vector<int> perm,
@@ -3285,13 +3309,13 @@ void D3Solver::assemble_rhs(const int level)
   const int n = n1a[level] + n2a[level];
   std::vector<double> & rhs = AS_rhs[level];
   rhs.assign(n, 0);
-  ThrowAssert(sep_map[level].size() == rhs_sc[level].size(), "unequal sizes");
+  ThrowAssert(true, sep_map[level].size() == rhs_sc[level].size(), "unequal sizes");
   int length = sep_map[level].size();
   for (int i=0; i<length; i++) {
     const int row = sep_map[level][i];
     rhs[row] = rhs_sc[level][i];
   }
-  ThrowAssert(sep_map_recv[level].size() == rhs_sc_recv[level].size(), "unequal sizes");
+  ThrowAssert(true, sep_map_recv[level].size() == rhs_sc_recv[level].size(), "unequal sizes");
   length = sep_map_recv[level].size();
   for (int i=0; i<length; i++) {
     const int row = sep_map_recv[level][i];
@@ -3325,7 +3349,7 @@ void D3Solver::add_sparse_contrib(const int level,
   const std::vector<double> & valuesB = values_B[level];
   std::vector<double> & sc_here = AS[level];
   const int num_rowsB = rowBeginB.size() - 1; 
-  ThrowAssert(num_rowsB == int(sep_map_B[level].size()), "unequal lengths");
+  ThrowAssert(true, num_rowsB == int(sep_map_B[level].size()), "unequal lengths");
   for (int i=0; i<num_rowsB; i++) {
     const int row = sep_map_B[level][i];
     for (int j=rowBeginB[i]; j<rowBeginB[i+1]; j++) {
@@ -3571,12 +3595,14 @@ void D3Solver::convert_to_row_major(const std::vector<double> & A_col_major,
   }
 }
 
-void D3Solver::eliminate_separator(const int level)
+int D3Solver::eliminate_separator(const int level)
 {
   const int n1 = n1a[level];
   const int n2 = n2a[level];
   assign_matrix_blocks(level);
   const double startTime = clockIt();
+
+  MKL_INT info = 0;
   if (n1 > 0) {
 #ifdef USE_INTEL_PARDISO
     ipiv[level].resize(n1);
@@ -3586,21 +3612,29 @@ void D3Solver::eliminate_separator(const int level)
     //  for (int j=0; j<n1; j++) printf("%.16e ",A11[level][i+j*n1]);
     //}
     //printf("];\n");
-    MKL_INT info = LAPACKE_dgetrf(matrix_layout, n1, n1, A11[level].data(), n1,
-                                  ipiv[level].data());
-    ThrowAssert(info == 0, "error in call to LAPACKE_dgetrf");
+    info = LAPACKE_dgetrf(matrix_layout, n1, n1, A11[level].data(), n1,
+                          ipiv[level].data());
+    ThrowAssert(false, info == 0, "error in call to LAPACKE_dgetrf");
+    if (info != 0) {
+      fprintf(stderr, "DGETRF(%dx%d) failed with info=%d in D3S::eliminate_separator\n",n1,n1,info);
+      return info;
+    }
 #endif
   }
   if (n2 == 0) {
     timer_factor_dla[level] = clockIt() - startTime;
-    return;
+    return info;
   }
   if (n1 > 0) {
 #ifdef USE_INTEL_PARDISO
     int matrix_layout = LAPACK_COL_MAJOR;
-    MKL_INT info = LAPACKE_dgetrs(matrix_layout, 'N', n1, n2, A11[level].data(), n1,
-                                  ipiv[level].data(), A12[level].data(), n1);
-    ThrowAssert(info == 0, "error in call to LAPACKE_dgetrs");
+    info = LAPACKE_dgetrs(matrix_layout, 'N', n1, n2, A11[level].data(), n1,
+                          ipiv[level].data(), A12[level].data(), n1);
+    ThrowAssert(false, info == 0, "error in call to LAPACKE_dgetrs");
+    if (info != 0) {
+      fprintf(stderr, "DGETRS(%dx%d) failed with info=%d in D3S::eliminate_separator\n",n1,n2,info);
+      return info;
+    }
     double alpha(-1), beta(1);
     CBLAS_LAYOUT layout = CblasColMajor;
     cblas_dgemm(layout, CblasNoTrans, CblasNoTrans, n2, n2, n1, alpha,
@@ -3612,27 +3646,34 @@ void D3Solver::eliminate_separator(const int level)
   // recall that we use row-major ordering for sc --> convert A22 accordingly
   sc[level+1].resize(n2*n2);
   convert_to_row_major(A22[level], n2, n2, sc[level+1]);
+  return info;
 }
 
-void D3Solver::eliminate_separator_rhs(const int level)
+int D3Solver::eliminate_separator_rhs(const int level)
 {
   const double startTime = clockIt();
   const int n1 = n1a[level];
   const int n2 = n2a[level];
   double* rhs = AS_rhs[level].data();
+
+  int info = 0;
   if (n1 > 0) {
 #ifdef USE_INTEL_PARDISO
     const int n = n1 + n2; // leading dimension of AS_rhs[level]
     int matrix_layout = LAPACK_COL_MAJOR;
     const int num_rhs = 1;
-    int info = LAPACKE_dgetrs(matrix_layout, 'N', n1, num_rhs, A11[level].data(), n1,
-                              ipiv[level].data(), rhs, n);
-    ThrowAssert(info == 0, "error in call to LAPACKE_dgetrs");
+    info = LAPACKE_dgetrs(matrix_layout, 'N', n1, num_rhs, A11[level].data(), n1,
+                          ipiv[level].data(), rhs, n);
+    ThrowAssert(false, info == 0, "error in call to LAPACKE_dgetrs");
+    if (info != 0) {
+      fprintf(stderr, "DGETRS(%dx%d) with ldb=%d failed with info=%d in D3S::eliminate_separator_rhs\n",n1,num_rhs,n,info);
+      return info;
+    }
 #endif
   }
   if (n2 == 0) {
     timer_solve_dla[level] += clockIt() - startTime;
-    return;
+    return info;
   }
   rhs_sc[level+1].resize(n2);
   double* C = rhs_sc[level+1].data();
@@ -3648,6 +3689,7 @@ void D3Solver::eliminate_separator_rhs(const int level)
 #endif
   }
   timer_solve_dla[level] += clockIt() - startTime;
+  return info;
 }
 
 void D3Solver::output_time(const std::string & message,
