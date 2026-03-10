@@ -285,10 +285,10 @@ namespace {
 
     // Cholmod now runs on its own 1 rank test. Multiple ranks not yet supported.
     // Tests in this list will run in Amesos2_SolverFactory_UnitTests_MPI_4.
-    const int numSolvers = 10;
+    const int numSolvers = 11;
     const char* solverNames[numSolvers] = {"shylubasker", "basker", "klu2", "superlu_dist",
                                            "superlu_mt", "superlu", "pardiso_mkl",
-                                           "lapack", "mumps", "umfpack"};
+                                           "lapack", "mumps", "umfpack", "d3s"};
 
     // The number of solvers that Amesos2::create actually supports,
     // for the current MV and MAT types.  If it doesn't support _any_
