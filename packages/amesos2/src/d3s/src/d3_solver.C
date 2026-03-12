@@ -2987,7 +2987,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
     // check at each level;
     r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
     MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
-    if (r_val != 0) return;
+    if (r_val != 0) return r_val;
 
     level++;
   }
