@@ -2235,6 +2235,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
   if (msg_level > 0) {
     printf( " %d: initialize(r_val=%d)\n",myPID, r_val ); fflush(stdout);
   }
+  r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
   MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
   if (msg_level > 0) {
     printf( " => r_val=%d\n",r_val ); fflush(stdout);
@@ -2605,11 +2606,15 @@ int D3Solver::factorize(const std::vector<double> & values_in)
     while (level < num_level) {
       startTime = clockIt();
       r_val = compute_schur_complement(level, values);
-      if (r_val != 0) break;
       timer_factor[level] = clockIt() - startTime;
+      // check at each level;
+      r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
+      MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+      if (r_val != 0) break;
       level++;
     }
   }
+
   if (msg_level > 0) {
     MPI_Barrier(comm);
     if (myPID == 0) printf(" Factorize done\n\n");
@@ -2978,12 +2983,14 @@ int D3Solver::solve(const std::vector<double> & rhs,
     } else {
       r_val = solve_schur_complement(level, rhsRe);
     }
-    if (r_val != 0) break;
     timer_solve[level] += clockIt() - startTime;
+    // check at each level;
+    r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
+    MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+    if (r_val != 0) return;
+
     level++;
   }
-  MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
-  if (r_val != 0) return r_val;
 
   // backward  solve Schur complement
   //  (at this point, we have the root separator solution)
@@ -3597,16 +3604,16 @@ void D3Solver::convert_to_row_major(const std::vector<double> & A_col_major,
 
 int D3Solver::eliminate_separator(const int level)
 {
-  const int n1 = n1a[level];
-  const int n2 = n2a[level];
+  const MKL_INT n1 = n1a[level];
+  const MKL_INT n2 = n2a[level];
   assign_matrix_blocks(level);
   const double startTime = clockIt();
 
   MKL_INT info = 0;
+  MKL_INT matrix_layout = LAPACK_COL_MAJOR;
   if (n1 > 0) {
 #ifdef USE_INTEL_PARDISO
     ipiv[level].resize(n1);
-    int matrix_layout = LAPACK_COL_MAJOR;
     //printf("C=[\n");
     //for (int i=0; i<n1; i++) {
     //  for (int j=0; j<n1; j++) printf("%.16e ",A11[level][i+j*n1]);
@@ -3627,7 +3634,6 @@ int D3Solver::eliminate_separator(const int level)
   }
   if (n1 > 0) {
 #ifdef USE_INTEL_PARDISO
-    int matrix_layout = LAPACK_COL_MAJOR;
     info = LAPACKE_dgetrs(matrix_layout, 'N', n1, n2, A11[level].data(), n1,
                           ipiv[level].data(), A12[level].data(), n1);
     ThrowAssert(false, info == 0, "error in call to LAPACKE_dgetrs");
@@ -3652,21 +3658,22 @@ int D3Solver::eliminate_separator(const int level)
 int D3Solver::eliminate_separator_rhs(const int level)
 {
   const double startTime = clockIt();
-  const int n1 = n1a[level];
-  const int n2 = n2a[level];
+  const MKL_INT n1 = n1a[level];
+  const MKL_INT n2 = n2a[level];
+  const MKL_INT n = n1 + n2; // leading dimension of AS_rhs[level]
+  const MKL_INT num_rhs = 1;
   double* rhs = AS_rhs[level].data();
 
   int info = 0;
+  int matrix_layout = LAPACK_COL_MAJOR;
   if (n1 > 0) {
 #ifdef USE_INTEL_PARDISO
-    const int n = n1 + n2; // leading dimension of AS_rhs[level]
-    int matrix_layout = LAPACK_COL_MAJOR;
-    const int num_rhs = 1;
     info = LAPACKE_dgetrs(matrix_layout, 'N', n1, num_rhs, A11[level].data(), n1,
                           ipiv[level].data(), rhs, n);
     ThrowAssert(false, info == 0, "error in call to LAPACKE_dgetrs");
     if (info != 0) {
-      fprintf(stderr, "DGETRS(%dx%d) with ldb=%d failed with info=%d in D3S::eliminate_separator_rhs\n",n1,num_rhs,n,info);
+      fprintf(stderr, "DGETRS(%dx%d) with ldb=%d failed with info=%d in D3S::eliminate_separator_rhs(n1=%d, n2=%d)\n",
+              n1,num_rhs,n,info,n1,n2);
       return info;
     }
 #endif
@@ -3681,8 +3688,6 @@ int D3Solver::eliminate_separator_rhs(const int level)
   if (n1 > 0) {
 #ifdef USE_INTEL_PARDISO
     double alpha(-1), beta(1);
-    const int num_rhs = 1;
-    const int n = n1 + n2; // leading dimension of AS_rhs[level]
     CBLAS_LAYOUT layout = CblasColMajor;
     cblas_dgemm(layout, CblasNoTrans, CblasNoTrans, n2, num_rhs, n1, alpha,
                 A21[level].data(), n2, rhs, n, beta, C, n2);
