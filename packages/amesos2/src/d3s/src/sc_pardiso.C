@@ -386,8 +386,8 @@ void sc_pardiso::set_parameters(const int matrix_type,
     m_iparam[59] = 0; // use in-core mode
 
     if (robust) {
-      //m_iparam[9] = 16; // pivoting option 
-      m_iparam[9] = 8; // pivoting option 
+      m_iparam[9] = 16; // pivoting option
+      //m_iparam[9] = 8; // pivoting option
       m_iparam[10] = 1; // use scaling option
       m_iparam[12] = 1; // use weighted matchings
     }
