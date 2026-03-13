@@ -197,6 +197,15 @@ private:
    */
   bool loadA_impl(EPhase current_phase);
 
+
+  /** 
+   * \brief Prints the status information about the current solver with some level
+   * of verbosity
+   */
+  void describe_impl(Teuchos::FancyOStream &out,
+                     const Teuchos::EVerbosityLevel verbLevel) const;
+
+
   typedef Kokkos::DefaultHostExecutionSpace HostExecSpaceType;
   typedef Kokkos::View<int*,       HostExecSpaceType>    host_size_type_array;
   typedef Kokkos::View<int*,       HostExecSpaceType>    host_ordinal_type_array;
