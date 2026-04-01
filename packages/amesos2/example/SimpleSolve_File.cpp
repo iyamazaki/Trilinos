@@ -248,6 +248,7 @@ int main(int argc, char *argv[]) {
     std::cout << solver->description() << std::endl << std::endl;
   }
 
+  RCP<ID> SchurPart;
   if (xml_filename != "") {
     Teuchos::ParameterList test_params = Teuchos::ParameterXMLFileReader(xml_filename).getParameters();
     Teuchos::ParameterList& amesos2_params = test_params.sublist("Amesos2");
@@ -260,7 +261,6 @@ int main(int argc, char *argv[]) {
         RCP<const Teuchos::Comm<LO> > SerialComm = rcp(new Teuchos::MpiComm<LO>(MPI_COMM_SELF));
         RCP<const MAP> SerialMap (new MAP (nrows, indexBase, SerialComm));
 
-        RCP<ID> SchurPart;
         if (schur_filename != "") {
           if( verbose && myRank == 0) std::cout << "Reading Schur_Part from " << schur_filename << std::endl;
           SchurPart = IDReader::readDenseFile (schur_filename, SerialComm, SerialMap);
