@@ -711,7 +711,6 @@ ShyLUBasker<Matrix,Vector>::loadA_impl(EPhase current_phase)
   }
   else 
   {
-
     // Only the root image needs storage allocated
     if( this->root_ && current_phase == SYMBFACT )
     {
