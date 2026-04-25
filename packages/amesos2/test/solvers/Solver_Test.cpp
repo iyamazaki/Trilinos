@@ -616,6 +616,7 @@ do_solve_routine(const string& solver_name,
     solver = Amesos2::create<Matrix,Vector> (solver_name, A1);
     //JDB: We should really use the parameters the user gives
     solver->setParameters( rcpFromRef(solve_params) );
+    solver->describe(*fos, Teuchos::VERB_HIGH);
     switch (phase) {
     case Amesos2::CLEAN:
       if (verbosity > 2) {
@@ -643,6 +644,7 @@ do_solve_routine(const string& solver_name,
     if (verbosity > 2) {
       *fos << endl << " ** done **" << std::endl << std::flush;
     }
+    solver->printTiming(*fos);
     ++phase;
   }
 
@@ -779,6 +781,7 @@ do_solve_routine(const string& solver_name,
 
       success &= checker(x2, Xhat);
     }
+    solver->printTiming(*fos);
     ++style;
   }
 
@@ -1543,6 +1546,7 @@ bool do_kokkos_test_with_types(const string& mm_file,
   typedef Kokkos::View<Scalar**, Kokkos::LayoutLeft, device_t> view_t;
 
   RCP<const Teuchos::Comm<int> > comm = Tpetra::getDefaultComm();
+  if (comm->getRank() != 0) return true; // only root calls Amesos2
 
   // Kokkos adapter doesn't support the distributed modes.
   // We just load to the root rank which allows something like SuperLU to
