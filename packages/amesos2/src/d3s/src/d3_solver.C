@@ -2122,113 +2122,162 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
 #endif
     } else {
       // Amesos2 Symbolic factorization
-      using comm_type = Teuchos::MpiComm<int>;
+      try {
+        using comm_type = Teuchos::MpiComm<int>;
+        size_t n = rowBeginSub.size()-1;
+        int n2 = rowsBSub.size();
+        Kokkos::resize(S_view, n2,n2);
+#define D3S_USE_SHYLUBASKER_PART_FACTO
+#if defined(D3S_USE_SHYLUBASKER_PART_FACTO)
 
-      size_t n = rowBeginSub.size()-1;
-      int n2 = rowsBSub.size();
-      // mark separtor nodes
-      Kokkos::resize(m_parts, n);
-      Kokkos::deep_copy(m_parts, 0);
-      for (int i=0; i<n2; i++) m_parts(rowsBSub[i]) = -1;
+        // Create KK CrsMatrix
+        Kokkos::resize(rowmap_view_D, rowBeginSub.size());
+        Kokkos::resize(colind_view_D, columnsSub.size());
+        Kokkos::resize(values_view_D, columnsSub.size());
+        for (size_t i=0; i<rowBeginSub.size(); i++) rowmap_view_D(i) = rowBeginSub[i];
+        for (size_t i=0; i<columnsSub.size(); i++) colind_view_D(i) = columnsSub[i];
+        graph_t static_graph(colind_view_D, rowmap_view_D);
+        crsmat_t crsmat("CrsMatrix", n, values_view_D, static_graph);
 
-      n2 = 1;
-      int n1 = 0;
-      int nnzD = 0;
-      int nnzF = 0;
-      for (int i=0; i<n; i++) {
-        if (m_parts(i) == 0) { // interior
-          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
-            if (m_parts(columnsSub[k]) >= 0) nnzD ++;
+        // Create amesos2 solver
+        amesos2_solver = Amesos2::create<crsmat_t, mv_view_t>("ShyLUBasker", Teuchos::rcpFromRef(crsmat));
+
+        // Set amesos2 parameters
+        {
+          Teuchos::ParameterList amesos2Params;
+          amesos2Params.setName("Amesos2");
+          Teuchos::ParameterList& shylubasker_params = amesos2Params.sublist("ShyLUBasker");
+
+          // partial-factorization
+          shylubasker_params.set("GetDenseSchur", 2);
+          // schur_part
+          //  = row ids of local schur complement
+          Teuchos::Array<int> schurPart(n, 0);
+          for (int i=0; i<n2; i++) schurPart[rowsBSub[i]] = 1;
+          shylubasker_params.set("SchurPart", (const int*)(schurPart.data()));
+          // schur_out
+          //  = storage for output Schur
+          shylubasker_params.set("SchurOut", (double*)S_view.data());
+
+          if (msg_level > 0) {
+            shylubasker_params.set("verbose", (myPID == 0));
           }
-          m_parts(i) = n1;
-          n1++;
-        } else { // separator
-          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
-            if (m_parts(columnsSub[k]) >= 0) nnzF++;
-          }
-          m_parts(i) = -n2;
-          n2++;
+          amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
         }
-      }
-      n2--;
-      if (n2 != rowsBSub.size()) printf( " D3S: ERROR n2 mismatch(%d vs %d)\n",n2,int(rowsBSub.size()) );
-      if (n1+n2 != n) printf( " D3S: ERROR n1 mismatch(%d vs %d)\n",n1,int(n-n2) );
-      n2 = rowsBSub.size();
 
-      // extract interior part of local subdomain
-      // [D, G; H, S]
-      Kokkos::resize(rowmap_view_D, n1+1);
-      Kokkos::resize(colind_view_D, nnzD);
-      Kokkos::resize(values_view_D, nnzD);
+        // Symbolic
+        amesos2_solver->symbolicFactorization();
+#else // not D3S_USE_SHYLUBASKER_PART_FACTO
+        // mark separtor nodes
+        Kokkos::resize(m_parts, n);
+        Kokkos::deep_copy(m_parts, 0);
+        for (int i=0; i<n2; i++) m_parts(rowsBSub[i]) = -1;
 
-      Kokkos::resize(E_view, n1,n2);
-      #ifdef D3S_DENSE_F
-        Kokkos::resize(F_view, n2,n1);
-      #else
-        Kokkos::resize(rowmap_view_F, n2+1);
-        Kokkos::resize(colind_view_F, nnzF);
-        Kokkos::resize(values_view_F, nnzF);
-      #endif
-      Kokkos::resize(G_view, n1,n2);
-      Kokkos::resize(S_view, n2,n2);
-      nnzD = 0;
-      nnzF = 0;
-      rowmap_view_D(0) = 0;
-      rowmap_view_F(0) = 0;
-      for (int i=0; i<n; i++) {
-        int row = m_parts(i);
-        if (m_parts(i) >= 0) { // interior rows
-          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
-            int col = m_parts(columnsSub[k]);
-            if (col >= 0) {
-              // interior, D
-              colind_view_D(nnzD) = col;
-              nnzD++;
+        n2 = 1;
+        int n1 = 0;
+        int nnzD = 0;
+        int nnzF = 0;
+        for (int i=0; i<n; i++) {
+          if (m_parts(i) == 0) { // interior
+            for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+              if (m_parts(columnsSub[k]) >= 0) nnzD ++;
             }
-          }
-          rowmap_view_D(row+1)=nnzD;
-        } else {
-          #ifndef D3S_DENSE_F
-          row = -row-1;
-          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
-            int col = m_parts(columnsSub[k]);
-            if (col >= 0) {
-              // interface, F
-              colind_view_F(nnzF) = col;
-              nnzF++;
+            m_parts(i) = n1;
+            n1++;
+          } else { // separator
+            for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+              if (m_parts(columnsSub[k]) >= 0) nnzF++;
             }
+            m_parts(i) = -n2;
+            n2++;
           }
-          rowmap_view_F(row+1)=nnzF;
-          #endif
         }
-      }
+        n2--;
+        if (n2 != rowsBSub.size()) printf( " D3S: ERROR n2 mismatch(%d vs %d)\n",n2,int(rowsBSub.size()) );
+        if (n1+n2 != n) printf( " D3S: ERROR n1 mismatch(%d vs %d)\n",n1,int(n-n2) );
+        n2 = rowsBSub.size();
 
-      // wrap them into kokkos crsmatrix
-      graph_t static_graph(colind_view_D, rowmap_view_D);
-      crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
+        // extract interior part of local subdomain
+        // [D, G; H, S]
+        Kokkos::resize(rowmap_view_D, n1+1);
+        Kokkos::resize(colind_view_D, nnzD);
+        Kokkos::resize(values_view_D, nnzD);
+
+        Kokkos::resize(E_view, n1,n2);
+        #ifdef D3S_DENSE_F
+          Kokkos::resize(F_view, n2,n1);
+        #else
+          Kokkos::resize(rowmap_view_F, n2+1);
+          Kokkos::resize(colind_view_F, nnzF);
+          Kokkos::resize(values_view_F, nnzF);
+        #endif
+        Kokkos::resize(G_view, n1,n2);
+        nnzD = 0;
+        nnzF = 0;
+        rowmap_view_D(0) = 0;
+        rowmap_view_F(0) = 0;
+        for (int i=0; i<n; i++) {
+          int row = m_parts(i);
+          if (m_parts(i) >= 0) { // interior rows
+            for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+              int col = m_parts(columnsSub[k]);
+              if (col >= 0) {
+                // interior, D
+                colind_view_D(nnzD) = col;
+                nnzD++;
+              }
+            }
+            rowmap_view_D(row+1)=nnzD;
+          } else {
+            #ifndef D3S_DENSE_F
+            row = -row-1;
+            for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
+              int col = m_parts(columnsSub[k]);
+              if (col >= 0) {
+                // interface, F
+                colind_view_F(nnzF) = col;
+                nnzF++;
+              }
+            }
+            rowmap_view_F(row+1)=nnzF;
+            #endif
+          }
+        }
+
+        // wrap them into kokkos crsmatrix
+        graph_t static_graph(colind_view_D, rowmap_view_D);
+        crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
 #ifdef D3S_USE_KOKKOS_BACKEND
-      // kokkos-backend for symbolic
-      amesos2_solver = Amesos2::create<crsmat_t, mv_view_t>(solvername, Teuchos::rcpFromRef(crsmat));
+        // kokkos-backend for symbolic
+        amesos2_solver = Amesos2::create<crsmat_t, mv_view_t>(solvername, Teuchos::rcpFromRef(crsmat));
 #else
-      // tpetra-backend
-      // wrap it into tpetra crsmatrix
-      int indexBase = 0;
-      Teuchos::RCP<const comm_type> localComm = Teuchos::rcp(new comm_type(MPI_COMM_SELF));
-      localMap = Teuchos::rcp(new map_type(n1, indexBase, localComm, Tpetra::GloballyDistributed));
-      A = Teuchos::rcp(new MAT(crsmat, localMap,localMap));
-      amesos2_solver = Amesos2::create<MAT,MV>(solvername, A);
+        // tpetra-backend
+        // wrap it into tpetra crsmatrix
+        int indexBase = 0;
+        Teuchos::RCP<const comm_type> localComm = Teuchos::rcp(new comm_type(MPI_COMM_SELF));
+        localMap = Teuchos::rcp(new map_type(n1, indexBase, localComm, Tpetra::GloballyDistributed));
+        A = Teuchos::rcp(new MAT(crsmat, localMap,localMap));
+        amesos2_solver = Amesos2::create<MAT,MV>(solvername, A);
 #endif
-      {
-        Teuchos::ParameterList amesos2Params;
-        amesos2Params.setName("Amesos2");
-        Teuchos::ParameterList &solverParams = amesos2Params.sublist(solvername);
-        //if (msg_level > 0) {
-        //  solverParams.set("verbose",(myPID == 1));
-        //}
-        //solverParams.set("replace_tiny_pivot",true);
-        amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
+        {
+          Teuchos::ParameterList amesos2Params;
+          amesos2Params.setName("Amesos2");
+          Teuchos::ParameterList &solverParams = amesos2Params.sublist(solvername);
+          //if (msg_level > 0) {
+          //  solverParams.set("verbose",(myPID == 1));
+          //}
+          //solverParams.set("replace_tiny_pivot",true);
+          amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
+        }
+        amesos2_solver->symbolicFactorization();
+#endif // D3S_USE_SHYLUBASKER_PART_FACTO
+      } catch (const std::exception& e) {
+        if (msg_level > 0) {
+          std::cout << "\n == D3S::initialize(" << myPID << " caught exception from Amesos2 ==\n"
+                    << e.what() << std::endl;
+        }
+        r_val = 1;
       }
-      amesos2_solver->symbolicFactorization();
     }
   }
   timer_pardiso_symbolic = clockIt() - startTime;
@@ -2421,6 +2470,17 @@ int D3Solver::factorize(const std::vector<double> & values_in)
       }
     }
     if (n > 0) {
+#if defined(D3S_USE_SHYLUBASKER_PART_FACTO)
+      // wrap into Kokkos::CrsMatrix
+      int n2 = rowsBSub.size();
+      using UnmanagedDblViewType = Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+      UnmanagedDblViewType nz_vals (valuesSub.data(),   values_in.size());
+      graph_t static_graph(colind_view_D, rowmap_view_D);
+      crsmat_t crsmat("CrsMatrix", n, nz_vals, static_graph);
+
+      amesos2_solver->setA(Teuchos::rcpFromRef(crsmat), Amesos2::SYMBFACT);
+      amesos2_solver->numericFactorization();
+#else
       // [D, E; F, C]
       Kokkos::deep_copy(E_view, 0);
       #ifdef D3S_DENSE_F
@@ -2512,6 +2572,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
       }
       MPI_Barrier(MPI_COMM_WORLD);
 #endif
+
       {
 #ifdef D3S_USE_KOKKOS_BACKEND
         // kokkos-backend for numeric factorization
@@ -2538,6 +2599,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
 #endif
         amesos2_solver->solve();
       }
+
       // Form local Schur
       {
 #ifdef MATRIX_OUT
@@ -2576,6 +2638,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
         }
 #endif
       }
+#endif // end of D3S_USE_SHYLUBASKER_PART_FACTO
 
       // TODO: Skip this
       // copy Schur complement into D3S internal data-structure
@@ -2896,21 +2959,53 @@ int D3Solver::solve(const std::vector<double> & rhs,
     }
   } else {
     // Amesos2 solves
+#if defined(D3S_USE_SHYLUBASKER_PART_FACTO)
+    // * copy vectors into views
+    // copy interior rhs vector in
+    // solve with interior
+    Kokkos::resize(X_view, n1+n2, numRhs);
+    Kokkos::resize(B_view, n1+n2, numRhs);
+    Kokkos::deep_copy(X_view, 0.0);
+    Kokkos::deep_copy(B_view, 0.0); // zero on interface
+    for (int j=0; j<numRhs; j++) {
+      for (size_t i=0; i<rowsISub.size(); i++) {
+        B_view(rowsISub[i], j) = rhsI[i];
+      }
+    }
+    amesos2_solver->setB(Teuchos::rcpFromRef(B_view));
+    amesos2_solver->setX(Teuchos::rcpFromRef(X_view));
+    // do forward solve
+    {
+      Teuchos::ParameterList amesos2Params;
+      amesos2Params.setName("Amesos2");
+      Teuchos::ParameterList& shylubasker_params = amesos2Params.sublist("ShyLUBasker");
+      shylubasker_params.set("OnlyForwardSolve", true);
+      shylubasker_params.set("OnlyBackwardSolve", false);
+      amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
+    }
+    amesos2_solver->solve();
+
+    // copying out (TODO: fix)
+    rhs_sc[0].resize(rowsBSub.size());
+    for (int j=0; j<numRhs; j++) {
+      for (int i=0; i<n1; i++) sol_pardiso[i+j*n1] = X_view(i,j);
+      for (int i=0; i<n2; i++) rhs_sc[0][i+j*n1] = X_view(n1+i,j);
+    }
+#else // not D3S_USE_SHYLUBASKER_PART_FACTO
+
     // * copy vectors into views
     // copy interior rhs vector in
     for (size_t i=0; i<rowsISub.size(); i++) {
       rhs_pardiso[i] = rhsI[i];
     }
-    // solve with interior
     {
 #ifdef D3S_USE_KOKKOS_BACKEND
       // kokkos-backend for solve
-      Kokkos::resize(X_view, n1, numRhs);
-      Kokkos::resize(B_view, n1, numRhs);
-      for (int j=0; j<numRhs; j++) {
-        for (int i=0; i<n1; i++) B_view(i,j) = rhs_pardiso[i+j*n1];
-      }
-
+        Kokkos::resize(X_view, n1, numRhs);
+        Kokkos::resize(B_view, n1, numRhs);
+        for (int j=0; j<numRhs; j++) {
+          for (int i=0; i<n1; i++) B_view(i,j) = rhs_pardiso[i+j*n1];
+        }
       amesos2_solver->setB(Teuchos::rcpFromRef(B_view));
       amesos2_solver->setX(Teuchos::rcpFromRef(X_view));
 #else
@@ -2928,7 +3023,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
       amesos2_solver->setX(X);
 #endif
 
-      // do solve
+      // do forward solve
       amesos2_solver->solve();
 
       // copying out (TODO: fix)
@@ -2971,7 +3066,17 @@ int D3Solver::solve(const std::vector<double> & rhs,
         KokkosSparse::spmv("N", -1.0, crsmat, X1, 0.0, B2);
       #endif
     }
+#endif // end of D3S_USE_SHYLUBASKER_PART_FACTO
   }
+#ifdef MATRIX_OUT
+  {
+    char filename[250];
+    sprintf(filename,"rhs_%d.dat", myPID);
+    FILE *fp = fopen(filename,"w");
+    for (int i=0; i<n2; i++) fprintf(fp,"%.16e\n",rhs_sc[0][i]);
+    fclose(fp);
+  }
+#endif
 
   // forward solve Schur complement
   //  (solve_schur_complement will communicate original rhs to add to rhs_sc[0])
@@ -3003,6 +3108,15 @@ int D3Solver::solve(const std::vector<double> & rhs,
     timer_solve[level] += clockIt() - startTime;
     level--;
   }
+#ifdef MATRIX_OUT
+  {
+    char filename[250];
+    sprintf(filename,"sol2_%d.dat", myPID);
+    FILE *fp = fopen(filename,"w");
+    for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e %.16e\n",i,rhs_pardiso[i],sol_pardiso[i],rhs_sc[0][i]);
+    fclose(fp);;
+  }
+#endif
 
   // Finally, calculate solution in subdomain interior
   ThrowAssert(true, rowsBSub.size() == rhs_sc[0].size(), "inconsistent sizes");
@@ -3022,15 +3136,36 @@ int D3Solver::solve(const std::vector<double> & rhs,
     }
   } else {
     // With Amesos2, the interior part of U is I.
-#ifdef MATRIX_OUT
+#if defined(D3S_USE_SHYLUBASKER_PART_FACTO)
     {
-      char filename[250];
-      sprintf(filename,"sol2_%d.dat", myPID);
-      FILE *fp = fopen(filename,"w");
-      for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e\n",i,rhs_pardiso[i],sol_pardiso[i]);
-      fclose(fp);;
+      // setup sol and rhs
+      Kokkos::resize(X_view, n1+n1, numRhs);
+      Kokkos::resize(B_view, n1+n2, numRhs);
+      for (int j=0; j<numRhs; j++) {
+        //for (int i=0; i<n1; i++) X_view(i,j) = sol_pardiso[i+j*n1];
+        for (int i=0; i<n1; i++) B_view(i,j) = sol_pardiso[i+j*n1];
+        for (int i=0; i<n2; i++) B_view(i+n1,j) = rhs_sc[0][i+j*n2];
+      }
+      amesos2_solver->setB(Teuchos::rcpFromRef(B_view));
+      amesos2_solver->setX(Teuchos::rcpFromRef(X_view));
+
+      // do backward solve
+      {
+        Teuchos::ParameterList amesos2Params;
+        amesos2Params.setName("Amesos2");
+        Teuchos::ParameterList& shylubasker_params = amesos2Params.sublist("ShyLUBasker");
+        shylubasker_params.set("OnlyForwardSolve", false);
+        shylubasker_params.set("OnlyBackwardSolve", true);
+        amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
+      }
+      amesos2_solver->solve();
+
+      // copy back interior solution
+      for (size_t i=0; i<rowsISub.size(); i++) {
+        rhsI[i] = X_view(rowsISub[i], 0);
+      }
     }
-#endif
+#else
     // * update rhs for the interior solve, b1 -= G*x2
     int n1 = rowsISub.size(); // interior
     int n2 = rowsBSub.size(); // boundary
@@ -3057,6 +3192,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
     for (size_t i=0; i<rowsISub.size(); i++) {
       rhsI[i] = sol_pardiso[i];
     }
+#endif
   }
   putSubSol(sol);
 #ifdef MATRIX_OUT
