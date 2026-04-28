@@ -121,7 +121,11 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
     std::vector<int> rowBegin(rowptr_view_.data(), rowptr_view_.data()+(numRows_+1));
     std::vector<int> columns (colind_view_.data(), colind_view_.data()+(nnz));
     info = solver->initialize(rowBegin, columns, startGID_, numProcSolver_);
-  } catch (...) {
+  } catch (const std::exception& e) {
+    if (msg_level_ > 0 &&  this->root_ ) {
+      std::cout << "\n == D3S symbolic threw exception ==\n"
+                << e.what() << std::endl;
+    }
     info = -1;
   }
 
@@ -153,7 +157,11 @@ D3S<Matrix,Vector>::numericFactorization_impl()
     int nnz = nzvals_view_.extent(0);
     std::vector<d3s_dtype> values(nzvals_view_.data(), nzvals_view_.data()+(nnz));
     info = function_map::factorize(solver, values);
-  } catch (...) {
+  } catch (const std::exception& e) {
+    if (msg_level_ > 0 &&  this->root_ ) {
+      std::cout << "\n == D3S numeric threw exception ==\n"
+                << e.what() << std::endl;
+    }
     info = -1;
   }
 
@@ -209,7 +217,11 @@ D3S<Matrix,Vector>::solve_impl(
       //TODO
       for(int i=0; i<numRows_; i++) xvals_[i + j*ld_rhs] = sol[i];
     }
-  } catch (...) {
+  } catch (const std::exception& e) {
+    if (msg_level_ > 0 &&  this->root_ ) {
+      std::cout << "\n == D3S solve threw exception ==\n"
+                << e.what() << std::endl;
+    }
     ierr = -1;
   }
 
