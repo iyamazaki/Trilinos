@@ -421,6 +421,15 @@ D3S<Matrix,Vector>::loadA_impl(EPhase current_phase)
   return true;
 }
 
+template <class Matrix, class Vector>
+void
+D3S<Matrix,Vector>::describe_impl(Teuchos::FancyOStream &out,
+                                  const Teuchos::EVerbosityLevel verbLevel) const
+{
+  out << " D3S current parameters:" << std::endl;
+  out << std::endl;
+}
+
 
 template<class Matrix, class Vector>
 const char* D3S<Matrix,Vector>::name = "D3S";
