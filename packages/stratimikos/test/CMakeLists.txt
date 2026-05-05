@@ -263,6 +263,7 @@ IF (${PROJECT_NAME}_ENABLE_Tpetra AND ${PACKAGE_NAME}_ENABLE_ThyraTpetraAdapters
       stratimikos_BelosPrec_ParameterList.xml
       stratimikos_HalfBelosPrec_ParameterList.xml
       stratimikos_GMRES_IR_ParameterList.xml
+      stratimikos_GMRES_BTDS_ParameterList.xml
     EXEDEPS test_tpetra_belos
   )
 
@@ -276,12 +277,40 @@ IF (${PACKAGE_NAME}_ENABLE_Ifpack2 AND ${PACKAGE_NAME}_ENABLE_ThyraTpetraAdapter
 
   TRIBITS_ADD_EXECUTABLE(
     GaleriXpetraDriver
-    SOURCES
-    galeri_xpetra_driver.cpp
+    SOURCES galeri_xpetra_driver.cpp
     COMM serial mpi
     )
 
+  TRIBITS_ADD_EXECUTABLE(
+    BlockTriDiagonalSolver
+    SOURCES BlockTriDi.cpp
+    COMM serial mpi
+    )
+
+  TRIBITS_ADD_EXECUTABLE(
+    BlockTriDiagonalSolver_strat
+    SOURCES BlockTriDi_strat.cpp
+    COMM serial mpi
+    )
+
+  TRIBITS_ADD_TEST(
+    BlockTriDiagonalSolver_strat
+    NAME test_tpetra_belos_btds
+    ARGS
+      "--input-file=stratimikos_GMRES_IR_ParameterList.xml --show-timer-summary"
+    COMM serial mpi
+    NUM_MPI_PROCS 4
+    EXCLUDE_IF_NOT_TRUE ${PROJECT_NAME}_ENABLE_FLOAT
+    )
+
   IF (Tpetra_INST_DOUBLE)
+    TRIBITS_ADD_TEST(
+      BlockTriDiagonalSolver
+      NAME BlockTriDiLargeBlock
+      ARGS "--matrixType=Laplace3D --blockSize=32 --nx=20 --ny=20 --nz=20"
+      COMM serial mpi
+      NUM_MPI_PROCS 4
+    )
 
     TRIBITS_ADD_TEST(
       GaleriXpetraDriver
