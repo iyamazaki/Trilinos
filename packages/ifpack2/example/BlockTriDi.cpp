@@ -300,9 +300,12 @@ Teuchos::RCP<Tpetra::BlockCrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>> 
 #endif  // HAVE_IFPACK2_XPETRA
 
 template <class SC, class LO, class GO, class NO>
-void solverWarmup(Teuchos::RCP<const Teuchos::Comm<int>>& comm, Teuchos::RCP<Tpetra::RowMatrix<>> Ablock, const Teuchos::Array<Teuchos::Array<LO>>& parts, int sublinesPerLineSchur, bool overlapCommAndComp, int nvecs) {
-  using row_matrix_type = Tpetra::RowMatrix<>;
-  using MV              = Tpetra::MultiVector<>;
+void solverWarmup(Teuchos::RCP<const Teuchos::Comm<int>>& comm,
+                  Teuchos::RCP<Tpetra::RowMatrix<SC, LO, GO, NO>> Ablock,
+                  const Teuchos::Array<Teuchos::Array<LO>>& parts,
+                  int sublinesPerLineSchur, bool overlapCommAndComp, int nvecs) {
+  using row_matrix_type = Tpetra::RowMatrix<SC, LO, GO, NO>;
+  using MV              = Tpetra::MultiVector<SC, LO, GO, NO>;
   using BTDC            = Ifpack2::BlockTriDiContainer<row_matrix_type>;
 
   // Just need to warmup correct codepath (single or multi vector)
@@ -339,16 +342,19 @@ int main(int argc, char* argv[]) {
   using Teuchos::rcp;
   using Teuchos::StackedTimer;
   using Teuchos::Time;
-  typedef Tpetra::CrsMatrix<> crs_matrix_type;
-  typedef Tpetra::Map<> map_type;
-  typedef Tpetra::MultiVector<> MV;
-  typedef Tpetra::RowMatrix<> row_matrix_type;
+  typedef Tpetra::MultiVector<> MV_d;
 
-  using SC = typename MV::scalar_type;
-  using LO = typename MV::local_ordinal_type;
-  using GO = typename MV::global_ordinal_type;
-  using NO = typename MV::node_type;
+  //using SC = typename MV_d::scalar_type;
+  using SC = float;
+  using LO = typename MV_d::local_ordinal_type;
+  using GO = typename MV_d::global_ordinal_type;
+  using NO = typename MV_d::node_type;
   using MT = Teuchos::ScalarTraits<SC>::magnitudeType;
+
+  typedef Tpetra::Map<> map_type;
+  typedef Tpetra::MultiVector<SC, LO, GO, NO> MV;
+  typedef Tpetra::CrsMatrix<SC, LO, GO, NO> crs_matrix_type;
+  typedef Tpetra::RowMatrix<SC, LO, GO, NO> row_matrix_type;
 
   typedef Tpetra::Vector<LO, LO, GO, NO> IV;
   typedef Tpetra::MatrixMarket::Reader<crs_matrix_type> reader_type;
@@ -359,6 +365,7 @@ int main(int argc, char* argv[]) {
 
   RCP<const Comm<int>> comm = Tpetra::getDefaultComm();
   bool rank0                = comm->getRank() == 0;
+  LO   nranks               = comm->getSize();
 
   // Get command-line arguments.
   CmdLineArgs args;
@@ -697,7 +704,26 @@ int main(int argc, char* argv[]) {
       std::cout << "Solver run for " << nits << " iterations (asked for " << args.numIters << ") with residual reduction " << normF / norm0 << std::endl;
       std::cout << "  Norm0 = " << norm0 << " NormF = " << normF << std::endl;
     }
-
+    {
+      const size_t numVectors = B->getNumVectors();
+      const SC one = Teuchos::ScalarTraits<SC>::one ();
+      RCP<MV> R = rcp(new MV(Ablock->getRangeMap(), numVectors));
+      Ablock->apply(*X, *R);
+      R->update(one, *B, -one);
+      std::cout << B->description() << std::endl;
+      for (size_t j = 0; j < numVectors; ++j) {
+        auto Xj = X->getVector(j);
+        auto Rj = R->getVector(j);
+        auto Bj = B->getVector(j);
+        auto r_norm = Rj->norm2();
+        auto b_norm = Bj->norm2();
+        auto x_norm = Xj->norm2();
+        if (rank0) {
+          std::cout << "Relative Residual norm = " << r_norm << " / " << b_norm << " = "
+                    << r_norm / b_norm << "  (xnorm = " << x_norm << ")" << std::endl;
+        }
+      }
+    }
     {
       Teuchos::TimeMonitor normTimeMon(*normTime);
       X->norm2(normx);
@@ -717,6 +743,35 @@ int main(int argc, char* argv[]) {
       }
       std::cout << std::endl;
     }
+    {
+      SC x_norm (0.0);
+      auto Xj = X->getVector(0);
+      x_norm = Xj->norm2();
+      {
+        Teuchos::RCP< Teuchos::Time > Ifpack2_BlockTriDi = Teuchos::TimeMonitor::getNewCounter ("Time to Tpetra::norm2");
+        Teuchos::TimeMonitor equilTimer(*Ifpack2_BlockTriDi);
+        for (int iter = 0; iter < args.numIters; iter++) {
+          x_norm = Xj->norm2();
+        }
+      }
+      if (rank0) std::cout << std::endl << " * x_norm = " << x_norm << std::endl;
+    }
+#if 0
+    if(nranks == 1) {
+      typedef Kokkos::ArithTraits<SC> STS;
+      SC x_norm (0.0);
+      auto Xj = Kokkos::subview(X->getLocalViewDevice(Tpetra::Access::ReadOnly),
+                                Kokkos::ALL(), 0);
+      {
+        Teuchos::RCP< Teuchos::Time > Ifpack2_BlockTriDi = Teuchos::TimeMonitor::getNewCounter ("Time to Kokkos::dot");
+        Teuchos::TimeMonitor equilTimer(*Ifpack2_BlockTriDi);
+        for (int iter = 0; iter < args.numIters; iter++) {
+          x_norm = KokkosBlas::dot(Xj, Xj);
+        }
+      }
+      if (rank0) std::cout << " * x_norm = " << std::sqrt(STS::abs(x_norm)) << std::endl;
+    }
+#endif
   }
 
   // Report timings.
