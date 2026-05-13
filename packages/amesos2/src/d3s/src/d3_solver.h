@@ -489,8 +489,7 @@ private:
   Teuchos::RCP<MV> X;
   Teuchos::RCP<MV> B;
 
-#define D3S_USE_KOKKOS_BACKEND
-#ifdef D3S_USE_KOKKOS_BACKEND
+  // Kokkos backend
   using execution_space = typename NO::execution_space;
   using memory_space = typename NO::memory_space;
   using device_t = Kokkos::Device<execution_space, memory_space>;
@@ -498,11 +497,6 @@ private:
   using crsmat_t = KokkosSparse::CrsMatrix<double, int, device_t>;
   using mv_view_t = Kokkos::View<double**, Kokkos::LayoutLeft, device_t>;
   Teuchos::RCP<Amesos2::Solver<crsmat_t,mv_view_t>> amesos2_solver;
-#else
-  using crsmat_t = typename MAT::local_matrix_device_type;
-  using mv_view_t = typename MV::host_view_type::non_const_type;
-  Teuchos::RCP<Amesos2::Solver<MAT,MV>> amesos2_solver;
-#endif
   using graph_t = typename crsmat_t::StaticCrsGraphType;
   using rowmap_view_t = typename graph_t::row_map_type::non_const_type;
   using colind_view_t = typename graph_t::entries_type::non_const_type;
