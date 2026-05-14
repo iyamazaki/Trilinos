@@ -2150,7 +2150,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
             Teuchos::ParameterList& shylubasker_params = amesos2Params.sublist("ShyLUBasker");
 
             // partial-factorization
-            shylubasker_params.set("PartialFacto", 2);
+            shylubasker_params.set("GetDenseSchur", 2);
             // schur_part
             //  = row ids of local schur complement
             Teuchos::Array<int> schurPart(n, 0);
