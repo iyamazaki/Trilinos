@@ -307,8 +307,8 @@ int main(int argc, char* argv[]) {
   using Teuchos::Time;
   typedef Tpetra::MultiVector<> MV_d;
 
-  //using SC = typename MV_d::scalar_type;
-  using SC = float;
+  using SC = typename MV_d::scalar_type;
+  //using SC = float;
   using LO = typename MV_d::local_ordinal_type;
   using GO = typename MV_d::global_ordinal_type;
   using NO = typename MV_d::node_type;
@@ -701,6 +701,7 @@ int main(int argc, char* argv[]) {
       }
       if (rank0) std::cout << std::endl << " * x_norm = " << x_norm << std::endl;
     }
+#if 0
     {
       typedef Kokkos::ArithTraits<SC> STS;
       SC x_norm (0.0);
@@ -715,6 +716,7 @@ int main(int argc, char* argv[]) {
       }
       if (rank0) std::cout << " * x_norm = " << std::sqrt(STS::abs(x_norm)) << std::endl;
     }
+#endif
   }
 
   // Report timings.

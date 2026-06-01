@@ -318,8 +318,13 @@ int main(int argc, char* argv[]) {
   using Teuchos::Time;
   typedef Tpetra::MultiVector<> MV_d;
 
-  //using SC = typename MV_d::scalar_type;
-  using SC = float;
+#if 0
+  using SC = double;
+  using SC_half = float;
+#else
+  using SC = double;
+  using SC_half = double;
+#endif
   using LO = typename MV_d::local_ordinal_type;
   using GO = typename MV_d::global_ordinal_type;
   using NO = typename MV_d::node_type;
@@ -327,12 +332,13 @@ int main(int argc, char* argv[]) {
 
   typedef Tpetra::Map<> map_type;
   typedef Tpetra::MultiVector<SC, LO, GO, NO> MV;
-  typedef Tpetra::CrsMatrix<SC, LO, GO, NO> crs_matrix_type;
-  typedef Tpetra::RowMatrix<SC, LO, GO, NO> row_matrix_type;
 
   typedef Tpetra::Vector<LO, LO, GO, NO> IV;
+  typedef Tpetra::CrsMatrix<SC, LO, GO, NO> crs_matrix_type;
   typedef Tpetra::MatrixMarket::Reader<crs_matrix_type> reader_type;
   typedef Tpetra::MatrixMarket::Reader<Tpetra::CrsMatrix<LO, LO, GO, NO> > LO_reader_type;
+
+  typedef Tpetra::RowMatrix<SC, LO, GO, NO> row_matrix_type;
   typedef Ifpack2::BlockTriDiContainer<row_matrix_type> BTDC;
 
   Tpetra::ScopeGuard tpetraScope(&argc, &argv);
@@ -406,10 +412,10 @@ int main(int argc, char* argv[]) {
   if (args.matrixFilename == "") {
     RCP<Time> matrixCreationTime = Teuchos::TimeMonitor::getNewTimer("Create inline matrix");
     Teuchos::TimeMonitor matrixCreationTimeMon(*matrixCreationTime);
-    if (args.usePointMatrix) {
-      std::string msg = "usePointMatrix with inline matrix is not yet implemented";
-      throw std::runtime_error(msg);
-    }
+    //if (args.usePointMatrix) {
+    //  std::string msg = "usePointMatrix with inline matrix is not yet implemented";
+    //  throw std::runtime_error(msg);
+    //}
     // matrix
     Teuchos::ParameterList plist;
     if (args.matrixType == "") {
@@ -570,7 +576,7 @@ int main(int argc, char* argv[]) {
     size_t numDomains = Ablock->getDomainMap()->getGlobalNumElements();
     size_t numRows    = Ablock->getRowMap()->getGlobalNumElements();
     std::cout << "Block Matrix has " << numDomains << " domains and " << numRows
-              << " rows with an implied block size of " << ((double)numDomains / (double)numRows) << std::endl;
+              << " rows with an implied block size of " << ((double)numDomains / (double)numRows) << std::endl << std::endl;
   }
 
   // Initial Guess
@@ -624,11 +630,11 @@ int main(int argc, char* argv[]) {
     Teuchos::TimeMonitor::setStackedTimer(stackedTimer);
   }
 
+#if 0
   // Create Ifpack2 preconditioner.
-  if (rank0) std::cout << "Creating preconditioner..." << std::endl;
   RCP<BTDC> precond;
-
-  {
+  if (false) {
+    if (rank0) std::cout << "Creating preconditioner..." << std::endl;
     Teuchos::TimeMonitor precSetupTimeMon(*precSetupTime);
     if (args.usePointMatrix)
       precond = rcp(new BTDC(A, parts, args.sublinesPerLineSchur, args.overlapCommAndComp, false, args.blockSize));
@@ -638,41 +644,71 @@ int main(int argc, char* argv[]) {
     if (rank0) std::cout << "Initializing preconditioner..." << std::endl;
     precond->initialize();
     Kokkos::DefaultExecutionSpace().fence();
+
+    // Solver Parameters
+    auto ap                 = precond->createDefaultApplyParameters();
+    ap.zeroStartingSolution = true;
+    ap.tolerance            = args.tol;
+    ap.maxNumSweeps         = args.numIters;
+    ap.checkToleranceEvery  = 10;
   }
-
-  // Solver Parameters
-  auto ap                 = precond->createDefaultApplyParameters();
-  ap.zeroStartingSolution = true;
-  ap.tolerance            = args.tol;
-  ap.maxNumSweeps         = args.numIters;
-  ap.checkToleranceEvery  = 10;
-
+#endif
   // Wrap matrix and vectors into Thyra
-  RCP<const Thyra::LinearOpBase<SC> >
-    thyra_A = Thyra::createConstLinearOp(Teuchos::rcp_dynamic_cast<const Tpetra::Operator<SC,LO,GO,NO>>(Ablock));  
+  comm->barrier(); if(rank0) std::cout << "\n Wrapping matrix to Thyra \n"; comm->barrier();
+  comm->barrier(); if(rank0) std::cout << "\n Wrapping vectors to Thyra \n"; comm->barrier();
   RCP<const Thyra::MultiVectorBase<SC> > thyra_B = Thyra::createMultiVector(B);
   RCP<      Thyra::MultiVectorBase<SC> > thyra_X = Thyra::createMultiVector(X);
 
   // Setup Stratimikos factory of solver factory
+  comm->barrier(); if(rank0) std::cout << "\n Enabling Prec \n"; comm->barrier();
   Stratimikos::LinearSolverBuilder<SC> linearSolverBuilder;
+  RCP<const Thyra::LinearOpBase<SC> > thyra_A;
   // Register Belos+Tpetra as preconditioner:
-  Stratimikos::enableBelosPrecTpetra<Tpetra::CrsMatrix<SC,LO,GO,NO>>(linearSolverBuilder);
-  {
+  if (args.usePointMatrix) {
+    using BCRS = Tpetra::BlockCrsMatrix<SC, LO, GO, NO>;
+    auto Abcrs = Teuchos::rcp_dynamic_cast<const Tpetra::BlockCrsMatrix<SC,LO,GO,NO>>(Ablock);
+    A = Tpetra::convertToCrsMatrix<SC, LO, GO, NO>(*Abcrs);
+    size_t numGlobalRows = A->getRowMap()->getGlobalNumElements();
+    size_t numRows       = A->getRowMap()->getLocalNumElements();
+    if (rank0) {
+      std::cout << std::endl << " > Converting block Matrix to point-wise CrsMatrix" << std::endl;
+      std::cout << " CrsMatrix has " << numGlobalRows << " global elements and " << numRows
+                << " local rows" << std::endl << std::endl;
+    }
+    thyra_A = Thyra::createConstLinearOp(Teuchos::rcp_dynamic_cast<const Tpetra::Operator<SC,LO,GO,NO>>(A));  
+    Stratimikos::enableBelosPrecTpetra<Tpetra::CrsMatrix<SC,LO,GO,NO>>(linearSolverBuilder);
+
     RCP<ParameterList> paramList = rcp(new Teuchos::ParameterList());
     if(rank0) std::cout << "\nReading parameters from XML file \""<<args.paramFilename<<"\" ...\n";
     Teuchos::updateParametersFromXmlFile(args.paramFilename, Teuchos::inOutArg(*paramList));
-    //if(extraParams.length()) {
-    //  if(rank0) std::cout << "\nAppending extra parameters from the XML string \""<<extraParams<<"\" ...\n";
-    //  Teuchos::updateParametersFromXmlString(extraParams, Teuchos::inOutArg(*paramList));
-    //}
     if(rank0) {
       std::cout << "\nEchoing input parameters ...\n";
       RCP<Teuchos::FancyOStream> fancy = Teuchos::fancyOStream(Teuchos::rcpFromRef(std::cout));
       paramList->print(*fancy,1,true,false);
     }
-    RCP<ParameterList>
-      solverBuilderSL  = sublist(paramList,"Linear Solver Builder",true);
+    //
+    RCP<ParameterList> solverBuilderSL = sublist(paramList,"Linear Solver Builder",true);
+    RCP<ParameterList> precondParams = sublist(solverBuilderSL,"Preconditioner Types",true);
+    RCP<ParameterList> ifpack2Params = sublist(sublist(precondParams,"Ifpack2",true), "Ifpack2 Settings", true);
+    int block_size = ifpack2Params->get<int>("partitioner: block size");
+    int num_blocks = numRows / block_size;
+    int row = 0;
+    printf( " > # of blocks = %d with block_size = %d\n",num_blocks,block_size );
+    Teuchos::Array<Teuchos::ArrayRCP<LO>> parts;
+    parts.resize(num_blocks);
+    for (LO k = 0; k < num_blocks; k++) {
+      auto& part = parts[k];
+      part.resize(block_size);
+      for (LO i = 0; i < block_size; i++) {
+        part[i] = row;
+	row ++;
+      }
+    }
+    ifpack2Params->set("partitioner: parts", parts);
     linearSolverBuilder.setParameterList(solverBuilderSL);
+  // }else {
+  //  thyra_A = Thyra::createConstLinearOp(Teuchos::rcp_dynamic_cast<const Tpetra::Operator<SC,LO,GO,NO>>(Ablock));  
+  //  Stratimikos::enableBelosPrecTpetra<Tpetra::BlockCrsMatrix<SC,LO,GO,NO>>(linearSolverBuilder);
   }
   RCP<Thyra::LinearOpWithSolveFactoryBase<SC> > lowsFactory = createLinearSolveStrategy(linearSolverBuilder);
   RCP<Thyra::LinearOpWithSolveBase<SC> > lowsA = Thyra::linearOpWithSolve<SC>(*lowsFactory, thyra_A);
@@ -684,6 +720,7 @@ int main(int argc, char* argv[]) {
        Thyra::SolveStatus<SC> status;
        status = Thyra::solve<SC>(*lowsA, Thyra::NOTRANS, *thyra_B, thyra_X.ptr());
     } else {
+#if 0
       if (rank0) std::cout << "Computing preconditioner..." << std::endl;
       {
         Teuchos::TimeMonitor precComputeTimeMon(*precComputeTime);
@@ -706,12 +743,19 @@ int main(int argc, char* argv[]) {
         std::cout << "Solver run for " << nits << " iterations (asked for " << args.numIters << ") with residual reduction " << normF / norm0 << std::endl;
         std::cout << "  Norm0 = " << norm0 << " NormF = " << normF << std::endl;
       }
+#endif
     }
-    {
+    if (args.usePointMatrix) {
       const size_t numVectors = B->getNumVectors();
       const SC one = Teuchos::ScalarTraits<SC>::one ();
-      RCP<MV> R = rcp(new MV(Ablock->getRangeMap(), numVectors));
-      Ablock->apply(*X, *R);
+      RCP<MV> R;
+      if (args.usePointMatrix) {
+        R = rcp(new MV(A->getRangeMap(), numVectors));
+        A->apply(*X, *R);
+      } else {
+        R = rcp(new MV(Ablock->getRangeMap(), numVectors));
+        Ablock->apply(*X, *R);
+      }
       R->update(one, *B, -one);
       std::cout << B->description() << std::endl;
       for (size_t j = 0; j < numVectors; ++j) {
@@ -740,28 +784,30 @@ int main(int argc, char* argv[]) {
       SC x_norm (0.0);
       auto Xj = X->getVector(0);
       {
-        Teuchos::RCP< Teuchos::Time > Ifpack2_BlockTriDi = Teuchos::TimeMonitor::getNewCounter ("Time to Tpetra::norm2");
-        Teuchos::TimeMonitor equilTimer(*Ifpack2_BlockTriDi);
+        Teuchos::RCP< Teuchos::Time > norm2Timer = Teuchos::TimeMonitor::getNewCounter ("Time to Tpetra::norm2");
+        Teuchos::TimeMonitor equilTimer(*norm2Timer);
         for (int iter = 0; iter < args.numIters; iter++) {
           x_norm = Xj->norm2();
         }
       }
       if (rank0) std::cout << std::endl << " * x_norm = " << x_norm << std::endl;
     }
+#if 0
     {
       typedef Kokkos::ArithTraits<SC> STS;
       SC x_norm (0.0);
       auto Xj = Kokkos::subview(X->getLocalViewDevice(Tpetra::Access::ReadOnly),
                                 Kokkos::ALL(), 0);
       {
-        Teuchos::RCP< Teuchos::Time > Ifpack2_BlockTriDi = Teuchos::TimeMonitor::getNewCounter ("Time to Kokkos::dot");
-        Teuchos::TimeMonitor equilTimer(*Ifpack2_BlockTriDi);
+        Teuchos::RCP< Teuchos::Time > dotTimer = Teuchos::TimeMonitor::getNewCounter ("Time to Kokkos::dot");
+        Teuchos::TimeMonitor equilTimer(*dotTimer);
         for (int iter = 0; iter < args.numIters; iter++) {
           x_norm = KokkosBlas::dot(Xj, Xj);
         }
       }
       if (rank0) std::cout << " * x_norm = " << std::sqrt(STS::abs(x_norm)) << std::endl;
     }
+#endif
   }
 
   // Report timings.
