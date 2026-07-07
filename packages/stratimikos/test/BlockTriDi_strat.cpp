@@ -318,13 +318,8 @@ int main(int argc, char* argv[]) {
   using Teuchos::Time;
   typedef Tpetra::MultiVector<> MV_d;
 
-#if 0
-  using SC = double;
-  using SC_half = float;
-#else
-  using SC = double;
-  using SC_half = double;
-#endif
+  //using SC = double;
+  using SC = float;
   using LO = typename MV_d::local_ordinal_type;
   using GO = typename MV_d::global_ordinal_type;
   using NO = typename MV_d::node_type;
@@ -462,7 +457,20 @@ int main(int argc, char* argv[]) {
 
     // rhs
     B = rcp(new MV(Ablock->getRangeMap(), 1));
-    B->putScalar(Teuchos::ScalarTraits<SC>::one());
+    if (true) {
+      // B = 1
+      B->putScalar(Teuchos::ScalarTraits<SC>::one());
+    } else {
+      // B = A*1
+      X = rcp(new MV(Ablock->getRangeMap(), 1));
+      X->putScalar(Teuchos::ScalarTraits<SC>::one());
+      Ablock->apply(*X, *B);
+    }
+    /*{
+      Teuchos::RCP<Teuchos::FancyOStream> fancy = Teuchos::fancyOStream(Teuchos::rcpFromRef(std::cout));
+      Ablock->describe(*fancy, Teuchos::VERB_EXTREME);
+      B->describe(*fancy, Teuchos::VERB_EXTREME);
+    }*/
 
     // line info (sublinesPerLine lines per proc along direction x)
     if (args.sublinesPerLine < 1 && args.sublinesPerLine != -1) {
@@ -475,6 +483,7 @@ int main(int argc, char* argv[]) {
     // This number is called line_per_x_fiber where a fiber refers to an initial
     // x line in the mesh before dividing it in sublines.
     int line_per_x_fiber = std::ceil(args.nx / line_length);
+    printf( " subLinesPerLine = %d, line_length = %d, line_per_x_fier = %d\n",args.sublinesPerLine, line_length, line_per_x_fiber );
     line_info            = rcp(new IV(Ablock->getRowMap()));
     auto line_ids        = line_info->get1dViewNonConst();
     std::cout << "line_ids.size()=" << line_ids.size()
@@ -594,7 +603,7 @@ int main(int argc, char* argv[]) {
 
   // Convert line_info vector to parts arrays
   // NOTE: Both of these needs to be nodes-leve guys, not parts-level.
-  Teuchos::Array<Teuchos::Array<LO> > parts;
+  Teuchos::Array<Teuchos::Array<LO> > parts_;
   {
     if (rank0) std::cout << "Converting line info to parts..." << std::endl;
     // Number of lines will vary per proc, so we need to count these
@@ -605,14 +614,15 @@ int main(int argc, char* argv[]) {
 
     LO num_local_lines = max_line_id + 1;
 
+    if (rank0) std::cout << " > num_local_lines = " << num_local_lines << std::endl;
     for (LO i = 0; i < num_local_lines; i++)
-      parts.push_back(Teuchos::Array<LO>());
+      parts_.push_back(Teuchos::Array<LO>());
 
     // Assume contiguous blocks here
     for (LO i = 0; i < (LO)line_ids.size(); i++) {
       LO block_lid = i;
       LO block_num = line_ids[i];
-      parts[block_num].push_back(block_lid);
+      parts_[block_num].push_back(block_lid);
     }
     //    std::cout<<"On "<<line_ids.size()<<" local DOFs, detected "<<num_local_lines<<" lines"<<std::endl;
   }
@@ -637,9 +647,9 @@ int main(int argc, char* argv[]) {
     if (rank0) std::cout << "Creating preconditioner..." << std::endl;
     Teuchos::TimeMonitor precSetupTimeMon(*precSetupTime);
     if (args.usePointMatrix)
-      precond = rcp(new BTDC(A, parts, args.sublinesPerLineSchur, args.overlapCommAndComp, false, args.blockSize));
+      precond = rcp(new BTDC(A, parts_, args.sublinesPerLineSchur, args.overlapCommAndComp, false, args.blockSize));
     else
-      precond = rcp(new BTDC(Ablock, parts, args.sublinesPerLineSchur, args.overlapCommAndComp));
+      precond = rcp(new BTDC(Ablock, parts_, args.sublinesPerLineSchur, args.overlapCommAndComp));
 
     if (rank0) std::cout << "Initializing preconditioner..." << std::endl;
     precond->initialize();
@@ -654,7 +664,7 @@ int main(int argc, char* argv[]) {
   }
 #endif
   // Wrap matrix and vectors into Thyra
-  comm->barrier(); if(rank0) std::cout << "\n Wrapping matrix to Thyra \n"; comm->barrier();
+  comm->barrier(); if(rank0) std::cout << "\n Wrapping matrix to Thyra"; comm->barrier();
   comm->barrier(); if(rank0) std::cout << "\n Wrapping vectors to Thyra \n"; comm->barrier();
   RCP<const Thyra::MultiVectorBase<SC> > thyra_B = Thyra::createMultiVector(B);
   RCP<      Thyra::MultiVectorBase<SC> > thyra_X = Thyra::createMultiVector(X);
@@ -693,15 +703,27 @@ int main(int argc, char* argv[]) {
     int block_size = ifpack2Params->get<int>("partitioner: block size");
     int num_blocks = numRows / block_size;
     int row = 0;
-    printf( " > # of blocks = %d with block_size = %d\n",num_blocks,block_size );
-    Teuchos::Array<Teuchos::ArrayRCP<LO>> parts;
-    parts.resize(num_blocks);
-    for (LO k = 0; k < num_blocks; k++) {
-      auto& part = parts[k];
-      part.resize(block_size);
-      for (LO i = 0; i < block_size; i++) {
-        part[i] = row;
-	row ++;
+
+    bool jacobi = false;
+    Teuchos::Array<Teuchos::ArrayRCP<LO> > parts;
+    if (!jacobi) {
+      parts.resize(parts_.size());
+      for (LO k = 0; k < (LO)parts_.size(); k++) {
+        auto& part = parts[k];
+        part.resize(parts_[k].size());
+        for (LO i = 0; i < parts_[k].size(); i++) {
+          part[i] = parts_[k][i];
+        }
+      }
+    } else {
+      parts.resize(num_blocks);
+      for (LO k = 0; k < num_blocks; k++) {
+        auto& part = parts[k];
+        part.resize(block_size);
+        for (LO i = 0; i < block_size; i++) {
+          part[i] = row;
+          row ++;
+        }
       }
     }
     ifpack2Params->set("partitioner: parts", parts);

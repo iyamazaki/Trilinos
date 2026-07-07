@@ -346,6 +346,7 @@ int main(int argc, char* argv[]) {
 
   //using SC = typename MV_d::scalar_type;
   using SC = float;
+  //using SC = double;
   using LO = typename MV_d::local_ordinal_type;
   using GO = typename MV_d::global_ordinal_type;
   using NO = typename MV_d::node_type;
@@ -481,7 +482,20 @@ int main(int argc, char* argv[]) {
 
     // rhs
     B = rcp(new MV(Ablock->getRangeMap(), args.numVecs));
-    B->putScalar(Teuchos::ScalarTraits<SC>::one());
+    if (true) {
+      // B = 1
+      B->putScalar(Teuchos::ScalarTraits<SC>::one());
+    } else {
+      // B = A*1
+      X = rcp(new MV(Ablock->getRangeMap(), args.numVecs));
+      X->putScalar(Teuchos::ScalarTraits<SC>::one());
+      Ablock->apply(*X, *B);
+    }
+    /*{
+      Teuchos::RCP<Teuchos::FancyOStream> fancy = Teuchos::fancyOStream(Teuchos::rcpFromRef(std::cout));
+      Ablock->describe(*fancy, Teuchos::VERB_EXTREME);
+      B->describe(*fancy, Teuchos::VERB_EXTREME);
+    }*/
 
     // line info (sublinesPerLine lines per proc along direction x)
     if (args.sublinesPerLine < 1 && args.sublinesPerLine != -1) {
