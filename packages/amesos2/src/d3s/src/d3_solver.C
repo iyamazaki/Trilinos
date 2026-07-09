@@ -2129,8 +2129,8 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
         size_t n = rowBeginSub.size()-1;
         int n2 = rowsBSub.size();
         Kokkos::resize(S_view, n2,n2);
-        if (solvername == "ShyLUBasker") {
-          // === ShyLU-Basker ===
+        if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL") {
+          // === Amesos2 for ShyLU-Basker/PardisoMKL as local solver ===
           // Create KK CrsMatrix
           Kokkos::resize(rowmap_view_D, rowBeginSub.size());
           Kokkos::resize(colind_view_D, columnsSub.size());
@@ -2141,33 +2141,42 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
           crsmat_t crsmat("CrsMatrix", n, values_view_D, static_graph);
 
           // Create amesos2 solver
-          amesos2_solver = Amesos2::create<crsmat_t, mv_view_t>("ShyLUBasker", Teuchos::rcpFromRef(crsmat));
+          amesos2_solver = Amesos2::create<crsmat_t, mv_view_t>(solvername, Teuchos::rcpFromRef(crsmat));
 
           // Set amesos2 parameters
           {
             Teuchos::ParameterList amesos2Params;
             amesos2Params.setName("Amesos2");
-            Teuchos::ParameterList& shylubasker_params = amesos2Params.sublist("ShyLUBasker");
+            Teuchos::ParameterList& solver_params = amesos2Params.sublist(solvername);
 
             // partial-factorization
-            shylubasker_params.set("PartialFacto", 2);
+            solver_params.set("PartialFacto", 2);
             // schur_part
             //  = row ids of local schur complement
             Teuchos::Array<int> schurPart(n, 0);
             for (int i=0; i<n2; i++) schurPart[rowsBSub[i]] = 1;
-            shylubasker_params.set("SchurPart", (const int*)(schurPart.data()));
+            solver_params.set("SchurPart", (const int*)(schurPart.data()));
             // schur_out
             //  = storage for output Schur
-            shylubasker_params.set("SchurOut", (double*)S_view.data());
+            solver_params.set("SchurOut", (double*)S_view.data());
             if (msg_level > 0) {
-              shylubasker_params.set("verbose", (myPID == 0));
+              solver_params.set("verbose", (myPID == 0));
             }
+            if (debug_level_interior > 0) {
+              solver_params.set("DebugLevel", (myPID == 0 ? debug_level_interior : 0));
+            }
+	    if (robust_option && solvername == "PARDISOMKL") {
+              solver_params.set("IPARM(10)", 16); // pivoting option
+              solver_params.set("IPARM(11)", 1);  // use scaling option
+              solver_params.set("IPARM(13)", 1);  // use weighted matchings
+              solver_params.set("IPARM(27)", 1);  // check the matrix (can turn off later)
+	    }
             amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
           }
           // Symbolic
           amesos2_solver->symbolicFactorization();
         } else {
-          // === Amesos2 ===
+          // === Amesos2 "default" implementation of partial factorization ===
           // mark separtor nodes
           Kokkos::resize(m_parts, n);
           Kokkos::deep_copy(m_parts, 0);
@@ -2462,18 +2471,18 @@ int D3Solver::factorize(const std::vector<double> & values_in)
     if (n > 0) {
       int n2 = rowsBSub.size();
       try {
-        if (solvername == "ShyLUBasker") {
-          // == ShyLU-Basker ==
+        if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL") {
+          // == Amesos2 for ShyLU-Basker/PardisoMKL as local solver ==
           // wrap into Kokkos::CrsMatrix
           using UnmanagedDblViewType = Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
-          UnmanagedDblViewType nz_vals (valuesSub.data(),   values_in.size());
+          UnmanagedDblViewType nz_vals (valuesSub.data(), values_in.size());
           graph_t static_graph(colind_view_D, rowmap_view_D);
           crsmat_t crsmat("CrsMatrix", n, nz_vals, static_graph);
 
           amesos2_solver->setA(Teuchos::rcpFromRef(crsmat), Amesos2::SYMBFACT);
           amesos2_solver->numericFactorization();
         } else {
-          // == Amesos2 ==
+          // === Amesos2 "default" implementation of partial factorization ===
           // [D, E; F, C]
           Kokkos::deep_copy(E_view, 0);
           #ifdef D3S_DENSE_F
@@ -2557,10 +2566,11 @@ int D3Solver::factorize(const std::vector<double> & values_in)
               fprintf(fp,"\n");
             }
             fclose(fp);
+            */
             sprintf(filename,"part%d.dat", myPID);
             fp = fopen(filename,"w");;
             for (int i=0; i<n; i++) fprintf(fp,"%d\n",m_parts(i));
-            fclose(fp);*/
+            fclose(fp);
           }
           MPI_Barrier(MPI_COMM_WORLD);
 #endif
@@ -2899,6 +2909,10 @@ int D3Solver::solve(const std::vector<double> & rhs,
       fprintf(fp,"%d %.16e\n",i,rhsI[i]);
     }
     fclose(fp);
+    sprintf(filename,"rowI_%d.dat", myPID);
+    fp = fopen(filename,"w");;
+    for (int i=0; i<rowsISub.size(); i++) fprintf(fp,"%d\n",rowsISub[i]);
+    fclose(fp);
   }
 #endif
 
@@ -2941,41 +2955,59 @@ int D3Solver::solve(const std::vector<double> & rhs,
     for (size_t i=0; i<rowsBSub.size(); i++) {
       rhs_sc[0][i] = sol_pardiso[rowsBSub[i]];
     }
-  } else if (solvername == "ShyLUBasker") {
-    // === ShyLU-Basker ===
-    // * copy vectors into views
-    // copy interior rhs vector in
-    // solve with interior
-    Kokkos::resize(X_view, n1+n2, numRhs);
-    Kokkos::resize(B_view, n1+n2, numRhs);
-    Kokkos::deep_copy(X_view, 0.0);
-    Kokkos::deep_copy(B_view, 0.0); // zero on interface
-    for (int j=0; j<numRhs; j++) {
-      for (size_t i=0; i<rowsISub.size(); i++) {
-        B_view(rowsISub[i], j) = rhsI[i];
+  } else if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL") {
+    try {
+      // === Amesos2 for ShyLU-Basker/PardisoMKL as local solver ===
+      // * copy vectors into views
+      // copy interior rhs vector in
+      // solve with interior
+      Kokkos::resize(X_view, n1+n2, numRhs);
+      Kokkos::resize(B_view, n1+n2, numRhs);
+      Kokkos::deep_copy(X_view, 0.0);
+      Kokkos::deep_copy(B_view, 0.0); // zero on interface
+      for (int j=0; j<numRhs; j++) {
+        for (size_t i=0; i<rowsISub.size(); i++) {
+          B_view(rowsISub[i], j) = rhsI[i];
+        }
       }
-    }
-    amesos2_solver->setB(Teuchos::rcpFromRef(B_view));
-    amesos2_solver->setX(Teuchos::rcpFromRef(X_view));
-    // do forward solve
-    {
-      Teuchos::ParameterList amesos2Params;
-      amesos2Params.setName("Amesos2");
-      Teuchos::ParameterList& shylubasker_params = amesos2Params.sublist("ShyLUBasker");
-      shylubasker_params.set("OnlyForwardSolve", true);
-      shylubasker_params.set("OnlyBackwardSolve", false);
-      amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
-    }
-    amesos2_solver->solve();
+      amesos2_solver->setB(Teuchos::rcpFromRef(B_view));
+      amesos2_solver->setX(Teuchos::rcpFromRef(X_view));
+      // do forward solve
+      {
+        Teuchos::ParameterList amesos2Params;
+        amesos2Params.setName("Amesos2");
+        Teuchos::ParameterList& solver_params = amesos2Params.sublist(solvername);
+        solver_params.set("OnlyForwardSolve", true);
+        solver_params.set("OnlyBackwardSolve", false);
+        amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
+      }
+#ifdef MATRIX_OUT
+      {
+        char filename[250];
+        FILE *fp;
+        sprintf(filename,"B_%d.dat", myPID);
+        fp = fopen(filename,"w");
+        for (int i=0; i<X_view.extent(0); i++) fprintf(fp,"%d %.16e %.16e\n",i,B_view(i,0),X_view(i,0));
+        fclose(fp);
+      }
+#endif
+      amesos2_solver->solve();
 
-    // copying out (TODO: fix)
-    rhs_sc[0].resize(rowsBSub.size());
-    for (int j=0; j<numRhs; j++) {
-      for (int i=0; i<n1; i++) sol_pardiso[i+j*n1] = X_view(i,j);
-      for (int i=0; i<n2; i++) rhs_sc[0][i+j*n1] = X_view(n1+i,j);
+      // copying out (TODO: fix)
+      rhs_sc[0].resize(rowsBSub.size());
+      for (int j=0; j<numRhs; j++) {
+        for (int i=0; i<n1; i++) sol_pardiso[i+j*n1] = X_view(i,j);
+        for (int i=0; i<n2; i++) rhs_sc[0][i+j*n1] = X_view(n1+i,j);
+      }
+    } catch (const std::exception& e) {
+      if (msg_level > 0) {
+        std::cout << "\n == D3S::Ameso2 forward-solve(" << myPID << " caught exception from Amesos2 ==\n"
+                  << e.what() << std::endl;
+      }
+      r_val = 1;
     }
   } else {
-    // === Amesos2 solver ===
+    // === Amesos2 "default" implementation of partial factorization ===
     // * copy vectors into views
     // copy interior rhs vector in
     for (size_t i=0; i<rowsISub.size(); i++) {
@@ -3027,10 +3059,15 @@ int D3Solver::solve(const std::vector<double> & rhs,
   }
 #ifdef MATRIX_OUT
   {
+    printf("%d: n1=%d n2=%d\n",myPID,n1,n2);
     char filename[250];
     sprintf(filename,"rhs_%d.dat", myPID);
     FILE *fp = fopen(filename,"w");
     for (int i=0; i<n2; i++) fprintf(fp,"%.16e\n",rhs_sc[0][i]);
+    fclose(fp);
+    sprintf(filename,"X_%d.dat", myPID);
+    fp = fopen(filename,"w");
+    for (int i=0; i<X_view.extent(0); i++) fprintf(fp,"%d %.16e %.16e\n",i,B_view(i,0),X_view(i,0));
     fclose(fp);
   }
 #endif
@@ -3065,15 +3102,6 @@ int D3Solver::solve(const std::vector<double> & rhs,
     timer_solve[level] += clockIt() - startTime;
     level--;
   }
-#ifdef MATRIX_OUT
-  {
-    char filename[250];
-    sprintf(filename,"sol2_%d.dat", myPID);
-    FILE *fp = fopen(filename,"w");
-    for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e %.16e\n",i,rhs_pardiso[i],sol_pardiso[i],rhs_sc[0][i]);
-    fclose(fp);;
-  }
-#endif
 
   // Finally, calculate solution in subdomain interior
   ThrowAssert(true, rowsBSub.size() == rhs_sc[0].size(), "inconsistent sizes");
@@ -3083,6 +3111,15 @@ int D3Solver::solve(const std::vector<double> & rhs,
       const int row = rowsBSub[i];
       rhs_pardiso[row] = rhs_sc[0][i];
     }
+#ifdef MATRIX_OUT
+  {
+    char filename[250];
+    sprintf(filename,"sol2_%d.dat", myPID);
+    FILE *fp = fopen(filename,"w");
+    for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e\n",i,rhs_pardiso[i],sol_pardiso[i]);
+    fclose(fp);;
+  }
+#endif
 #ifdef USE_INTEL_PARDISO
     int phase = 333; // backward solve
     pardiso_solver.solve(rhs_pardiso.data(), sol_pardiso.data(), phase);
@@ -3091,14 +3128,13 @@ int D3Solver::solve(const std::vector<double> & rhs,
     for (size_t i=0; i<rowsISub.size(); i++) {
       rhsI[i] = sol_pardiso[rowsISub[i]];
     }
-  } else if (solvername == "ShyLUBasker") {
-    // === ShyLU-Basker ===
-    {
+  } else if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL") {
+    // === Amesos2 for ShyLU-Basker/PardisoMKL as local solver ===
+    try {
       // setup sol and rhs
       Kokkos::resize(X_view, n1+n1, numRhs);
       Kokkos::resize(B_view, n1+n2, numRhs);
       for (int j=0; j<numRhs; j++) {
-        //for (int i=0; i<n1; i++) X_view(i,j) = sol_pardiso[i+j*n1];
         for (int i=0; i<n1; i++) B_view(i,j) = sol_pardiso[i+j*n1];
         for (int i=0; i<n2; i++) B_view(i+n1,j) = rhs_sc[0][i+j*n2];
       }
@@ -3109,9 +3145,9 @@ int D3Solver::solve(const std::vector<double> & rhs,
       {
         Teuchos::ParameterList amesos2Params;
         amesos2Params.setName("Amesos2");
-        Teuchos::ParameterList& shylubasker_params = amesos2Params.sublist("ShyLUBasker");
-        shylubasker_params.set("OnlyForwardSolve", false);
-        shylubasker_params.set("OnlyBackwardSolve", true);
+        Teuchos::ParameterList& solver_params = amesos2Params.sublist(solvername);
+        solver_params.set("OnlyForwardSolve", false);
+        solver_params.set("OnlyBackwardSolve", true);
         amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
       }
       amesos2_solver->solve();
@@ -3120,9 +3156,15 @@ int D3Solver::solve(const std::vector<double> & rhs,
       for (size_t i=0; i<rowsISub.size(); i++) {
         rhsI[i] = X_view(rowsISub[i], 0);
       }
+    } catch (const std::exception& e) {
+      if (msg_level > 0) {
+        std::cout << "\n == D3S::Ameso2 backward-solve(" << myPID << " caught exception from Amesos2 ==\n"
+                  << e.what() << std::endl;
+      }
+      r_val = 1;
     }
   } else {
-    // == Amesos2 ==
+    // === Amesos2 "default" implementation of partial factorization ===
     // With Amesos2, the interior part of U is I.
     // * update rhs for the interior solve, b1 -= G*x2
     int n1 = rowsISub.size(); // interior
