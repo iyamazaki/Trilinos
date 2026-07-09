@@ -103,10 +103,20 @@ int sc_pardiso::solve(double* rhs,
   m_timings[SOLVE] += clockIt() - startTime;
 //#define MATRIX_OUT
 #ifdef MATRIX_OUT
-  {
+  if (phase == 331) {
     int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
     char filename[250];
-    sprintf(filename,"RHS%d.dat", myRank);
+    sprintf(filename,"RHS%d_fwd.dat", myRank);
+    FILE *fp = fopen(filename, "w");
+    for (int i=0; i<n; i++) {
+      fprintf(fp,"%d %.16e %.16e\n",i,rhs[i],sol[i]);
+    }
+    fclose(fp);
+  }
+  if (phase == 333) {
+    int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    char filename[250];
+    sprintf(filename,"RHS%d_bwd.dat", myRank);
     FILE *fp = fopen(filename, "w");
     for (int i=0; i<n; i++) {
       fprintf(fp,"%d %.16e %.16e\n",i,rhs[i],sol[i]);
@@ -387,7 +397,6 @@ void sc_pardiso::set_parameters(const int matrix_type,
 
     if (robust) {
       m_iparam[9] = 16; // pivoting option
-      //m_iparam[9] = 8; // pivoting option
       m_iparam[10] = 1; // use scaling option
       m_iparam[12] = 1; // use weighted matchings
     }
