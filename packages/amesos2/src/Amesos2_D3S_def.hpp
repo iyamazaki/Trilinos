@@ -129,8 +129,10 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
     info = -1;
   }
 
-  /* All processes should have the same error code */
-  Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &info);
+  /* All processes should have the same error code           */
+  /* TODO: check if D3S returns same info from all processes */
+  int info_i = -std::abs(info); // making sure non-positive (error-code is negative)
+  Teuchos::reduceAll<int, int> (*(this->matrixA_->getComm()), Teuchos::REDUCE_MIN, info_i, Teuchos::outArg(info));
 
   TEUCHOS_TEST_FOR_EXCEPTION( info != 0, std::runtime_error,
       "D3S symbolic factorization failed(info="+std::to_string(info)+")");
@@ -165,8 +167,10 @@ D3S<Matrix,Vector>::numericFactorization_impl()
     info = -1;
   }
 
-  /* All processes should have the same error code */
-  Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &info);
+  /* All processes should have the same error code           */
+  /* TODO: check if D3S returns same info from all processes */
+  int info_i = -std::abs(info); // making sure non-positive (error-code is negative)
+  Teuchos::reduceAll<int, int> (*(this->matrixA_->getComm()), Teuchos::REDUCE_MIN, info_i, Teuchos::outArg(info));
 
   TEUCHOS_TEST_FOR_EXCEPTION(info != 0, std::runtime_error,
       "D3S numeric factorization failed(info="+std::to_string(info)+")");
@@ -225,8 +229,10 @@ D3S<Matrix,Vector>::solve_impl(
     ierr = -1;
   }
 
-  /* All processes should have the same error code */
-  Teuchos::broadcast(*(this->matrixA_->getComm()), 0, &ierr);
+  /* All processes should have the same error code           */
+  /* TODO: check if D3S returns same info from all processes */
+  int ierr_i = -std::abs(ierr); // making sure non-positive (error-code is negative)
+  Teuchos::reduceAll<int, int> (*(this->matrixA_->getComm()), Teuchos::REDUCE_MIN, ierr_i, Teuchos::outArg(ierr));
 
   TEUCHOS_TEST_FOR_EXCEPTION(ierr != 0, std::runtime_error,
       "D3S solve failed(ierr="+std::to_string(ierr)+")");
