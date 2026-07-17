@@ -2125,12 +2125,11 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
     } else {
       // Amesos2 Symbolic factorization
       try {
-        using comm_type = Teuchos::MpiComm<int>;
         size_t n = rowBeginSub.size()-1;
         int n2 = rowsBSub.size();
         Kokkos::resize(S_view, n2,n2);
-        if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL") {
-          // === Amesos2 for ShyLU-Basker/PardisoMKL as local solver ===
+        if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL" || solvername == "MUMPS") {
+          // === Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ===
           // Create KK CrsMatrix
           Kokkos::resize(rowmap_view_D, rowBeginSub.size());
           Kokkos::resize(colind_view_D, columnsSub.size());
@@ -2261,9 +2260,9 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
             Teuchos::ParameterList amesos2Params;
             amesos2Params.setName("Amesos2");
             Teuchos::ParameterList &solverParams = amesos2Params.sublist(solvername);
-            //if (msg_level > 0) {
-            //  solverParams.set("verbose",(myPID == 1));
-            //}
+            if (msg_level > 0) {
+              solverParams.set("verbose",(myPID == 1));
+            }
             //solverParams.set("replace_tiny_pivot",true);
             amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
           }
@@ -2272,7 +2271,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
         }
       } catch (const std::exception& e) {
         if (msg_level > 0) {
-          std::cout << "\n == D3S::initialize(" << myPID << " caught exception from Amesos2 ==\n"
+          std::cout << "\n == D3S::initialize(" << myPID << ") caught exception from Amesos2 ==\n"
                     << e.what() << std::endl;
         }
         r_val = 1;
@@ -2471,8 +2470,8 @@ int D3Solver::factorize(const std::vector<double> & values_in)
     if (n > 0) {
       int n2 = rowsBSub.size();
       try {
-        if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL") {
-          // == Amesos2 for ShyLU-Basker/PardisoMKL as local solver ==
+        if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL" || solvername == "MUMPS") {
+          // == Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ==
           // wrap into Kokkos::CrsMatrix
           using UnmanagedDblViewType = Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
           UnmanagedDblViewType nz_vals (valuesSub.data(), values_in.size());
@@ -2627,7 +2626,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
         }
       } catch (const std::exception& e) {
         if (msg_level > 0) {
-          std::cout << "\n == D3S::initialize(" << myPID << " caught exception from Amesos2 ==\n"
+          std::cout << "\n == D3S::initialize(" << myPID << ") caught exception from Amesos2 ==\n"
                     << e.what() << std::endl;
         }
         r_val = 1;
@@ -2955,9 +2954,9 @@ int D3Solver::solve(const std::vector<double> & rhs,
     for (size_t i=0; i<rowsBSub.size(); i++) {
       rhs_sc[0][i] = sol_pardiso[rowsBSub[i]];
     }
-  } else if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL") {
+  } else if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL" || solvername == "MUMPS") {
     try {
-      // === Amesos2 for ShyLU-Basker/PardisoMKL as local solver ===
+      // === Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ===
       // * copy vectors into views
       // copy interior rhs vector in
       // solve with interior
@@ -3001,7 +3000,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
       }
     } catch (const std::exception& e) {
       if (msg_level > 0) {
-        std::cout << "\n == D3S::Ameso2 forward-solve(" << myPID << " caught exception from Amesos2 ==\n"
+        std::cout << "\n == D3S::Amesos2 forward-solve(" << myPID << ") caught exception from Amesos2 ==\n"
                   << e.what() << std::endl;
       }
       r_val = 1;
@@ -3128,11 +3127,11 @@ int D3Solver::solve(const std::vector<double> & rhs,
     for (size_t i=0; i<rowsISub.size(); i++) {
       rhsI[i] = sol_pardiso[rowsISub[i]];
     }
-  } else if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL") {
-    // === Amesos2 for ShyLU-Basker/PardisoMKL as local solver ===
+  } else if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL" || solvername == "MUMPS") {
+    // === Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ===
     try {
       // setup sol and rhs
-      Kokkos::resize(X_view, n1+n1, numRhs);
+      Kokkos::resize(X_view, n1+n2, numRhs);
       Kokkos::resize(B_view, n1+n2, numRhs);
       for (int j=0; j<numRhs; j++) {
         for (int i=0; i<n1; i++) B_view(i,j) = sol_pardiso[i+j*n1];
@@ -3158,7 +3157,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
       }
     } catch (const std::exception& e) {
       if (msg_level > 0) {
-        std::cout << "\n == D3S::Ameso2 backward-solve(" << myPID << " caught exception from Amesos2 ==\n"
+        std::cout << "\n == D3S::Amesos2 backward-solve(" << myPID << ") caught exception from Amesos2 ==\n"
                   << e.what() << std::endl;
       }
       r_val = 1;
