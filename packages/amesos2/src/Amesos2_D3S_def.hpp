@@ -37,7 +37,7 @@ D3S<Matrix,Vector>::D3S(
   , transFlag_(0)
   , is_contiguous_(true)
   , use_gather_(true)
-  , solvername_("")
+  , solvername_("KLU2")
   , msg_level_(0)
   , num_threads_(1)
   , matching_option_(0)

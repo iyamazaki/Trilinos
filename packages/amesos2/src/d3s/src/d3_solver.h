@@ -23,6 +23,7 @@
 #define USE_INTEL_PARDISO
 #ifdef USE_INTEL_PARDISO
   //#include "sc_pardiso.h"
+  #include "mkl.h"
 #endif
 
 #ifndef D3SOLVER_HPP
@@ -470,7 +471,7 @@ private:
   const std::vector<double> *valuesPtr;
 
   #ifdef USE_INTEL_PARDISO
-    std::vector<std::vector<MKL_INT>> ipiv;
+    std::vector<std::vector<int>> ipiv;
   #endif
 
   // Interior Amesos2 solver
