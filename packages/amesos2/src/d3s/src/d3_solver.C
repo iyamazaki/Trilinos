@@ -2243,7 +2243,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
           crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
           // kokkos-backend for symbolic
           amesos2_solver = Amesos2::create<crsmat_t, mv_view_t>(solvername, Teuchos::rcpFromRef(crsmat));
-          {
+          /*{
             Teuchos::ParameterList amesos2Params;
             amesos2Params.setName("Amesos2");
             Teuchos::ParameterList &solverParams = amesos2Params.sublist(solvername);
@@ -2252,7 +2252,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
             }
             //solverParams.set("replace_tiny_pivot",true);
             amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
-          }
+          }*/
           // Symbolic
           amesos2_solver->symbolicFactorization();
         }
@@ -2426,7 +2426,6 @@ int D3Solver::factorize(const std::vector<double> & values_in)
   output_sub_matrices(rowBeginSub, columnsSub, valuesSub);
 
   startTime = clockIt();
-  bool verbose = (myPID == 0 && msg_level > 0);
   {
     // Amesos2 numerical factorization
     size_t n = rowBeginSub.size()-1;
@@ -2438,7 +2437,8 @@ int D3Solver::factorize(const std::vector<double> & values_in)
       }
     }
     if (n > 0) {
-      int n2 = rowsBSub.size();
+      const int n1 = rowsISub.size(); // interior
+      const int n2 = rowsBSub.size(); // boundary
       try {
         if (supportedInteriorSolver(solvername)) {
           // == Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ==
@@ -2461,8 +2461,8 @@ int D3Solver::factorize(const std::vector<double> & values_in)
           #endif
           Kokkos::deep_copy(S_view, 0);
           int nnzD = 0;
-          int n1 = 0;
-          int n2 = 0;
+          int n1_ = 0;
+          int n2_ = 0;
           for (int i=0; i<n; i++) {
             int row = m_parts(i);
             if (row >= 0) {
@@ -2478,7 +2478,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
                   E_view(row, -col-1) = valuesSub[k];
                 }
               }
-              n1++;
+              n1_++;
             } else {
               // [H, C]
               for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
@@ -2496,54 +2496,56 @@ int D3Solver::factorize(const std::vector<double> & values_in)
                   S_view(-row-1, -col-1) = valuesSub[k];
                 }
               }
-              n2++;
+              n2_++;
             }
           }
-          // wrap into Kokkos::CrsMatrix
-          graph_t static_graph(colind_view_D, rowmap_view_D);
-          crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
+	  if (n1_ != n1) printf( " interior size mismatched..\n" );
+	  if (n2_ != n2) printf( " separator size mismatched..\n" );
+	  {
+            // wrap into Kokkos::CrsMatrix
+            graph_t static_graph(colind_view_D, rowmap_view_D);
+            crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
 #ifdef MATRIX_OUT
-          {
-            char filename[250];
-            FILE *fp;
-            /*sprintf(filename,"A%d.dat", myPID);
-            fp = fopen(filename,"w");;
-            for (int i=0; i<n; i++) for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) fprintf(fp,"%d %d %.16e\n",1+i,1+columnsSub[k],valuesSub[k]);
-            fclose(fp);*/
-            sprintf(filename,"D%d.dat", myPID);
-            fp = fopen(filename,"w");;
-            for (int i=0; i<n1; i++) for (int k=rowmap_view_D(i); k<rowmap_view_D(i+1); k++) fprintf(fp,"%d %d %.16e\n",1+i,1+colind_view_D(k),values_view_D(k));
-            fclose(fp);
-            /*sprintf(filename,"E%d.dat", myPID);
-            fp = fopen(filename,"w");;
-            for (int i=0; i<n1; i++) {
-              for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",E_view(i,j));
-              fprintf(fp,"\n");
+            {
+              char filename[250];
+              FILE *fp;
+              /*sprintf(filename,"A%d.dat", myPID);
+              fp = fopen(filename,"w");;
+              for (int i=0; i<n; i++) for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) fprintf(fp,"%d %d %.16e\n",1+i,1+columnsSub[k],valuesSub[k]);
+              fclose(fp);*/
+              sprintf(filename,"D%d.dat", myPID);
+              fp = fopen(filename,"w");;
+              for (int i=0; i<n1; i++) for (int k=rowmap_view_D(i); k<rowmap_view_D(i+1); k++) fprintf(fp,"%d %d %.16e\n",1+i,1+colind_view_D(k),values_view_D(k));
+              fclose(fp);
+              /*sprintf(filename,"E%d.dat", myPID);
+              fp = fopen(filename,"w");;
+              for (int i=0; i<n1; i++) {
+                for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",E_view(i,j));
+                fprintf(fp,"\n");
+              }
+              fclose(fp);
+              sprintf(filename,"F%d.dat", myPID);
+              fp = fopen(filename,"w");;
+              for (int i=0; i<n2; i++) {
+                for (int j=0; j<n1; j++) fprintf(fp,"%.16e ",F_view(i,j));
+                fprintf(fp,"\n");
+              }
+              fclose(fp);
+              sprintf(filename,"C%d.dat", myPID);
+              fp = fopen(filename,"w");;
+              for (int i=0; i<n2; i++) {
+                for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",S_view(i,j));
+                fprintf(fp,"\n");
+              }
+              fclose(fp);
+              */
+              sprintf(filename,"part%d.dat", myPID);
+              fp = fopen(filename,"w");;
+              for (int i=0; i<n; i++) fprintf(fp,"%d\n",m_parts(i));
+              fclose(fp);
             }
-            fclose(fp);
-            sprintf(filename,"F%d.dat", myPID);
-            fp = fopen(filename,"w");;
-            for (int i=0; i<n2; i++) {
-              for (int j=0; j<n1; j++) fprintf(fp,"%.16e ",F_view(i,j));
-              fprintf(fp,"\n");
-            }
-            fclose(fp);
-            sprintf(filename,"C%d.dat", myPID);
-            fp = fopen(filename,"w");;
-            for (int i=0; i<n2; i++) {
-              for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",S_view(i,j));
-              fprintf(fp,"\n");
-            }
-            fclose(fp);
-            */
-            sprintf(filename,"part%d.dat", myPID);
-            fp = fopen(filename,"w");;
-            for (int i=0; i<n; i++) fprintf(fp,"%d\n",m_parts(i));
-            fclose(fp);
-          }
-          MPI_Barrier(MPI_COMM_WORLD);
+            MPI_Barrier(MPI_COMM_WORLD);
 #endif
-          {
             // kokkos-backend for numeric factorization
             amesos2_solver->setA(Teuchos::rcpFromRef(crsmat), Amesos2::SYMBFACT);
             amesos2_solver->numericFactorization();
@@ -2891,8 +2893,8 @@ int D3Solver::solve(const std::vector<double> & rhs,
   sol_interior.resize(num_rows);
 
   int r_val = 0;
-  int n1 = rowsISub.size(); // interior
-  int n2 = rowsBSub.size(); // boundary
+  const int n1 = rowsISub.size(); // interior
+  const int n2 = rowsBSub.size(); // boundary
   if (supportedInteriorSolver(solvername)) {
     try {
       // === Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ===
@@ -2982,7 +2984,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
     {
       rhs_sc[0].resize(rowsBSub.size());
       UnmanagedViewType X1 (&sol_interior[0], n1, numRhs);
-      UnmanagedViewType B2 (&rhs_sc[0][0],   n2, numRhs);
+      UnmanagedViewType B2 (&rhs_sc[0][0],    n2, numRhs);
       #ifdef D3S_DENSE_F
         KokkosBlas::gemm("N","N",
                          -1.0, F_view,
@@ -3082,8 +3084,6 @@ int D3Solver::solve(const std::vector<double> & rhs,
     // === Amesos2 "default" implementation of partial factorization ===
     // With Amesos2, the interior part of U is I.
     // * update rhs for the interior solve, b1 -= G*x2
-    int n1 = rowsISub.size(); // interior
-    int n2 = rowsBSub.size(); // boundary
     UnmanagedViewType B1 (&sol_interior[0], n1, numRhs);
     UnmanagedViewType X2 (&rhs_sc[0][0], n2, numRhs);
     KokkosBlas::gemm("N","N",
@@ -3339,15 +3339,15 @@ void D3Solver::assemble_dense(const int level,
 {
   // recall that sc and sc_recv use row-major ordering
   // and we choose A to also be col-major
-  std::vector<double> & A = AS[level];
-  A.assign(n*n, 0);
+  std::vector<double> & A_l = AS[level];
+  A_l.assign(n*n, 0);
   int index = 0;
   int length = sep_map[level].size();
   for (int i=0; i<length; i++) {
     const int row = sep_map[level][i];
     for (int j=0; j<length; j++) {
       const int col = sep_map[level][j];
-      A[row+col*n] = sc[level][index++];
+      A_l[row+col*n] = sc[level][index++];
     }
   }
   index = 0;
@@ -3356,7 +3356,7 @@ void D3Solver::assemble_dense(const int level,
     const int row = sep_map_recv[level][i];
     for (int j=0; j<length; j++) {
       const int col = sep_map_recv[level][j];
-      A[row+col*n] += sc_recv[level][index++];
+      A_l[row+col*n] += sc_recv[level][index++];
     }
   }
 }
@@ -3493,7 +3493,7 @@ void D3Solver::assemble_dense(const int level,
 void D3Solver::output_dense_matrix(const std::string prefix,
                                    const int numRows,
                                    const int level,
-                                   const std::vector<double> & A) const
+                                   const std::vector<double> & A_in) const
 {
   if (numRows == 0) return;
   if (msg_level < 2) return;
@@ -3504,7 +3504,7 @@ void D3Solver::output_dense_matrix(const std::string prefix,
   for (int i=0; i<numRows; i++) {
     for (int j=0; j<numRows; j++) {
       fout << i+1 << " " << j+1 << " ";
-      const double value = A[i+j*numRows]; // matrix uses col-major ordering
+      const double value = A_in[i+j*numRows]; // matrix uses col-major ordering
       fout << std::setw(23) << std::setprecision(16) << value << std::endl;
     }
   }
@@ -3613,7 +3613,7 @@ void D3Solver::assign_matrix_blocks(const int level)
 {
   const int n1 = n1a[level];
   const int n2 = n2a[level];
-  const std::vector<double> & A = AS[level]; // A is in col_major format, as are
+  const std::vector<double> & A_l = AS[level]; // A is in col_major format, as are
   // A11, A12, A21, and A22
   A11[level].resize(n1*n1);
   A12[level].resize(n1*n2);
@@ -3623,18 +3623,18 @@ void D3Solver::assign_matrix_blocks(const int level)
   int index = 0;
   for (int j=0; j<n1; j++) {
     for (int i=0; i<n1; i++) {
-      A11[level][index11++] = A[index++];
+      A11[level][index11++] = A_l[index++];
     }
     for (int i=0; i<n2; i++) {
-      A21[level][index21++] = A[index++];
+      A21[level][index21++] = A_l[index++];
     }
   }
   for (int j=n1; j<n1+n2; j++) {
     for (int i=0; i<n1; i++) {
-      A12[level][index12++] = A[index++];
+      A12[level][index12++] = A_l[index++];
     }
     for (int i=0; i<n2; i++) {
-      A22[level][index22++] = A[index++];
+      A22[level][index22++] = A_l[index++];
     }
   }
 }
@@ -3654,13 +3654,13 @@ void D3Solver::convert_to_row_major(const std::vector<double> & A_col_major,
 
 int D3Solver::eliminate_separator(const int level)
 {
-  const MKL_INT n1 = n1a[level];
-  const MKL_INT n2 = n2a[level];
+  const int n1 = n1a[level];
+  const int n2 = n2a[level];
   assign_matrix_blocks(level);
   const double startTime = clockIt();
 
-  MKL_INT info = 0;
-  MKL_INT matrix_layout = LAPACK_COL_MAJOR;
+  int info = 0;
+  int matrix_layout = LAPACK_COL_MAJOR;
   if (n1 > 0) {
 #ifdef USE_INTEL_PARDISO
     ipiv[level].resize(n1);
@@ -3708,10 +3708,10 @@ int D3Solver::eliminate_separator(const int level)
 int D3Solver::eliminate_separator_rhs(const int level)
 {
   const double startTime = clockIt();
-  const MKL_INT n1 = n1a[level];
-  const MKL_INT n2 = n2a[level];
-  const MKL_INT n = n1 + n2; // leading dimension of AS_rhs[level]
-  const MKL_INT num_rhs = 1;
+  const int n1 = n1a[level];
+  const int n2 = n2a[level];
+  const int n = n1 + n2; // leading dimension of AS_rhs[level]
+  const int num_rhs = 1;
   double* rhs = AS_rhs[level].data();
 
   int info = 0;
