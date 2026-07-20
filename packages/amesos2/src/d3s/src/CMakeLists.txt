@@ -37,14 +37,12 @@ TRIBITS_INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})
 APPEND_SET(HEADERS
   d3_solver.h
   gather_to_root_simple.h
-  sc_pardiso.h
   throwAssert.h
   )
 
 APPEND_SET(SOURCES
   d3_solver.C
   gather_to_root_simple.C
-  sc_pardiso.C
   )
 
 #
