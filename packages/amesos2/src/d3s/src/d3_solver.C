@@ -25,16 +25,13 @@
 D3Solver::D3Solver(MPI_Comm commIn) :
   comm(commIn)
 {
-#ifndef USE_INTEL_PARDISO
-  ThrowAssert(true, 0, "d3_solver currently requires an Intel build with MKL/Pardiso");
-#endif
   MPI_Comm_rank(comm, &myPID);
   MPI_Comm_size(comm, &numProcs);
   ThrowAssert(true, numProcs > 1, "d3_solver currently must be run on at least 2 MPI processes");
 
   num_threads = 1;
 
-  // option for pardiso to enhance stability
+  // option to enhance stability of interior solver
   robust_option = true;
 
   // ordering option
@@ -46,14 +43,11 @@ D3Solver::D3Solver(MPI_Comm commIn) :
   debug_level_interior = 0;
 
   // interior solver
-  solvername = "";
+  solvername = "KLU2";
 }
 
 D3Solver::~D3Solver()
 {
-  #ifdef USE_INTEL_PARDISO
-    pardiso_solver.cleanup();
-  #endif
   for (int i=0; i<num_level; i++) {
     if (comm_level[i] != MPI_COMM_NULL) {
       MPI_Comm_free(&comm_level[i]);
@@ -2061,6 +2055,10 @@ int D3Solver::setNumProcSolver(const int numProcSolver_in)
   return numProcSolver_out;
 }
 
+bool D3Solver::supportedInteriorSolver(const std::string solvername_) {
+  return (solvername_ == "ShyLUBasker" || solvername_ == "PARDISOMKL" || solvername_ == "MUMPS");
+}
+
 int D3Solver::initialize(const std::vector<int> & rowBegin_in,
                          const std::vector<int> & columns_in,
                          const int startGID_in,
@@ -2111,24 +2109,13 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
       fclose(fp);
     }
 #endif
-    if (solvername == "") {
-      // PardisoMKL initialize
-#ifdef USE_INTEL_PARDISO
-      bool verbose = (myPID == 0 && msg_level > 0);
-      const int num_rows_subB = rowsBSub.size();
-      pardiso_solver.setMessageLevel(debug_level_interior);
-      r_val = pardiso_solver.initialize(num_rows_sub, rowBeginSub.data(), columnsSub.data(),
-                                        num_rows_subB, rowsBSub.data(), num_threads,
-                                        reorder_option, structurally_symmetric, robust_option,
-                                        debug_level_interior, verbose);
-#endif
-    } else {
+    {
       // Amesos2 Symbolic factorization
       try {
         size_t n = rowBeginSub.size()-1;
         int n2 = rowsBSub.size();
         Kokkos::resize(S_view, n2,n2);
-        if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL" || solvername == "MUMPS") {
+        if (supportedInteriorSolver(solvername)) {
           // === Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ===
           // Create KK CrsMatrix
           Kokkos::resize(rowmap_view_D, rowBeginSub.size());
@@ -2278,7 +2265,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
       }
     }
   }
-  timer_pardiso_symbolic = clockIt() - startTime;
+  timer_interior_symbolic = clockIt() - startTime;
   if (msg_level > 0) {
     printf( " %d: initialize(r_val=%d)\n",myPID, r_val ); fflush(stdout);
   }
@@ -2440,24 +2427,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
 
   startTime = clockIt();
   bool verbose = (myPID == 0 && msg_level > 0);
-  if (solvername == "") {
-    if (pardiso_solver.getNumRows() != 0) {
-#ifdef USE_INTEL_PARDISO
-      // Pardiso numerical factorization
-      r_val = pardiso_solver.factorize(valuesSub.data(), verbose);
-      sc[0] = pardiso_solver.getSchurComplement();
-#ifdef MATRIX_OUT
-      {
-        char filename[250];
-        sprintf(filename,"S_P%d.dat", myPID);
-        FILE *fp = fopen(filename,"w");;
-        for (int k=0; k<sc[0].size(); k++) fprintf(fp,"%d %.16e\n",k,sc[0][k]);
-        fclose(fp);
-      }
-#endif
-#endif
-    }
-  } else {
+  {
     // Amesos2 numerical factorization
     size_t n = rowBeginSub.size()-1;
     if (msg_level > 0) {
@@ -2470,7 +2440,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
     if (n > 0) {
       int n2 = rowsBSub.size();
       try {
-        if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL" || solvername == "MUMPS") {
+        if (supportedInteriorSolver(solvername)) {
           // == Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ==
           // wrap into Kokkos::CrsMatrix
           using UnmanagedDblViewType = Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
@@ -2655,7 +2625,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
     fclose(fp);
   }
 #endif
-  timer_pardiso_numeric = clockIt() - startTime;
+  timer_interior_numeric = clockIt() - startTime;
   
   if (r_val == 0) {
     int level = 0;
@@ -2917,44 +2887,13 @@ int D3Solver::solve(const std::vector<double> & rhs,
 
   // initialize rhs to be zero
   int num_rows = rowBeginSub.size() - 1;
-  rhs_pardiso.assign(num_rows, 0);
-  sol_pardiso.resize(num_rows);
+  rhs_interior.assign(num_rows, 0);
+  sol_interior.resize(num_rows);
 
   int r_val = 0;
   int n1 = rowsISub.size(); // interior
   int n2 = rowsBSub.size(); // boundary
-  if (solvername == "") {
-    // == PardisoMKL solves ==
-    // copy interior rhs vector in
-    for (size_t i=0; i<rowsISub.size(); i++) {
-      rhs_pardiso[rowsISub[i]] = rhsI[i];
-    }
-#ifdef USE_INTEL_PARDISO
-    // forward solve with Pardiso
-    int phase = 331;
-    pardiso_solver.solve(rhs_pardiso.data(), sol_pardiso.data(), phase);
-#endif
-#ifdef MATRIX_OUT
-    {
-      char filename[250];
-      sprintf(filename,"solp1_%d.dat", myPID);
-      FILE *fp = fopen(filename,"w");
-      for (size_t i=0; i<rowsISub.size(); i++) fprintf(fp,"%.16e %.16e\n",rhs_pardiso[rowsISub[i]],sol_pardiso[rowsISub[i]]);
-      fclose(fp);
-    }
-#endif
-    // copy interior solution back for backward solve
-    //  (schur complement part is zero)
-    for (size_t i=0; i<rowsISub.size(); i++) {
-      const int row = rowsISub[i];
-      rhs_pardiso[row] = sol_pardiso[row];
-    }
-    // copy boundary solution back for schur complement solve
-    rhs_sc[0].resize(rowsBSub.size());
-    for (size_t i=0; i<rowsBSub.size(); i++) {
-      rhs_sc[0][i] = sol_pardiso[rowsBSub[i]];
-    }
-  } else if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL" || solvername == "MUMPS") {
+  if (supportedInteriorSolver(solvername)) {
     try {
       // === Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ===
       // * copy vectors into views
@@ -2995,7 +2934,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
       // copying out (TODO: fix)
       rhs_sc[0].resize(rowsBSub.size());
       for (int j=0; j<numRhs; j++) {
-        for (int i=0; i<n1; i++) sol_pardiso[i+j*n1] = X_view(i,j);
+        for (int i=0; i<n1; i++) sol_interior[i+j*n1] = X_view(i,j);
         for (int i=0; i<n2; i++) rhs_sc[0][i+j*n1] = X_view(n1+i,j);
       }
     } catch (const std::exception& e) {
@@ -3010,14 +2949,14 @@ int D3Solver::solve(const std::vector<double> & rhs,
     // * copy vectors into views
     // copy interior rhs vector in
     for (size_t i=0; i<rowsISub.size(); i++) {
-      rhs_pardiso[i] = rhsI[i];
+      rhs_interior[i] = rhsI[i];
     }
     {
       // kokkos-backend for solve
         Kokkos::resize(X_view, n1, numRhs);
         Kokkos::resize(B_view, n1, numRhs);
         for (int j=0; j<numRhs; j++) {
-          for (int i=0; i<n1; i++) B_view(i,j) = rhs_pardiso[i+j*n1];
+          for (int i=0; i<n1; i++) B_view(i,j) = rhs_interior[i+j*n1];
         }
       amesos2_solver->setB(Teuchos::rcpFromRef(B_view));
       amesos2_solver->setX(Teuchos::rcpFromRef(X_view));
@@ -3027,7 +2966,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
 
       // copying out (TODO: fix)
       for (int j=0; j<numRhs; j++) {
-        for (int i=0; i<n1; i++) sol_pardiso[i+j*n1] = X_view(i,j);
+        for (int i=0; i<n1; i++) sol_interior[i+j*n1] = X_view(i,j);
       }
     }
 #ifdef MATRIX_OUT
@@ -3035,14 +2974,14 @@ int D3Solver::solve(const std::vector<double> & rhs,
       char filename[250];
       sprintf(filename,"sol1_%d.dat", myPID);
       FILE *fp = fopen(filename,"w");
-      for (int i=0; i<n1; i++) fprintf(fp,"%.16e %.16e\n",rhs_pardiso[i],sol_pardiso[i]);
+      for (int i=0; i<n1; i++) fprintf(fp,"%.16e %.16e\n",rhs_interior[i],sol_interior[i]);
       fclose(fp);
     }
 #endif
     // * update rhs for the Schur solve, b2 -= F*x1
     {
       rhs_sc[0].resize(rowsBSub.size());
-      UnmanagedViewType X1 (&sol_pardiso[0], n1, numRhs);
+      UnmanagedViewType X1 (&sol_interior[0], n1, numRhs);
       UnmanagedViewType B2 (&rhs_sc[0][0],   n2, numRhs);
       #ifdef D3S_DENSE_F
         KokkosBlas::gemm("N","N",
@@ -3104,37 +3043,14 @@ int D3Solver::solve(const std::vector<double> & rhs,
 
   // Finally, calculate solution in subdomain interior
   ThrowAssert(true, rowsBSub.size() == rhs_sc[0].size(), "inconsistent sizes");
-  if (solvername == "") {
-    // copy in boundary solution to rhs
-    for (size_t i=0; i<rowsBSub.size(); i++) {
-      const int row = rowsBSub[i];
-      rhs_pardiso[row] = rhs_sc[0][i];
-    }
-#ifdef MATRIX_OUT
-  {
-    char filename[250];
-    sprintf(filename,"sol2_%d.dat", myPID);
-    FILE *fp = fopen(filename,"w");
-    for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e\n",i,rhs_pardiso[i],sol_pardiso[i]);
-    fclose(fp);;
-  }
-#endif
-#ifdef USE_INTEL_PARDISO
-    int phase = 333; // backward solve
-    pardiso_solver.solve(rhs_pardiso.data(), sol_pardiso.data(), phase);
-#endif
-    // copy back interior solution
-    for (size_t i=0; i<rowsISub.size(); i++) {
-      rhsI[i] = sol_pardiso[rowsISub[i]];
-    }
-  } else if (solvername == "ShyLUBasker" || solvername == "PARDISOMKL" || solvername == "MUMPS") {
+  if (supportedInteriorSolver(solvername)) {
     // === Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ===
     try {
       // setup sol and rhs
       Kokkos::resize(X_view, n1+n2, numRhs);
       Kokkos::resize(B_view, n1+n2, numRhs);
       for (int j=0; j<numRhs; j++) {
-        for (int i=0; i<n1; i++) B_view(i,j) = sol_pardiso[i+j*n1];
+        for (int i=0; i<n1; i++) B_view(i,j) = sol_interior[i+j*n1];
         for (int i=0; i<n2; i++) B_view(i+n1,j) = rhs_sc[0][i+j*n2];
       }
       amesos2_solver->setB(Teuchos::rcpFromRef(B_view));
@@ -3168,7 +3084,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
     // * update rhs for the interior solve, b1 -= G*x2
     int n1 = rowsISub.size(); // interior
     int n2 = rowsBSub.size(); // boundary
-    UnmanagedViewType B1 (&sol_pardiso[0], n1, numRhs);
+    UnmanagedViewType B1 (&sol_interior[0], n1, numRhs);
     UnmanagedViewType X2 (&rhs_sc[0][0], n2, numRhs);
     KokkosBlas::gemm("N","N",
                      -1.0, G_view,
@@ -3179,7 +3095,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
       char filename[250];
       sprintf(filename,"solI3_%d.dat", myPID);
       FILE *fp = fopen(filename,"w");
-      for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e\n",i,rhs_pardiso[i],sol_pardiso[i]);
+      for (size_t i=0; i<num_rows; i++) fprintf(fp,"%d: %.16e %.16e\n",i,rhs_interior[i],sol_interior[i]);
       fclose(fp);
       sprintf(filename,"solB3_%d.dat", myPID);
       fp = fopen(filename,"w");
@@ -3189,7 +3105,7 @@ int D3Solver::solve(const std::vector<double> & rhs,
 #endif
     // copy back interior solution
     for (size_t i=0; i<rowsISub.size(); i++) {
-      rhsI[i] = sol_pardiso[i];
+      rhsI[i] = sol_interior[i];
     }
   }
   putSubSol(sol);
@@ -3843,10 +3759,10 @@ void D3Solver::output_time(const std::string & message,
 
 void D3Solver::output_timers() const
 {
-  std::string message = "max pardiso symbolic time = ";
-  output_time(message, timer_pardiso_symbolic);
-  message = "max pardiso numeric time  = ";
-  output_time(message, timer_pardiso_numeric);
+  std::string message = "max interior symbolic time = ";
+  output_time(message, timer_interior_symbolic);
+  message = "max interior numeric time  = ";
+  output_time(message, timer_interior_numeric);
   message = "time to gather sub matrices = ";
   output_time(message, timer_gather_matrices);
   /*

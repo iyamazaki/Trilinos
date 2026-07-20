@@ -19,10 +19,10 @@
 #include "trilinos_btf_decl.h"
 
 // Note: logic still needed to not define USE_INTEL_PARDISO for non-Intel builds
+//  !!! We are calling LAPACKE/cblas directly from D3S !!!
 #define USE_INTEL_PARDISO
-
 #ifdef USE_INTEL_PARDISO
-  #include "sc_pardiso.h"
+  //#include "sc_pardiso.h"
 #endif
 
 #ifndef D3SOLVER_HPP
@@ -39,6 +39,7 @@ public:
   void setOrderingOption(const int matching_optionIn, const int reorder_optionIn);
   void setVerbose(const int msg_levelIn, const int debug_levelIn);
   void setInteriorSolverName(const std::string solvername_in);
+  bool supportedInteriorSolver(const std::string solvername_);
 
   int initialize(const std::vector<int> & rowBegin_in,
                  const std::vector<int> & columns_in,
@@ -443,7 +444,7 @@ private:
 
   std::vector<int> rowBeginUse, columnsUse;
   std::vector<int> rowBeginOrig;
-  std::vector<double> valuesSub, rhsSub, rhsI, rhs_pardiso, sol_pardiso,
+  std::vector<double> valuesSub, rhsSub, rhsI, rhs_interior, sol_interior,
     timer_factor, timer_factor_dla, timer_solve, timer_solve_dla, valuesUse;
   std::vector<std::vector<int>> sep_map, sep_map_recv, rhs_index_send, sc_GIDs,
     values_send_index, index_map_sub, sep_map_B,
@@ -463,14 +464,13 @@ private:
   std::vector<MPI_Comm> comm_level;
   std::string node_name;
   std::vector<std::string> node_names;
-  double timer_pardiso_numeric=0, timer_pardiso_symbolic=0,
+  double timer_interior_numeric=0, timer_interior_symbolic=0,
     timer_gather_matrices=0;
   const std::vector<int> *rowBeginPtr, *columnsPtr;
   const std::vector<double> *valuesPtr;
 
   #ifdef USE_INTEL_PARDISO
     std::vector<std::vector<MKL_INT>> ipiv;
-    sc_pardiso pardiso_solver;
   #endif
 
   // Interior Amesos2 solver
