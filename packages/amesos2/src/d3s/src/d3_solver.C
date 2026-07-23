@@ -14,8 +14,17 @@
 #include <unordered_set>
 
 #include "d3_solver.h"
-#include "KokkosBlas3_gemm.hpp"
+
+// Used to implement default partial factorization 
+//  instead of calling Amesos2 with Kokkos-adapter
+// still calls Amesos2 with Kokkos-adapter
+//  to factor the interior and solve with right-interface (stored in dense)
 #include "KokkosSparse_spmv.hpp"
+#include "KokkosBlas3_gemm.hpp" // TODO: store G in crs and call spmv, instead
+// Used to solve dense Schur complement system
+#include "Teuchos_BLAS.hpp"
+#include "Teuchos_LAPACK.hpp"
+// Used to call partial-factorization through Amesos2
 #include "Amesos2.hpp"
 
 // Direct Domain Decomposition Solver, a sparse distributed memory direct solver based on
@@ -361,7 +370,7 @@ void D3Solver::extractRowSubIDs(const std::vector<int> & node_begin,
 }
 
 void D3Solver::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
-                              const std::vector<idx_t> & rowperm,
+                              const std::vector<int> & rowperm,
                               const std::vector<int> & rowBegin,
                               const std::vector<int> & columns) const
 {
@@ -1739,9 +1748,7 @@ void D3Solver::resize_vectors()
   A11.resize(num_level); A12.resize(num_level);
   A21.resize(num_level); A22.resize(num_level);
   AS_rhs.resize(num_level);
-#ifdef USE_INTEL_PARDISO
   ipiv.resize(num_level);
-#endif
   sc.resize(num_level);
   sc_recv.resize(num_level);
   rhs_sc.resize(num_level);
@@ -2113,7 +2120,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
       // Amesos2 Symbolic factorization
       try {
         size_t n = rowBeginSub.size()-1;
-        int n2 = rowsBSub.size();
+        size_t n2 = rowsBSub.size();
         Kokkos::resize(S_view, n2,n2);
         if (supportedInteriorSolver(solvername)) {
           // === Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ===
@@ -2140,7 +2147,7 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
             // schur_part
             //  = row ids of local schur complement
             Teuchos::Array<int> schurPart(n, 0);
-            for (int i=0; i<n2; i++) schurPart[rowsBSub[i]] = 1;
+            for (size_t i=0; i<n2; i++) schurPart[rowsBSub[i]] = 1;
             solver_params.set("SchurPart", (const int*)(schurPart.data()));
             // schur_out
             //  = storage for output Schur
@@ -2151,12 +2158,12 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
             if (debug_level_interior > 0) {
               solver_params.set("DebugLevel", (myPID == 0 ? debug_level_interior : 0));
             }
-	    if (robust_option && solvername == "PARDISOMKL") {
+            if (robust_option && solvername == "PARDISOMKL") {
               solver_params.set("IPARM(10)", 16); // pivoting option
               solver_params.set("IPARM(11)", 1);  // use scaling option
               solver_params.set("IPARM(13)", 1);  // use weighted matchings
               solver_params.set("IPARM(27)", 1);  // check the matrix (can turn off later)
-	    }
+            }
             amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
           }
           // Symbolic
@@ -2166,13 +2173,13 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
           // mark separtor nodes
           Kokkos::resize(m_parts, n);
           Kokkos::deep_copy(m_parts, 0);
-          for (int i=0; i<n2; i++) m_parts(rowsBSub[i]) = -1;
+          for (size_t i=0; i<n2; i++) m_parts(rowsBSub[i]) = -1;
 
           n2 = 1;
           int n1 = 0;
           int nnzD = 0;
           int nnzF = 0;
-          for (int i=0; i<n; i++) {
+          for (size_t i=0; i<n; i++) {
             if (m_parts(i) == 0) { // interior
               for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
                 if (m_parts(columnsSub[k]) >= 0) nnzD ++;
@@ -2188,30 +2195,29 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
             }
           }
           n2--;
-          if (n2 != rowsBSub.size()) printf( " D3S: ERROR n2 mismatch(%d vs %d)\n",n2,int(rowsBSub.size()) );
-          if (n1+n2 != n) printf( " D3S: ERROR n1 mismatch(%d vs %d)\n",n1,int(n-n2) );
+          if (n2 != rowsBSub.size()) printf( " D3S: ERROR n2 mismatch(%d vs %d)\n",int(n2),int(rowsBSub.size()) );
+          if (n1+n2 != n) printf( " D3S: ERROR n1 mismatch(%d vs %d)\n",int(n1),int(n-n2) );
           n2 = rowsBSub.size();
 
           // extract interior part of local subdomain
           // [D, G; H, S]
+          // D
           Kokkos::resize(rowmap_view_D, n1+1);
           Kokkos::resize(colind_view_D, nnzD);
           Kokkos::resize(values_view_D, nnzD);
-
+          // E
           Kokkos::resize(E_view, n1,n2);
-          #ifdef D3S_DENSE_F
-            Kokkos::resize(F_view, n2,n1);
-          #else
-            Kokkos::resize(rowmap_view_F, n2+1);
-            Kokkos::resize(colind_view_F, nnzF);
-            Kokkos::resize(values_view_F, nnzF);
-          #endif
+          // F
+          Kokkos::resize(rowmap_view_F, n2+1);
+          Kokkos::resize(colind_view_F, nnzF);
+          Kokkos::resize(values_view_F, nnzF);
+          // G
           Kokkos::resize(G_view, n1,n2);
           nnzD = 0;
           nnzF = 0;
           rowmap_view_D(0) = 0;
           rowmap_view_F(0) = 0;
-          for (int i=0; i<n; i++) {
+          for (size_t i=0; i<n; i++) {
             int row = m_parts(i);
             if (m_parts(i) >= 0) { // interior rows
               for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
@@ -2224,7 +2230,6 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
               }
               rowmap_view_D(row+1)=nnzD;
             } else {
-              #ifndef D3S_DENSE_F
               row = -row-1;
               for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
                 int col = m_parts(columnsSub[k]);
@@ -2235,7 +2240,6 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
                 }
               }
               rowmap_view_F(row+1)=nnzF;
-              #endif
             }
           }
           // wrap them into kokkos crsmatrix
@@ -2443,8 +2447,7 @@ int D3Solver::factorize(const std::vector<double> & values_in)
         if (supportedInteriorSolver(solvername)) {
           // == Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ==
           // wrap into Kokkos::CrsMatrix
-          using UnmanagedDblViewType = Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
-          UnmanagedDblViewType nz_vals (valuesSub.data(), values_in.size());
+          UnmanagedScalar1DViewType nz_vals (valuesSub.data(), values_in.size());
           graph_t static_graph(colind_view_D, rowmap_view_D);
           crsmat_t crsmat("CrsMatrix", n, nz_vals, static_graph);
 
@@ -2454,16 +2457,12 @@ int D3Solver::factorize(const std::vector<double> & values_in)
           // === Amesos2 "default" implementation of partial factorization ===
           // [D, E; F, C]
           Kokkos::deep_copy(E_view, 0);
-          #ifdef D3S_DENSE_F
-          Kokkos::deep_copy(F_view, 0);
-          #else
           int nnzF = 0;
-          #endif
           Kokkos::deep_copy(S_view, 0);
           int nnzD = 0;
           int n1_ = 0;
           int n2_ = 0;
-          for (int i=0; i<n; i++) {
+          for (size_t i=0; i<n; i++) {
             int row = m_parts(i);
             if (row >= 0) {
               // [D, E]
@@ -2485,12 +2484,8 @@ int D3Solver::factorize(const std::vector<double> & values_in)
                 int col = m_parts(columnsSub[k]);
                 if (col >= 0) {
                   // interior->separator, H
-                  #ifdef D3S_DENSE_F
-                  F_view(-row-1, col) = valuesSub[k];
-                  #else
                   values_view_F(nnzF) = valuesSub[k];
                   nnzF ++;
-                  #endif
                 } else {
                   // separtor, S
                   S_view(-row-1, -col-1) = valuesSub[k];
@@ -2499,9 +2494,9 @@ int D3Solver::factorize(const std::vector<double> & values_in)
               n2_++;
             }
           }
-	  if (n1_ != n1) printf( " interior size mismatched..\n" );
-	  if (n2_ != n2) printf( " separator size mismatched..\n" );
-	  {
+          if (n1_ != n1) printf( " interior size mismatched..\n" );
+          if (n2_ != n2) printf( " separator size mismatched..\n" );
+          {
             // wrap into Kokkos::CrsMatrix
             graph_t static_graph(colind_view_D, rowmap_view_D);
             crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
@@ -2571,17 +2566,10 @@ int D3Solver::factorize(const std::vector<double> & values_in)
               fclose(fp);
             }
 #endif
-            // S = S - H*G
-            #ifdef D3S_DENSE_F
-            KokkosBlas::gemm("N","N",
-                             -1.0, F_view,
-                                   G_view,
-                              1.0, S_view);
-            #else
+            // S = S - H*G by SpMV (H in CRS, S and G in View)
             graph_t static_graph(colind_view_F, rowmap_view_F);
             crsmat_t crsmat("CrsMatrix", n1, values_view_F, static_graph);
             KokkosSparse::spmv("N", -1.0, crsmat, G_view, 1.0, S_view);
-            #endif
 #ifdef MATRIX_OUT
             {
               char filename[250];
@@ -2983,18 +2971,12 @@ int D3Solver::solve(const std::vector<double> & rhs,
     // * update rhs for the Schur solve, b2 -= F*x1
     {
       rhs_sc[0].resize(rowsBSub.size());
-      UnmanagedViewType X1 (&sol_interior[0], n1, numRhs);
-      UnmanagedViewType B2 (&rhs_sc[0][0],    n2, numRhs);
-      #ifdef D3S_DENSE_F
-        KokkosBlas::gemm("N","N",
-                         -1.0, F_view,
-                               X1,
-                          0.0, B2);
-      #else
-        graph_t static_graph(colind_view_F, rowmap_view_F);
-        crsmat_t crsmat("CrsMatrix", n1, values_view_F, static_graph);
-        KokkosSparse::spmv("N", -1.0, crsmat, X1, 0.0, B2);
-      #endif
+      UnmanagedScalar2DViewType X1 (&sol_interior[0], n1, numRhs);
+      UnmanagedScalar2DViewType B2 (&rhs_sc[0][0],    n2, numRhs);
+      // SpMV (F in CRS, x1 in View)
+      graph_t static_graph(colind_view_F, rowmap_view_F);
+      crsmat_t crsmat("CrsMatrix", n1, values_view_F, static_graph);
+      KokkosSparse::spmv("N", -1.0, crsmat, X1, 0.0, B2);
     }
   }
 #ifdef MATRIX_OUT
@@ -3084,8 +3066,9 @@ int D3Solver::solve(const std::vector<double> & rhs,
     // === Amesos2 "default" implementation of partial factorization ===
     // With Amesos2, the interior part of U is I.
     // * update rhs for the interior solve, b1 -= G*x2
-    UnmanagedViewType B1 (&sol_interior[0], n1, numRhs);
-    UnmanagedViewType X2 (&rhs_sc[0][0], n2, numRhs);
+    // TODO: store G in CRS and call SpMV
+    UnmanagedScalar2DViewType B1 (&sol_interior[0], n1, numRhs);
+    UnmanagedScalar2DViewType X2 (&rhs_sc[0][0], n2, numRhs);
     KokkosBlas::gemm("N","N",
                      -1.0, G_view,
                            X2,
@@ -3210,14 +3193,12 @@ void D3Solver::backsolve(const int level)
       double* sol2 = sol1 + n1;
       for (int i=0; i<n2; i++) sol2[i] = rhs_sc[level+1][i];
       if (n1 > 0) {
-#ifdef USE_INTEL_PARDISO
         const int num_rhs = 1;
         const int n = n1 + n2; // leading dimension of AS_rhs[level]
-        CBLAS_LAYOUT layout = CblasColMajor;
         const double alpha(-1), beta(1);
-        cblas_dgemm(layout, CblasNoTrans, CblasNoTrans, n1, num_rhs, n2, alpha,
-                    A12[level].data(), n1, sol2, n, beta, sol1, n);
-#endif
+        Teuchos::BLAS<int, double> blas;
+        blas.GEMM(Teuchos::NO_TRANS, Teuchos::NO_TRANS, n1, num_rhs, n2,
+                  alpha, A12[level].data(), n1, sol2, n, beta, sol1, n);
       }
     }
     scatter_sol(level);    
@@ -3477,13 +3458,13 @@ void D3Solver::assemble_dense(const int level,
   n1a[level] = n1;
   n2a[level] = not_in_sep.size();
   sep_map[level].resize(gIDs.size());
-  for (int i=0; i<gIDs.size(); i++) {
+  for (size_t i=0; i<gIDs.size(); i++) {
     int index = getLocalID(gIDs[i], sep_gIDs, n1, do_not_throw);
     if (index != -1) sep_map[level][i] = index;
     else sep_map[level][i] = n1 + getLocalID(gIDs[i], not_in_sep);
   }
   sep_map_recv[level].resize(gIDs_recv.size());
-  for (int i=0; i<gIDs_recv.size(); i++) {
+  for (size_t i=0; i<gIDs_recv.size(); i++) {
     int index = getLocalID(gIDs_recv[i], sep_gIDs, n1, do_not_throw);
     if (index != -1) sep_map_recv[level][i] = index;
     else sep_map_recv[level][i] = n1 + getLocalID(gIDs_recv[i], not_in_sep);
@@ -3660,43 +3641,40 @@ int D3Solver::eliminate_separator(const int level)
   const double startTime = clockIt();
 
   int info = 0;
-  int matrix_layout = LAPACK_COL_MAJOR;
+  Teuchos::LAPACK<int, double> lapack;
   if (n1 > 0) {
-#ifdef USE_INTEL_PARDISO
     ipiv[level].resize(n1);
     //printf("C=[\n");
     //for (int i=0; i<n1; i++) {
     //  for (int j=0; j<n1; j++) printf("%.16e ",A11[level][i+j*n1]);
     //}
     //printf("];\n");
-    info = LAPACKE_dgetrf(matrix_layout, n1, n1, A11[level].data(), n1,
-                          ipiv[level].data());
-    ThrowAssert(false, info == 0, "error in call to LAPACKE_dgetrf");
+    lapack.GETRF(n1, n1, A11[level].data(), n1,
+                 ipiv[level].data(), &info);
+    ThrowAssert(false, info == 0, "error in call to dgetrf");
     if (info != 0) {
       fprintf(stderr, "DGETRF(%dx%d) failed with info=%d in D3S::eliminate_separator\n",n1,n1,info);
       return info;
     }
-#endif
   }
   if (n2 == 0) {
     timer_factor_dla[level] = clockIt() - startTime;
     return info;
   }
   if (n1 > 0) {
-#ifdef USE_INTEL_PARDISO
-    info = LAPACKE_dgetrs(matrix_layout, 'N', n1, n2, A11[level].data(), n1,
-                          ipiv[level].data(), A12[level].data(), n1);
-    ThrowAssert(false, info == 0, "error in call to LAPACKE_dgetrs");
+    lapack.GETRS('N', n1, n2, A11[level].data(), n1,
+                 ipiv[level].data(), A12[level].data(), n1, &info);
+    ThrowAssert(false, info == 0, "error in call to dgetrs");
     if (info != 0) {
       fprintf(stderr, "DGETRS(%dx%d) failed with info=%d in D3S::eliminate_separator\n",n1,n2,info);
       return info;
     }
     double alpha(-1), beta(1);
-    CBLAS_LAYOUT layout = CblasColMajor;
-    cblas_dgemm(layout, CblasNoTrans, CblasNoTrans, n2, n2, n1, alpha,
-                A21[level].data(), n2, A12[level].data(), n1, beta,
-                A22[level].data(), n2);
-#endif
+    Teuchos::BLAS<int, double> blas;
+    blas.GEMM(Teuchos::NO_TRANS, Teuchos::NO_TRANS, n2, n2, n1,
+              alpha, A21[level].data(), n2,
+                     A12[level].data(), n1,
+              beta,  A22[level].data(), n2);
     timer_factor_dla[level] = clockIt() - startTime;
   }
   // recall that we use row-major ordering for sc --> convert A22 accordingly
@@ -3715,33 +3693,29 @@ int D3Solver::eliminate_separator_rhs(const int level)
   double* rhs = AS_rhs[level].data();
 
   int info = 0;
-  int matrix_layout = LAPACK_COL_MAJOR;
   if (n1 > 0) {
-#ifdef USE_INTEL_PARDISO
-    info = LAPACKE_dgetrs(matrix_layout, 'N', n1, num_rhs, A11[level].data(), n1,
-                          ipiv[level].data(), rhs, n);
-    ThrowAssert(false, info == 0, "error in call to LAPACKE_dgetrs");
+    Teuchos::LAPACK<int, double> lapack;
+    lapack.GETRS('N', n1, num_rhs, A11[level].data(), n1,
+                 ipiv[level].data(), rhs, n, &info);
+    ThrowAssert(false, info == 0, "error in call to dgetrs");
     if (info != 0) {
       fprintf(stderr, "DGETRS(%dx%d) with ldb=%d failed with info=%d in D3S::eliminate_separator_rhs(n1=%d, n2=%d)\n",
               n1,num_rhs,n,info,n1,n2);
       return info;
     }
-#endif
   }
   if (n2 == 0) {
     timer_solve_dla[level] += clockIt() - startTime;
     return info;
   }
   rhs_sc[level+1].resize(n2);
-  double* C = rhs_sc[level+1].data();
-  for (int i=0; i<n2; i++) C[i] = rhs[n1+i];
+  double* rhs2 = rhs_sc[level+1].data();
+  for (int i=0; i<n2; i++) rhs2[i] = rhs[n1+i];
   if (n1 > 0) {
-#ifdef USE_INTEL_PARDISO
     double alpha(-1), beta(1);
-    CBLAS_LAYOUT layout = CblasColMajor;
-    cblas_dgemm(layout, CblasNoTrans, CblasNoTrans, n2, num_rhs, n1, alpha,
-                A21[level].data(), n2, rhs, n, beta, C, n2);
-#endif
+    Teuchos::BLAS<int, double> blas;
+    blas.GEMM(Teuchos::NO_TRANS, Teuchos::NO_TRANS, n2, num_rhs, n1,
+              alpha, A21[level].data(), n2, rhs, n, beta, rhs2, n2);
   }
   timer_solve_dla[level] += clockIt() - startTime;
   return info;

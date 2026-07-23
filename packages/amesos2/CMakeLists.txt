@@ -34,6 +34,7 @@ IF (Amesos2_ENABLE_CSS_MKL)
   ENDIF()
 ENDIF()
 
+# Add Kokkos-Kernels & Teuchos (and BLAS/LAPACK)
 IF (${PACKAGE_NAME}_ENABLE_D3S)
   IF (NOT HAVE_AMESOS2_METIS OR NOT TPL_ENABLE_MPI)
     MESSAGE(WARNING "***** D3S requires MPI and METIS. Turning off D3S.*****" )

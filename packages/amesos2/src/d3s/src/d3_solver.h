@@ -18,14 +18,6 @@
 #include "KokkosSparse_CrsMatrix.hpp"
 #include "trilinos_btf_decl.h"
 
-// Note: logic still needed to not define USE_INTEL_PARDISO for non-Intel builds
-//  !!! We are calling LAPACKE/cblas directly from D3S !!!
-#define USE_INTEL_PARDISO
-#ifdef USE_INTEL_PARDISO
-  //#include "sc_pardiso.h"
-  #include "mkl.h"
-#endif
-
 #ifndef D3SOLVER_HPP
 #define D3SOLVER_HPP
 
@@ -81,8 +73,8 @@ public:
   
   void getGraphForMetis(const std::vector<int> & rowBegin,
                         const std::vector<int> & columns,
-                        std::vector<idx_t> & rowperm,
-                        std::vector<idx_t> & irowperm,
+                        std::vector<int> & rowperm,
+                        std::vector<int> & irowperm,
                         std::vector<idx_t> & rowBeginMetis,
                         std::vector<idx_t> & columnsMetis,
                         std::vector<std::pair<int,int>> & additional_edges);
@@ -97,7 +89,7 @@ public:
                         std::vector<int> & row_sub_id) const;
   
   void checkRowSubIDs(const std::vector<int> & rowSubIDs,
-                      const std::vector<idx_t> & rowperm,
+                      const std::vector<int> & rowperm,
                       const std::vector<int> & rowBegin,
                       const std::vector<int> & columns) const;
   
@@ -469,10 +461,8 @@ private:
     timer_gather_matrices=0;
   const std::vector<int> *rowBeginPtr, *columnsPtr;
   const std::vector<double> *valuesPtr;
-
-  #ifdef USE_INTEL_PARDISO
-    std::vector<std::vector<int>> ipiv;
-  #endif
+  // getrf
+  std::vector<std::vector<int>> ipiv;
 
   // Interior Amesos2 solver
   int debug_level_interior;
@@ -502,8 +492,8 @@ private:
   using rowmap_view_t = typename graph_t::row_map_type::non_const_type;
   using colind_view_t = typename graph_t::entries_type::non_const_type;
   using values_view_t = typename crsmat_t::values_type::non_const_type;
-
-  using UnmanagedViewType = Kokkos::View<double**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+  using UnmanagedScalar1DViewType = Kokkos::View<double*,  Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+  using UnmanagedScalar2DViewType = Kokkos::View<double**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
 
   // [D, G; H, S]
   // D in csrmat

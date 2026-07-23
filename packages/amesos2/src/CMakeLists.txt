@@ -146,14 +146,12 @@ IF (${PACKAGE_NAME}_ENABLE_D3S)
   APPEND_SET(HEADERS
     d3s/src/d3_solver.h
     d3s/src/gather_to_root_simple.h
-    d3s/src/sc_pardiso.h
     d3s/src/throwAssert.h
     )
 
   APPEND_SET(SOURCES
     d3s/src/d3_solver.C
     d3s/src/gather_to_root_simple.C
-    d3s/src/sc_pardiso.C
     )
 
   ADD_SUBDIRECTORY(d3s/src)
