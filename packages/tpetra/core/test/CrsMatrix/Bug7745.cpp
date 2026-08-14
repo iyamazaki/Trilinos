@@ -184,9 +184,9 @@ class MatrixBuilder {
 
       scalar_t expected(0);
       for (size_t j = 0; j < nEntriesPerRow; j++)
-        expected += (squareMatrix ? (gid + j) % nGlobalRow : (gid + j));
-      expected *= alpha;
-      expected += beta * yInit;
+        expected = expected + (squareMatrix ? (gid + j) % nGlobalRow : (gid + j));
+      expected = alpha * expected;
+      expected = (beta * yInit) + expected;
 
       if (data(i, 0) != expected) ierr++;
     }
@@ -217,11 +217,11 @@ class MatrixBuilder {
         for (ssize_t j = 0; j < ssize_t(nEntriesPerRow); j++) {
           ssize_t idx = gid - j;
           if (idx >= 0 && idx < ssize_t(nGlobalRow))
-            expected += scalar_t(idx);
+            expected = expected + scalar_t(idx);
         }
       }
-      expected *= alpha;
-      expected += yInit * beta;
+      expected = alpha * expected;
+      expected = (yInit * beta) + expected;
 
       if (data(i, 0) != expected) ierr++;
     }
@@ -247,9 +247,9 @@ class MatrixBuilder {
 
         scalar_t expected(0);
         for (size_t j = 0; j < nEntriesPerRow; j++)
-          expected += (squareMatrix ? (gid + j) % nGlobalRow : (gid + j));
-        expected *= alpha;
-        expected += beta * yInit;
+          expected = expected + (squareMatrix ? (gid + j) % nGlobalRow : (gid + j));
+        expected = alpha * expected;
+        expected = (beta * yInit) + expected;
 
         if (data(i, 0) != expected) ierr++;
       }
