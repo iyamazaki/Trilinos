@@ -259,9 +259,10 @@ namespace Belos {
 
     typedef int OT; //Ordinal type 
     typedef MultiVecTraits<ScalarType,MV> MVT;
-    typedef Teuchos::ScalarTraits<ScalarType> SCT ;
+    typedef Teuchos::ScalarTraits<ScalarType> SCT;
     typedef typename Teuchos::ScalarTraits<ScalarType>::magnitudeType MagnitudeType;
     typedef Teuchos::ScalarTraits<MagnitudeType> MCT ;
+    typedef Teuchos::ScalarTraits<std::complex<MagnitudeType>> CMT;
 
     // Default polynomial parameters
     static constexpr int maxDegree_default_ = 25;
@@ -683,7 +684,7 @@ namespace Belos {
     for(int i=0; i<dim_; ++i){ 
       index[i] = i; 
       // Check if real + imag parts of roots < tol. 
-      TEUCHOS_TEST_FOR_EXCEPTION(hypot(theta_(i,0),theta_(i,1)) < tol, std::runtime_error, "BelosGmresPolyOp Error: One of the computed polynomial roots is approximately zero.  This will cause a divide by zero error!  Your matrix may be close to singular.  Please select a lower polynomial degree or give a shifted matrix.");
+      TEUCHOS_TEST_FOR_EXCEPTION(SCT::squareroot(theta_(i,0)*theta_(i,0) + theta_(i,1)*theta_(i,1)) < tol, std::runtime_error, "BelosGmresPolyOp Error: One of the computed polynomial roots is approximately zero.  This will cause a divide by zero error!  Your matrix may be close to singular.  Please select a lower polynomial degree or give a shifted matrix.");
     }
     SortModLeja(theta_,index);
 
@@ -705,12 +706,12 @@ namespace Belos {
     }
    
     // Compute product of factors (pof) to determine added roots: 
-    const MagnitudeType one(1.0);
-    std::vector<MagnitudeType> pof (dim_,one);
+    const std::complex<MagnitudeType> one(1.0);
+    std::vector<MagnitudeType> pof (dim_, MagnitudeType(1.0));
     for(int j=0; j<dim_; ++j) {
       for(int i=0; i<dim_; ++i) {
         if(i!=j) {
-          pof[j] = std::abs(pof[j]*(one-(cmplxHRitz[j]/cmplxHRitz[i])));
+          pof[j] = CMT::magnitude(pof[j]*(one-(cmplxHRitz[j]/cmplxHRitz[i])));
         }
       }
     }
@@ -720,7 +721,7 @@ namespace Belos {
     int totalExtra = 0;
     for(int i=0; i<dim_; ++i){
       if (pof[i] > MCT::zero())
-        extra[i] = ceil((log10(pof[i])-MagnitudeType(4.0))/MagnitudeType(14.0));
+        extra[i] = ceil((MCT::log10(pof[i])-MagnitudeType(4.0))/MagnitudeType(14.0));
       else
         extra[i] = 0;
       if(extra[i] > 0){
@@ -787,7 +788,7 @@ namespace Belos {
 
     //Compute all absolute values and find maximum:
     for(int i = 0; i < dimN; i++){
-      absVal(i) = hypot(thetaN(i,0), thetaN(i,1)); 
+      absVal(i) = SCT::squareroot(thetaN(i,0)*thetaN(i,0) + thetaN(i,1)*thetaN(i,1));
     }
     MagnitudeType * maxPointer = std::max_element(absVal.values(), (absVal.values()+dimN));
     int maxIndex = int (maxPointer- absVal.values());
@@ -824,7 +825,7 @@ namespace Belos {
           a = thetaN(i,0) - sorted(k,0);
           b = thetaN(i,1) - sorted(k,1);
           if (a*a + b*b > MCT::zero())
-            prod(i) = prod(i) + log10(hypot(a,b));
+            prod(i) = prod(i) + MCT::log10(SCT::squareroot(a*a + b*b));
           else {
             prod(i) = -std::numeric_limits<MagnitudeType>::infinity();
             break;

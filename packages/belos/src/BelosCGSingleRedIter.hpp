@@ -432,10 +432,10 @@ class CGSingleRedIter : virtual public CGIteration<ScalarType,MV,OP> {
   Teuchos::RCP<const MV>
   CGSingleRedIter<ScalarType,MV,OP>::getNativeResiduals( std::vector<MagnitudeType> *norms ) const {
     if (convTest_->getResNormType() == Belos::PreconditionerNorm) {
-      (*norms)[0] = std::sqrt(Teuchos::ScalarTraits<ScalarType>::magnitude(rHz_));
+      (*norms)[0] = SCT::squareroot(SCT::magnitude(rHz_));
       return Teuchos::null;
     } else if (foldConvergenceDetectionIntoAllreduce_ && convTest_->getResNormType() == Belos::TwoNorm) {
-      (*norms)[0] = std::sqrt(Teuchos::ScalarTraits<ScalarType>::magnitude(rHr_));
+      (*norms)[0] = SCT::squareroot(SCT::magnitude(rHr_));
       return Teuchos::null;
     } else
       return R_;

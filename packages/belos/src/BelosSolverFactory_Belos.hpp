@@ -20,6 +20,10 @@
 #include "BelosMultiVec.hpp"
 #include "BelosOperator.hpp"
 
+#ifdef HAVE_TEUCHOSCORE_KOKKOS
+#include "Kokkos_Core.hpp"
+#endif
+
 namespace Belos {
 
 /** \example epetra/example/SolverFactory/SolverFactoryEpetraGaleriEx.cpp 
@@ -45,6 +49,16 @@ class BelosFloatSolverFactory : public Impl::SolverFactoryParent<float,MultiVec<
     };
 };
 
+#if defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
+class BelosHalfSolverFactory : public Impl::SolverFactoryParent<Kokkos::Experimental::half_t,MultiVec<Kokkos::Experimental::half_t>,Operator<Kokkos::Experimental::half_t>>
+{
+  public:
+    BelosHalfSolverFactory() {
+      Details::registerSolverFactory();
+    };
+};
+#endif
+
 namespace Impl {
 
 template<>
@@ -58,6 +72,14 @@ class SolverFactorySelector<float,MultiVec<float>,Operator<float>> {
   public:
     typedef BelosFloatSolverFactory type;
 };
+
+#if defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
+template<>
+class SolverFactorySelector<Kokkos::Experimental::half_t,MultiVec<Kokkos::Experimental::half_t>,Operator<Kokkos::Experimental::half_t>> {
+  public:
+    typedef BelosHalfSolverFactory type;
+};
+#endif
 
 #ifdef HAVE_TEUCHOS_COMPLEX
 class BelosComplexSolverFactory : public Impl::SolverFactoryParent<std::complex<double>,MultiVec<std::complex<double>>,Operator<std::complex<double>>>

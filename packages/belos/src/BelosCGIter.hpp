@@ -204,7 +204,7 @@ class CGIter : virtual public CGIteration<ScalarType,MV,OP> {
   //! \return A std::vector of length blockSize containing the native residuals.
   Teuchos::RCP<const MV> getNativeResiduals( std::vector<MagnitudeType> * norms ) const {
     if (foldConvergenceDetectionIntoAllreduce_ && convTest_->getResNormType() == Belos::TwoNorm) {
-      (*norms)[0] = std::sqrt(Teuchos::ScalarTraits<ScalarType>::magnitude(rHr_));
+      (*norms)[0] = SCT::squareroot(SCT::magnitude(rHr_));
       return Teuchos::null;
     } else
       return R_;
@@ -520,7 +520,7 @@ class CGIter : virtual public CGIteration<ScalarType,MV,OP> {
       if (doCondEst_) {
         if (iter_ > 1) {
           diag_[iter_-1]    = Teuchos::ScalarTraits<ScalarType>::real((beta_old * beta_old * pAp_old + pAp[0]) / rHz_old[0]);
-          offdiag_[iter_-2] = -Teuchos::ScalarTraits<ScalarType>::real(beta_old * pAp_old / (sqrt( rHz_old[0] * rHz_old2)));
+          offdiag_[iter_-2] = -Teuchos::ScalarTraits<ScalarType>::real(beta_old * pAp_old / (SCT::squareroot( rHz_old[0] * rHz_old2)));
         }
         else {
           diag_[iter_-1]    = Teuchos::ScalarTraits<ScalarType>::real(pAp[0] / rHz_old[0]);
