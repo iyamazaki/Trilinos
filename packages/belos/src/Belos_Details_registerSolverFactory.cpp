@@ -36,7 +36,8 @@
 namespace Belos {
 namespace Details {
 
-#if defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
+#if defined(HAVE_TEUCHOS_HALF) && \
+    defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
   #ifdef HAVE_TEUCHOS_COMPLEX
   #define BELOS_DEFINE_REGISTER_SOLVER_MANAGER(manager,name)                           \
     Impl::registerSolverSubclassForTypes<manager<hST,hMV,hOP>, hST, hMV, hOP> (name);  \
@@ -73,7 +74,8 @@ void registerSolverFactory () {
   typedef MultiVec<fST> fMV;
   typedef Operator<fST> fOP;
 
-#if defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
+#if defined(HAVE_TEUCHOS_HALF) && \
+    defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
   typedef Kokkos::Experimental::half_t hST;
   typedef MultiVec<hST> hMV;
   typedef Operator<hST> hOP;
@@ -94,7 +96,8 @@ void registerSolverFactory () {
   BELOS_DEFINE_REGISTER_SOLVER_MANAGER(BlockGmresSolMgr, "BLOCK GMRES")
   BELOS_DEFINE_REGISTER_SOLVER_MANAGER(FixedPointSolMgr, "FIXED POINT")
   BELOS_DEFINE_REGISTER_SOLVER_MANAGER(GCRODRSolMgr, "GCRODR")
-#if !defined(HAVE_TEUCHOSCORE_KOKKOS) || (defined(KOKKOS_HALF_T_IS_FLOAT) && KOKKOS_HALF_T_IS_FLOAT)
+#if !defined(HAVE_TEUCHOS_HALF) || \
+    !defined(HAVE_TEUCHOSCORE_KOKKOS) || (defined(KOKKOS_HALF_T_IS_FLOAT) && KOKKOS_HALF_T_IS_FLOAT)
   // will need complex<half_t>
   BELOS_DEFINE_REGISTER_SOLVER_MANAGER(GmresPolySolMgr, "HYBRID BLOCK GMRES")
 #endif

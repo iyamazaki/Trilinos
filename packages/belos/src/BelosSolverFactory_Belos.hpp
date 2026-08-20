@@ -49,7 +49,8 @@ class BelosFloatSolverFactory : public Impl::SolverFactoryParent<float,MultiVec<
     };
 };
 
-#if defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
+#if defined(HAVE_TEUCHOS_HALF) && \
+    defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
 class BelosHalfSolverFactory : public Impl::SolverFactoryParent<Kokkos::Experimental::half_t,MultiVec<Kokkos::Experimental::half_t>,Operator<Kokkos::Experimental::half_t>>
 {
   public:
@@ -73,7 +74,8 @@ class SolverFactorySelector<float,MultiVec<float>,Operator<float>> {
     typedef BelosFloatSolverFactory type;
 };
 
-#if defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
+#if defined(HAVE_TEUCHOS_HALF) && \
+    defined(HAVE_TEUCHOSCORE_KOKKOS) && defined(KOKKOS_HALF_T_IS_FLOAT) && !KOKKOS_HALF_T_IS_FLOAT
 template<>
 class SolverFactorySelector<Kokkos::Experimental::half_t,MultiVec<Kokkos::Experimental::half_t>,Operator<Kokkos::Experimental::half_t>> {
   public:
