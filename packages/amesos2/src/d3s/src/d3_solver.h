@@ -1,10 +1,11 @@
 #pragma once
 
 #include <vector>
-#include <mpi.h>
 
 #include "metis.h"
 #include "throwAssert.h"
+
+#include "Teuchos_DefaultMpiComm.hpp"
 #include "mpi.h"
 #include "gather_to_root_simple.h"
 
@@ -406,8 +407,9 @@ public:
   void getProcName();
  
 private:
-
+  using comm_type = Teuchos::MpiComm<int>;
   MPI_Comm comm;
+  Teuchos::RCP<comm_type> myComm;
   int myPID, numProcs, numProcSolver, num_threads;
   int numRows_global, numRows_proc, startGID, num_level;
 
@@ -455,6 +457,7 @@ private:
   std::vector<std::vector<double>> rhs_send, rhs_recv, rhs_sc, rhs_sc_recv,
     rhs_sep, values_B;
   std::vector<MPI_Comm> comm_level;
+  std::vector<Teuchos::RCP<comm_type>> my_comm_level;
   std::string node_name;
   std::vector<std::string> node_names;
   double timer_interior_numeric=0, timer_interior_symbolic=0,
