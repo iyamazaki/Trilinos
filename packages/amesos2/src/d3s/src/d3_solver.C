@@ -34,8 +34,9 @@
 D3Solver::D3Solver(MPI_Comm commIn) :
   comm(commIn)
 {
-  MPI_Comm_rank(comm, &myPID);
-  MPI_Comm_size(comm, &numProcs);
+  myComm = Teuchos::rcp(new comm_type (commIn));
+  myPID = myComm->getRank();
+  numProcs = myComm->getSize();
   ThrowAssert(true, numProcs > 1, "d3_solver currently must be run on at least 2 MPI processes");
 
   num_threads = 1;
@@ -139,18 +140,23 @@ void D3Solver::gatherScatterSol(std::vector<double> & sol,
   if (myPID == root) {
     numRowsProc.resize(numProcs);
   }
-  MPI_Gather(&numRows, 1, MPI_INT, numRowsProc.data(), 1, MPI_INT, root, comm);
+  //MPI_Gather(&numRows, 1, MPI_INT, numRowsProc.data(), 1, MPI_INT, root, comm);
+  Teuchos::gather<int,int>(&numRows, 1, numRowsProc.data(), 1, root, *myComm);
   int numRowsRoot(0);
   for (size_t i=0; i<numRowsProc.size(); i++) {
     numRowsRoot += numRowsProc[i];
   }
-  MPI_Bcast(&numRowsRoot, 1, MPI_INT, root, comm);
+  //MPI_Bcast(&numRowsRoot, 1, MPI_INT, root, comm);
+  Teuchos::broadcast<int, int>(*myComm, root, 1, &numRowsRoot);
   std::vector<int> displs;
   getDispls(numRowsProc, displs);
   solAll.resize(numRowsRoot);
-  MPI_Gatherv(sol.data(), numRows, MPI_DOUBLE, solAll.data(), numRowsProc.data(),
-              displs.data(), MPI_DOUBLE, root, comm);
-  MPI_Bcast(solAll.data(), numRowsRoot, MPI_DOUBLE, root, comm);
+  //MPI_Gatherv(sol.data(), numRows, MPI_DOUBLE, solAll.data(), numRowsProc.data(),
+  //            displs.data(), MPI_DOUBLE, root, comm);
+  //MPI_Bcast(solAll.data(), numRowsRoot, MPI_DOUBLE, root, comm);
+  Teuchos::gatherv<int, double>(sol.data(), numRows, solAll.data(), numRowsProc.data(),
+                                displs.data(), root, *myComm);
+  Teuchos::broadcast<int, double>(*myComm, root, numRowsRoot, solAll.data());
 }
 
 void D3Solver::getDispls(const std::vector<int> & numEntriesProc,
@@ -546,7 +552,8 @@ void D3Solver::scatter_additional_edges(const std::vector<std::pair<int,int>> & 
     count.resize(numProcs, 0);
     displs.resize(numProcs, 0);
   }
-  MPI_Gather(&numRows_proc, 1, MPI_INT, numRowsAll.data(), 1, MPI_INT, root, comm);
+  //MPI_Gather(&numRows_proc, 1, MPI_INT, numRowsAll.data(), 1, MPI_INT, root, comm);
+  Teuchos::gather<int,int>(&numRows_proc, 1, numRowsAll.data(), 1, root, *myComm);
   std::vector<int> row_col_pair_send;
   if (myPID == root) {
     for (int i=1; i<numProcs; i++) {
@@ -566,15 +573,18 @@ void D3Solver::scatter_additional_edges(const std::vector<std::pair<int,int>> & 
     }
   }
   int num_extra;
-  MPI_Scatter(count.data(), 1, MPI_INT, &num_extra, 1, MPI_INT, root, comm);
+  //MPI_Scatter(count.data(), 1, MPI_INT, &num_extra, 1, MPI_INT, root, comm);
+  Teuchos::scatter<int, int>(count.data(), 1, &num_extra, 1, root, *myComm);
   extraEdges.resize(num_extra);
   if (myPID == root) {
     for (int i=1; i<numProcs; i++) {
       displs[i] = displs[i-1] + count[i-1];
     }
   }
-  MPI_Scatterv(row_col_pair_send.data(), count.data(), displs.data(), MPI_INT,
-               extraEdges.data(), num_extra, MPI_INT, root, comm);
+  //MPI_Scatterv(row_col_pair_send.data(), count.data(), displs.data(), MPI_INT,
+  //             extraEdges.data(), num_extra, MPI_INT, root, comm);
+  Teuchos::scatterv<int, int>(row_col_pair_send.data(), count.data(), displs.data(),
+                              extraEdges.data(), num_extra, root, *myComm);
   num_extra /= 2;
 }
 
@@ -795,14 +805,17 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
       }
     }
   }
-  MPI_Barrier(comm);
+  //MPI_Barrier(comm);
+  myComm->barrier();
 
   // symmetrize the original local matrix
   std::vector<int> extraEdges; // extra edges on each proc (to make it structurally-symmetric)
   scatter_additional_edges(additional_edges, extraEdges);
 
   // global DoFs
-  MPI_Bcast(&numRows, 1, MPI_INT, 0, comm);
+  int root = 0;
+  //MPI_Bcast(&numRows, 1, MPI_INT, root, comm);
+  Teuchos::broadcast<int, int>(*myComm, root, 1, &numRows);
   numRows_global = numRows;
 
   // symmetrize local graph
@@ -814,12 +827,15 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
       permMatching.resize(numRows, 0);
       ipermMatching.resize(numRows, 0);
     }
-    MPI_Bcast( permMatching.data(), numRows, MPI_INT, 0, comm);
-    MPI_Bcast(ipermMatching.data(), numRows, MPI_INT, 0, comm);
+    //MPI_Bcast( permMatching.data(), numRows, MPI_INT, root, comm);
+    //MPI_Bcast(ipermMatching.data(), numRows, MPI_INT, root, comm);
+    Teuchos::broadcast<int, int>(*myComm, root, numRows,  permMatching.data());
+    Teuchos::broadcast<int, int>(*myComm, root, numRows, ipermMatching.data());
 
     // row-distribution
     fstRows.resize(numProcs+1, 0);
-    MPI_Allgather(&startGID, 1, MPI_INT, fstRows.data(), 1, MPI_INT, comm);
+    //MPI_Allgather(&startGID, 1, MPI_INT, fstRows.data(), 1, MPI_INT, comm);
+    Teuchos::gatherAll<int, int> (*myComm, 1, &startGID, 1, fstRows.data());
     fstRows[numProcs] = numRows_global;
 
     int nnz = rowBegin[numRows_proc];
@@ -881,7 +897,8 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
       // setup counts/displs to receive
       recvcounts.resize(numProcs,   0);
       recvdispls.resize(numProcs+1, 0);
-      MPI_Alltoall(sendcounts.data(), 1, MPI_INT, recvcounts.data(), 1, MPI_INT, comm);
+      //MPI_Alltoall(sendcounts.data(), 1, MPI_INT, recvcounts.data(), 1, MPI_INT, comm);
+      Teuchos::alltoAll<int, int>(sendcounts.data(), 1, recvcounts.data(), 1, *myComm);
       for (int p=0; p<numProcs; p++) {
         recvdispls[p+1] = recvdispls[p] + recvcounts[p];
       }
@@ -890,9 +907,12 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
       nnz = recvdispls[numProcs];
       std::vector<int> recvbuf;
       recvbuf.resize(nnz, 0);
-      MPI_Alltoallv(sendbuf.data(), sendcounts.data(), senddispls.data(), MPI_INT,
-                    recvbuf.data(), recvcounts.data(), recvdispls.data(), MPI_INT,
-                    comm);
+      //MPI_Alltoallv(sendbuf.data(), sendcounts.data(), senddispls.data(), MPI_INT,
+      //              recvbuf.data(), recvcounts.data(), recvdispls.data(), MPI_INT,
+      //              comm);
+      Teuchos::alltoAllv<int, int>(sendbuf.data(), sendcounts.data(), senddispls.data(),
+                                   recvbuf.data(), recvcounts.data(), recvdispls.data(),
+                                   *myComm);
 
       // put it into CSR
       rowBeginRe.resize(numRows_proc+1, 0);
@@ -918,9 +938,12 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
   }
 
   // communicate rest of parameters
-  MPI_Bcast(&numSep, 1, MPI_INT, 0, comm);
-  MPI_Bcast(&numTerms, 1, MPI_INT, 0, comm);
-  MPI_Bcast(&numRowsB, 1, MPI_INT, 0, comm);
+  //MPI_Bcast(&numSep, 1, MPI_INT, root, comm);
+  //MPI_Bcast(&numTerms, 1, MPI_INT, root, comm);
+  //MPI_Bcast(&numRowsB, 1, MPI_INT, root, comm);
+  Teuchos::broadcast<int, int>(*myComm, root, 1, &numSep);
+  Teuchos::broadcast<int, int>(*myComm, root, 1, &numTerms);
+  Teuchos::broadcast<int, int>(*myComm, root, 1, &numRowsB);
   if (myPID != 0) {
     rowSubIDs.resize(numRows);
     sepIDs.resize(numSep);
@@ -928,11 +951,16 @@ void D3Solver::getRowSubIDs(const std::vector<int> & rowBegin, // original
     sepBegin.resize(numSep+1);
     rowsB.resize(numRowsB);
   }
-  MPI_Bcast(rowSubIDs.data(), numRows, MPI_INT, 0, comm);
-  MPI_Bcast(sepIDs.data(), numSep, MPI_INT, 0, comm);
-  MPI_Bcast(sepRows.data(), numTerms, MPI_INT, 0, comm);
-  MPI_Bcast(sepBegin.data(), numSep+1, MPI_INT, 0, comm);
-  MPI_Bcast(rowsB.data(), numRowsB, MPI_INT, 0, comm);
+  //MPI_Bcast(rowSubIDs.data(), numRows, MPI_INT, 0, comm);
+  //MPI_Bcast(sepIDs.data(), numSep, MPI_INT, 0, comm);
+  //MPI_Bcast(sepRows.data(), numTerms, MPI_INT, 0, comm);
+  //MPI_Bcast(sepBegin.data(), numSep+1, MPI_INT, 0, comm);
+  //MPI_Bcast(rowsB.data(), numRowsB, MPI_INT, 0, comm);
+  Teuchos::broadcast<int, int>(*myComm, root, numRows,  rowSubIDs.data());
+  Teuchos::broadcast<int, int>(*myComm, root, numSep,   sepIDs.data());
+  Teuchos::broadcast<int, int>(*myComm, root, numTerms, sepRows.data());
+  Teuchos::broadcast<int, int>(*myComm, root, numSep+1, sepBegin.data());
+  Teuchos::broadcast<int, int>(*myComm, root, numRowsB, rowsB.data());
 }
 
 std::vector<int> D3Solver::myReceives(const std::vector<int> & mySends)
@@ -946,9 +974,12 @@ std::vector<int> D3Solver::myReceives(const std::vector<int> & mySends)
   const int n = numProc*numProc;
   std::vector<int> gatherArrayRoot(n);
   int root = 0;
-  MPI_Gather(sendArray.data(), numProc, MPI_INT, gatherArrayRoot.data(), numProc,
-             MPI_INT, root, comm);
-  MPI_Bcast(gatherArrayRoot.data(), n, MPI_INT, root, comm);
+  //MPI_Gather(sendArray.data(), numProc, MPI_INT, gatherArrayRoot.data(), numProc,
+  //           MPI_INT, root, comm);
+  Teuchos::gather<int,int>(sendArray.data(), numProc,gatherArrayRoot.data(), numProc,
+                           root, *myComm);
+  //MPI_Bcast(gatherArrayRoot.data(), n, MPI_INT, root, comm);
+  Teuchos::broadcast<int, int>(*myComm, root, n, gatherArrayRoot.data());
   std::vector<int> myRecvs;
   for (int j=0; j<numProc; j++) {
     if (gatherArrayRoot[myPID+numProc*j] == 1) myRecvs.push_back(j);
@@ -1019,25 +1050,37 @@ void D3Solver::communicateData(const std::vector<std::vector<T>> & data_send,
   int numProc;
   MPI_Comm_size(comm, &numProc);
   const int tag = 0;
-  std::vector<MPI_Request> send_requests(num_sends);
-  std::vector<MPI_Request> recv_requests(num_recvs);
-  std::vector<MPI_Status> statuses(numProc);
+  Teuchos::Array<Teuchos::RCP<Teuchos::CommRequest<int>>> send_requests(num_sends);
+  Teuchos::Array<Teuchos::RCP<Teuchos::CommRequest<int>>> recv_requests(num_recvs);
+  Teuchos::Array<Teuchos::RCP<Teuchos::CommStatus<int>>> statuses(numProc);
+  //std::vector<MPI_Request> send_requests(num_sends);
+  //std::vector<MPI_Request> recv_requests(num_recvs);
+  //std::vector<MPI_Status> statuses(numProc);
   // communicate data
+  bool has_ownership = false;
   int actual_num_sends(0), actual_num_recvs(0);
   for (int i=0; i<num_recvs; i++) {
     // don't receive data from self
     if (my_recv_PIDs[i] != myPID) {
       const int count = data_recv[i].size();
-      MPI_Irecv(data_recv[i].data(), count, MPI_type, my_recv_PIDs[i], tag, comm,
-                &recv_requests[actual_num_recvs++]);
+      //MPI_Irecv(data_recv[i].data(), count, MPI_type, my_recv_PIDs[i], tag, comm,
+      //          recv_requests[actual_num_recvs++].get());
+      T * data = const_cast<T*>(data_recv[i].data());
+      recv_requests[actual_num_recvs++]
+        = Teuchos::ireceive<int, T>(Teuchos::ArrayRCP<T>(data, 0, count, has_ownership),
+                                    my_recv_PIDs[i], tag, *myComm);
     }
   }
   for (int i=0; i<num_sends; i++) {
     // don't send data to self, but do copy over data
     if (my_send_PIDs[i] != myPID) {
       const int count = data_send[i].size();
-      MPI_Isend(data_send[i].data(), count, MPI_type, my_send_PIDs[i], tag, comm,
-                &send_requests[actual_num_sends++]);
+      //MPI_Isend(data_send[i].data(), count, MPI_type, my_send_PIDs[i], tag, comm,
+      //          send_requests[actual_num_sends++].get());
+      T * data = const_cast<T*>(data_send[i].data());
+      send_requests[actual_num_sends++]
+        = Teuchos::isend<int, T>(Teuchos::ArrayRCP<T>(data, 0, count, has_ownership),
+                                 my_send_PIDs[i], tag, *myComm);
     }
     else {
       int index;
@@ -1052,8 +1095,10 @@ void D3Solver::communicateData(const std::vector<std::vector<T>> & data_send,
       }
     } 
   }
-  MPI_Waitall(actual_num_sends, send_requests.data(), statuses.data());
-  MPI_Waitall(actual_num_recvs, recv_requests.data(), statuses.data());
+  Teuchos::waitAll(*myComm, send_requests(0, num_sends), statuses(0, num_sends));
+  Teuchos::waitAll(*myComm, recv_requests(0, num_recvs), statuses(0, num_recvs));
+  //MPI_Waitall(actual_num_sends, send_requests.data(), statuses.data());
+  //MPI_Waitall(actual_num_recvs, recv_requests.data(), statuses.data());
 }
 
 void D3Solver::phase1_rhs()
@@ -1767,6 +1812,7 @@ void D3Solver::resize_vectors()
   my_send_PIDs_B.resize(num_level);
   my_recv_PIDs_B.resize(num_level);
   comm_level.resize(num_level);
+  my_comm_level.resize(num_level);
   sep_map_B.resize(num_level);
   index_map_B.resize(num_level);
   rhs_recv_sep_index.resize(num_level);
@@ -1872,7 +1918,8 @@ std::vector<std::vector<int>> D3Solver::gather_node_pids(int & num_nodes)
 {
   const int length = node_name.size();
   int max_length;
-  MPI_Allreduce(&length, &max_length, 1, MPI_INT, MPI_MAX, comm);
+  //MPI_Allreduce(&length, &max_length, 1, MPI_INT, MPI_MAX, comm);
+  Teuchos::reduceAll<int,int>(*myComm, Teuchos::REDUCE_MAX, 1, &length, &max_length);
   node_name.resize(max_length, ' ');
   std::string all_names;
   const int root = 0;
@@ -1881,14 +1928,17 @@ std::vector<std::vector<int>> D3Solver::gather_node_pids(int & num_nodes)
   if (myPID == root) {
     all_names.resize(max_length*numProc);
   }
-  MPI_Gather(node_name.data(), max_length, MPI_CHAR, all_names.data(), max_length,
-             MPI_CHAR, root, comm);
+  //MPI_Gather(node_name.data(), max_length, MPI_CHAR, all_names.data(), max_length,
+  //           MPI_CHAR, root, comm);
+  Teuchos::gather<int,char>(node_name.data(), max_length, all_names.data(), max_length, root, *myComm);
   if (myPID == root) {
     process_names(all_names, numProc, max_length, num_nodes);
   }
-  MPI_Bcast(&num_nodes, 1, MPI_INT, root, comm);
+  //MPI_Bcast(&num_nodes, 1, MPI_INT, root, comm);
+  Teuchos::broadcast<int, int>(*myComm, root, 1, &num_nodes);
   all_names.resize(max_length*num_nodes);
-  MPI_Bcast(all_names.data(), all_names.size(), MPI_CHAR, root, comm);
+  //MPI_Bcast(all_names.data(), all_names.size(), MPI_CHAR, root, comm);
+  Teuchos::broadcast<int, char>(*myComm, root, all_names.size(), all_names.data());
   int my_node = -1;
   for (int i=0; i<num_nodes; i++) {
     std::string name(all_names.begin() + i*max_length,
@@ -1902,7 +1952,8 @@ std::vector<std::vector<int>> D3Solver::gather_node_pids(int & num_nodes)
   if (myPID == root) {
     node_numbers.resize(numProc);
   }
-  MPI_Gather(&my_node, 1, MPI_INT, node_numbers.data(), 1, MPI_INT, root, comm);
+  //MPI_Gather(&my_node, 1, MPI_INT, node_numbers.data(), 1, MPI_INT, root, comm);
+  Teuchos::gather<int,int>(&my_node, 1, node_numbers.data(), 1, root, *myComm);
   std::vector<std::vector<int>> node_pids;
   if (myPID == root) {
     node_pids.resize(num_nodes);
@@ -1925,14 +1976,18 @@ std::vector<int> D3Solver::gather_nnz_proc(const std::vector<int> & rowBegin) co
       nnz_sub[sub] += nnz_row;
     }
   }
-  int numProc, root(0);
-  MPI_Comm_size(comm, &numProc);
+  //int numProc;
+  //MPI_Comm_size(comm, &numProc);
+  int numProc = myComm->getSize();
+  int root(0);
   std::vector<int> nnz_sub_all;
   if (myPID == root) {
     nnz_sub_all.resize(numProc*numProcSolver);
   }
-  MPI_Gather(nnz_sub.data(), numProcSolver, MPI_INT, nnz_sub_all.data(), numProcSolver,
-             MPI_INT, root, comm);
+  //MPI_Gather(nnz_sub.data(), numProcSolver, MPI_INT, nnz_sub_all.data(), numProcSolver,
+  //           MPI_INT, root, comm);
+  Teuchos::gather<int,int>(nnz_sub.data(), numProcSolver,
+                           nnz_sub_all.data(), numProcSolver, root, *myComm);
   return nnz_sub_all;
 }
 
@@ -2033,7 +2088,9 @@ void D3Solver::assignTargetMPIs(const std::vector<int> & rowBegin)
       }
     }
   }
-  MPI_Bcast(targetMPIs.data(), numProcSolver, MPI_INT, 0, comm);
+  int root = 0;
+  //MPI_Bcast(targetMPIs.data(), numProcSolver, MPI_INT, 0, comm);
+  Teuchos::broadcast<int, int>(*myComm, root, numProcSolver, targetMPIs.data());
 }
 
 int D3Solver::setNumProcSolver(const int numProcSolver_in)
@@ -2072,7 +2129,8 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
                          const int numProcSolver_in)
 {
   if (msg_level > 0) {
-    MPI_Barrier(comm);
+    //MPI_Barrier(comm);
+    myComm->barrier();
     if (myPID == 0) {
       printf( "\n -- D3Solver::initialize -- \n" ); fflush(stdout);
     }
@@ -2274,7 +2332,8 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
     printf( " %d: initialize(r_val=%d)\n",myPID, r_val ); fflush(stdout);
   }
   r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
-  MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+  //MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+  Teuchos::reduceAll<int,int>(*myComm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
   if (msg_level > 0) {
     printf( " => r_val=%d\n",r_val ); fflush(stdout);
   }
@@ -2289,7 +2348,8 @@ int D3Solver::initialize(const std::vector<int> & rowBegin_in,
     columnsUse.shrink_to_fit();
   }
   if (msg_level > 0) {
-    MPI_Barrier(comm);
+    //MPI_Barrier(comm);
+    myComm->barrier();
     if (myPID == 0) printf(" Initialize done\n\n");
   }
   return r_val;
@@ -2336,7 +2396,8 @@ int D3Solver::factorize(const std::vector<double> & values_in)
 {
   int r_val = 0;
   if (msg_level > 0) {
-    MPI_Barrier(comm);
+    //MPI_Barrier(comm);
+    myComm->barrier();
     if (myPID == 0) {
       printf( "\n -- D3Solver::factorize -- \n" ); fflush(stdout);
     }
@@ -2393,9 +2454,12 @@ int D3Solver::factorize(const std::vector<double> & values_in)
       nnz = recvdispls[numProcs];
       std::vector<double> recvbuf;
       recvbuf.resize(nnz, 0);
-      MPI_Alltoallv(sendbuf.data(), sendcounts.data(), senddispls.data(), MPI_DOUBLE,
-                    recvbuf.data(), recvcounts.data(), recvdispls.data(), MPI_DOUBLE,
-                    comm);
+      //MPI_Alltoallv(sendbuf.data(), sendcounts.data(), senddispls.data(), MPI_DOUBLE,
+      //              recvbuf.data(), recvcounts.data(), recvdispls.data(), MPI_DOUBLE,
+      //              comm);
+      Teuchos::alltoAllv<int, double>(sendbuf.data(), sendcounts.data(), senddispls.data(),
+                                      recvbuf.data(), recvcounts.data(), recvdispls.data(),
+                                      *myComm);
 
       // put it into CSR
       for (int i=0; i<nnz; i+=2) {
@@ -2434,7 +2498,8 @@ int D3Solver::factorize(const std::vector<double> & values_in)
     // Amesos2 numerical factorization
     size_t n = rowBeginSub.size()-1;
     if (msg_level > 0) {
-      MPI_Barrier(comm);
+      //MPI_Barrier(comm);
+      myComm->barrier();
       printf("%d: n=%d\n",myPID,int(n)); fflush(stdout);
       if (myPID == 0) {
         printf( " > Amesos2:factorize\n" ); fflush(stdout);
@@ -2539,7 +2604,8 @@ int D3Solver::factorize(const std::vector<double> & values_in)
               for (int i=0; i<n; i++) fprintf(fp,"%d\n",m_parts(i));
               fclose(fp);
             }
-            MPI_Barrier(MPI_COMM_WORLD);
+            //MPI_Barrier(MPI_COMM_WORLD);
+            myComm->barrier();
 #endif
             // kokkos-backend for numeric factorization
             amesos2_solver->setA(Teuchos::rcpFromRef(crsmat), Amesos2::SYMBFACT);
@@ -2601,7 +2667,8 @@ int D3Solver::factorize(const std::vector<double> & values_in)
     }
   }
   r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
-  MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+  //MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+  Teuchos::reduceAll<int,int>(*myComm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
 #ifdef MATRIX_OUT
   {
     char filename[250];
@@ -2625,14 +2692,16 @@ int D3Solver::factorize(const std::vector<double> & values_in)
       timer_factor[level] = clockIt() - startTime;
       // check at each level;
       r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
-      MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+      //MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+      Teuchos::reduceAll<int,int>(*myComm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
       if (r_val != 0) break;
       level++;
     }
   }
 
   if (msg_level > 0) {
-    MPI_Barrier(comm);
+    //MPI_Barrier(comm);
+    myComm->barrier();
     if (myPID == 0) printf(" Factorize done\n\n");
   }
   return r_val;
@@ -2847,7 +2916,8 @@ int D3Solver::solve(const std::vector<double> & rhs,
       getSubRhs(rhsRe);
 #ifdef MATRIX_OUT
       {
-        int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+        //int myRank; MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+        int myRank = myComm->getRank ()
         char filename[250];
         sprintf(filename,"RHS%d_RE.dat", myRank);
         FILE *fp = fopen(filename, "w");
@@ -3007,7 +3077,8 @@ int D3Solver::solve(const std::vector<double> & rhs,
     timer_solve[level] += clockIt() - startTime;
     // check at each level;
     r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
-    MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+    //MPI_Allreduce(MPI_IN_PLACE, &r_val, 1, MPI_INT, MPI_MIN, comm);
+    Teuchos::reduceAll<int,int>(*myComm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
     if (r_val != 0) return r_val;
 
     level++;
@@ -3138,7 +3209,8 @@ void D3Solver::permsolve(const std::vector<int> perm,
   std::vector<int> recvcounts_rhs;
   std::vector<int> recvdispls_rhs;
   recvcounts_rhs.resize(numProcs, 0);
-  MPI_Alltoall(sendcounts_rhs.data(), 1, MPI_INT, recvcounts_rhs.data(), 1, MPI_INT, comm);
+  //MPI_Alltoall(sendcounts_rhs.data(), 1, MPI_INT, recvcounts_rhs.data(), 1, MPI_INT, comm);
+  Teuchos::alltoAll<int, int>(sendcounts_rhs.data(), 1, recvcounts_rhs.data(), 1, *myComm);
   recvdispls_rhs.resize(numProcs+1, 0);
   for (int p=0; p<numProcs; p++) {
     recvdispls_rhs[p+1] = recvdispls_rhs[p] + recvcounts_rhs[p];
@@ -3168,9 +3240,12 @@ void D3Solver::permsolve(const std::vector<int> perm,
   // communicate !!
   std::vector<double> recvbuf;
   recvbuf.resize(2*lengthRhs, 0);
-  MPI_Alltoallv(sendbuf.data(), sendcounts_rhs.data(), senddispls_rhs.data(), MPI_DOUBLE,
-                recvbuf.data(), recvcounts_rhs.data(), recvdispls_rhs.data(), MPI_DOUBLE,
-                comm);
+  //MPI_Alltoallv(sendbuf.data(), sendcounts_rhs.data(), senddispls_rhs.data(), MPI_DOUBLE,
+  //              recvbuf.data(), recvcounts_rhs.data(), recvdispls_rhs.data(), MPI_DOUBLE,
+  //              comm);
+  Teuchos::alltoAllv<int, double>(sendbuf.data(), sendcounts_rhs.data(), senddispls_rhs.data(),
+                                  recvbuf.data(), recvcounts_rhs.data(), recvdispls_rhs.data(),
+                                  *myComm);
 
   for (int i=0; i<lengthRhs; i++) {
     int    row = int(recvbuf[2*i])-startGID;
@@ -3558,10 +3633,15 @@ void D3Solver::initialize_schur_complement(const int level,
   int color, key;
   get_color_and_key(numSub, mult, color, key);
   MPI_Comm_split(comm, color, key, &comm_level[level]);
+
   int myPID_level(-1), num_proc_level(-1);
   if (color == 1) {
-    MPI_Comm_rank(comm_level[level], &myPID_level);
-    MPI_Comm_size(comm_level[level], &num_proc_level);
+    //MPI_Comm_rank(comm_level[level], &myPID_level);
+    //MPI_Comm_size(comm_level[level], &num_proc_level);
+    // TODO: use myComm->split(color, key);
+    my_comm_level[level] = Teuchos::rcp(new comm_type (comm_level[level]));
+    myPID_level = my_comm_level[level]->getRank();
+    num_proc_level = my_comm_level[level]->getSize();
   }
   // next step is to gather and sum dense matrix contributions to Schur complements
   int send_to_pid, recv_from_pid, recv_index;
@@ -3577,7 +3657,8 @@ void D3Solver::initialize_schur_complement(const int level,
     assemble_dense(level, rowGIDsSubB, rowGIDsSubB_recv, sep_number, rowGIDsB, not_in_sep);
     add_sparse_contrib(level, sep_number, not_in_sep, rowGIDsB);
   }
-  MPI_Barrier(comm);
+  //MPI_Barrier(comm);
+  myComm->barrier();
 }
 
 int D3Solver::get_sep_number(const int sep_start,
@@ -3725,7 +3806,8 @@ void D3Solver::output_time(const std::string & message,
                            const double time) const
 {
   double time_max;
-  MPI_Allreduce(&time, &time_max, 1, MPI_DOUBLE, MPI_MAX, comm);
+  //MPI_Allreduce(&time, &time_max, 1, MPI_DOUBLE, MPI_MAX, comm);
+  Teuchos::reduceAll<int,double>(*myComm, Teuchos::REDUCE_MAX, 1, &time, &time_max);
   if (myPID == 0) {
     std::cout << message << time_max << std::endl;
   }
