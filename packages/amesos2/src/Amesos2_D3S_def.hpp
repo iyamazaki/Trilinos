@@ -77,7 +77,8 @@ D3S<Matrix,Vector>::D3S(
   MPI_Comm D3SComm = *(matMpiComm->getRawMpiComm ());
   D3SComm_ = MPI_Comm_c2f(D3SComm);
 
-  solver = Teuchos::rcp (new D3Solver(D3SComm));
+  // NOTE: initialize with d3s_dtype = double or float
+  solver = Teuchos::rcp (new D3Solver<d3s_dtype>(D3SComm));
 }
 
 
@@ -157,7 +158,7 @@ D3S<Matrix,Vector>::numericFactorization_impl()
     Teuchos::TimeMonitor numFactTimer(this->timers_.numFactTime_);
 #endif
     int nnz = nzvals_view_.extent(0);
-    std::vector<d3s_dtype> values(nzvals_view_.data(), nzvals_view_.data()+(nnz));
+    std::vector<scalar_type> values(nzvals_view_.data(), nzvals_view_.data()+(nnz));
     info = function_map::factorize(solver, values);
   } catch (const std::exception& e) {
     if (msg_level_ > 0 &&  this->root_ ) {
@@ -203,7 +204,7 @@ D3S<Matrix,Vector>::solve_impl(
 
     Util::get_1d_copy_helper<
       MultiVecAdapter<Vector>,
-      d3s_dtype>::do_get(B, bvals_(),
+      scalar_type>::do_get(B, bvals_(),
         as<size_t>(ld_rhs),
         Teuchos::ptrInArg(*d3s_rowmap_));
   }
@@ -213,8 +214,8 @@ D3S<Matrix,Vector>::solve_impl(
     Teuchos::TimeMonitor solveTimer(this->timers_.solveTime_);
 #endif
     for (int j=0; j<nrhs_; j++) {
-      std::vector<d3s_dtype> rhs (bvals_.getRawPtr()+(j*ld_rhs), bvals_.getRawPtr()+((j+1)*ld_rhs));
-      std::vector<d3s_dtype> sol (tvals_.getRawPtr()+(j*ld_rhs), tvals_.getRawPtr()+((j+1)*ld_rhs));
+      std::vector<scalar_type> rhs (bvals_.getRawPtr()+(j*ld_rhs), bvals_.getRawPtr()+((j+1)*ld_rhs));
+      std::vector<scalar_type> sol (tvals_.getRawPtr()+(j*ld_rhs), tvals_.getRawPtr()+((j+1)*ld_rhs));
 
       ierr = function_map::solve(solver, rhs, sol);
 
@@ -245,7 +246,7 @@ D3S<Matrix,Vector>::solve_impl(
 
     Util::put_1d_data_helper<
     MultiVecAdapter<Vector>,
-      d3s_dtype>::do_put(X, xvals_(),
+      scalar_type>::do_put(X, xvals_(),
         as<size_t>(ld_rhs),
         Teuchos::ptrInArg(*d3s_rowmap_));
   }
