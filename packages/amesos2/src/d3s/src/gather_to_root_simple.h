@@ -4,30 +4,35 @@
 #include <mpi.h>
 #include "throwAssert.h"
 
+#include "Teuchos_CommHelpers.hpp"
+
+template <typename SC>
 class GatherToRootSimple
 {
 public:
+  using comm_type = Teuchos::MpiComm<int>;
+
   GatherToRootSimple(const std::vector<int> & rowBeginIn,
                      const std::vector<int> & columnsIn,
-                     MPI_Comm commIn);
+                     Teuchos::RCP<comm_type> commIn);
 
   int getMyPID();
   
   void initialize();
   
-  void gatherMatrix(const std::vector<double> & values,
-                    std::vector<double> & valuesTarget);
+  void gatherMatrix(const std::vector<SC> & values,
+                          std::vector<SC> & valuesTarget);
 
-  void gatherRhs(const std::vector<double> & rhs,
-                 std::vector<double> & rhsRoot);
+  void gatherRhs(const std::vector<SC> & rhs,
+                       std::vector<SC> & rhsRoot);
   
-  void scatterSol(const std::vector<double> & solRoot,
-                  std::vector<double> & sol);
+  void scatterSol(const std::vector<SC> & solRoot,
+                        std::vector<SC> & sol);
   
-  void broadcastSol(std::vector<double> & solRoot);
+  void broadcastSol(std::vector<SC> & solRoot);
   
-  double checkMatrix(const std::vector<double> & values,
-                     const std::vector<double> & valuesTarget);
+  SC checkMatrix(const std::vector<SC> & values,
+                 const std::vector<SC> & valuesTarget);
 
   const std::vector<int> & getRowBeginRoot();
 
@@ -40,7 +45,7 @@ public:
 
   const std::vector<int> & rowBegin;
   const std::vector<int> & columns;
-  MPI_Comm comm;
+  Teuchos::RCP<comm_type> comm;
 
   std::vector<int> rowBeginRoot, columnsRoot, numRowsProc, nnzProc;
   int myPID, numProc, root=0;

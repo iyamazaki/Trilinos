@@ -11,34 +11,39 @@
 #include <cstdlib>
 #include "gather_to_root_simple.h"
 
-GatherToRootSimple::GatherToRootSimple(const std::vector<int> & rowBeginIn,
-                                       const std::vector<int> & columnsIn,
-                                       MPI_Comm commIn):
+template <typename SC>
+GatherToRootSimple<SC>::GatherToRootSimple(const std::vector<int> & rowBeginIn,
+                                           const std::vector<int> & columnsIn,
+                                           Teuchos::RCP<comm_type> commIn):
   rowBegin(rowBeginIn),
   columns(columnsIn),
   comm(commIn)
 {
-  MPI_Comm_rank(comm, &myPID);
-  MPI_Comm_size(comm, &numProc);
+  myPID = comm->getRank();
+  numProc = comm->getSize();
 }
 
-const std::vector<int> & GatherToRootSimple::getRowBeginRoot()
+template <typename SC>
+const std::vector<int> & GatherToRootSimple<SC>::getRowBeginRoot()
 {
   return rowBeginRoot;
 }
 
-const std::vector<int> & GatherToRootSimple::getColumnsRoot()
+template <typename SC>
+const std::vector<int> & GatherToRootSimple<SC>::getColumnsRoot()
 {
   return columnsRoot;
 }
 
-int GatherToRootSimple::getMyPID()
+template <typename SC>
+int GatherToRootSimple<SC>::getMyPID()
 {
   return myPID;
 }
 
-void GatherToRootSimple::gatherMatrix(const std::vector<double> & values,
-                                            std::vector<double> & valuesRoot)
+template <typename SC>
+void GatherToRootSimple<SC>::gatherMatrix(const std::vector<SC> & values,
+                                                std::vector<SC> & valuesRoot)
 {
   std::vector<int> displs;
   getDispls(nnzProc, displs);
@@ -47,43 +52,47 @@ void GatherToRootSimple::gatherMatrix(const std::vector<double> & values,
   const int numRowsRoot = rowBeginRoot.size() - 1;
   const int nnzRoot = rowBeginRoot[numRowsRoot];
   valuesRoot.resize(nnzRoot);
-  MPI_Gatherv(values.data(), nnz, MPI_DOUBLE, valuesRoot.data(), nnzProc.data(),
-              displs.data(), MPI_DOUBLE, root, comm);
+  Teuchos::gatherv<int, SC>(values.data(), nnz, valuesRoot.data(), nnzProc.data(),
+                            displs.data(), root, *comm);
 }
 
-void GatherToRootSimple::gatherRhs(const std::vector<double> & rhs,
-                                        std::vector<double> & rhsRoot)
+template <typename SC>
+void GatherToRootSimple<SC>::gatherRhs(const std::vector<SC> & rhs,
+                                             std::vector<SC> & rhsRoot)
 {
   std::vector<int> displs;
   const int numRows = rowBegin.size() - 1;
   getDispls(numRowsProc, displs);
   const int numRowsRoot = rowBeginRoot.size() - 1;
   rhsRoot.resize(numRowsRoot);
-  MPI_Gatherv(rhs.data(), numRows, MPI_DOUBLE, rhsRoot.data(), numRowsProc.data(),
-              displs.data(), MPI_DOUBLE, root, comm);
+  Teuchos::gatherv<int, SC>(rhs.data(), numRows, rhsRoot.data(), numRowsProc.data(),
+                            displs.data(), root, *comm);
 }
 
-void GatherToRootSimple::scatterSol(const std::vector<double> & solRoot,
-                                    std::vector<double> & sol)
+template <typename SC>
+void GatherToRootSimple<SC>::scatterSol(const std::vector<SC> & solRoot,
+                                              std::vector<SC> & sol)
 {
   std::vector<int> displs;
   getDispls(numRowsProc, displs);
   const int numRows = rowBegin.size() - 1;
   sol.resize(numRows);
-  MPI_Scatterv(solRoot.data(), numRowsProc.data(), displs.data(), MPI_DOUBLE,
-               sol.data(), numRows, MPI_DOUBLE, root, comm);
+  Teuchos::scatterv<int, SC>(solRoot.data(), numRowsProc.data(), displs.data(),
+                             sol.data(), numRows, root, *comm);
 }
 
-void GatherToRootSimple::broadcastSol(std::vector<double> & solRoot)
+template <typename SC>
+void GatherToRootSimple<SC>::broadcastSol(std::vector<SC> & solRoot)
 {
   int numRowsRoot = rowBeginRoot.size() - 1;
-  MPI_Bcast(&numRowsRoot, 1, MPI_DOUBLE, root, comm);
+  Teuchos::broadcast<int, int>(*comm, root, 1, &numRowsRoot);
   solRoot.resize(numRowsRoot);
-  MPI_Bcast(solRoot.data(), numRowsRoot, MPI_DOUBLE, root, comm);
+  Teuchos::broadcast<int, SC>(*comm, root, numRowsRoot, solRoot.data());
 }
 
-void GatherToRootSimple::getDispls(const std::vector<int> & numEntriesProc,
-                                   std::vector<int> & displs) const
+template <typename SC>
+void GatherToRootSimple<SC>::getDispls(const std::vector<int> & numEntriesProc,
+                                             std::vector<int> & displs) const
 {
   if (myPID == root) {
     displs.resize(numProc, 0);
@@ -93,7 +102,8 @@ void GatherToRootSimple::getDispls(const std::vector<int> & numEntriesProc,
   }
 }
 
-void GatherToRootSimple::initialize()
+template <typename SC>
+void GatherToRootSimple<SC>::initialize()
 {
   const int numRows = rowBegin.size() - 1;
   const int nnz = rowBegin[numRows];
@@ -101,8 +111,8 @@ void GatherToRootSimple::initialize()
     numRowsProc.resize(numProc);
     nnzProc.resize(numProc);
   }
-  MPI_Gather(&numRows, 1, MPI_INT, numRowsProc.data(), 1, MPI_INT, root, comm);
-  MPI_Gather(&nnz, 1, MPI_INT, nnzProc.data(), 1, MPI_INT, root, comm);
+  Teuchos::gather<int,int>(&numRows, 1, numRowsProc.data(), 1, root, *comm);
+  Teuchos::gather<int,int>(&nnz, 1, nnzProc.data(), 1, root, *comm);
   int numRowsRoot(0), nnzRoot(0);
   for (size_t i=0; i<numRowsProc.size(); i++) {
     numRowsRoot += numRowsProc[i];
@@ -115,8 +125,8 @@ void GatherToRootSimple::initialize()
   // gather number of nonzeros in each row
   std::vector<int> countRoot(numRowsRoot), displs;
   getDispls(numRowsProc, displs);
-  MPI_Gatherv(count.data(), numRows, MPI_INT, countRoot.data(), numRowsProc.data(), displs.data(),
-              MPI_INT, root, comm);
+  Teuchos::gatherv<int, int>(count.data(), numRows, countRoot.data(), numRowsProc.data(),
+                             displs.data(), root, *comm);
   rowBeginRoot.resize(numRowsRoot+1, 0);
   for (int i=0; i<numRowsRoot; i++) {
     rowBeginRoot[i+1] = rowBeginRoot[i] + countRoot[i];
@@ -124,50 +134,68 @@ void GatherToRootSimple::initialize()
   // gather nonzero columns
   columnsRoot.resize(nnzRoot);
   getDispls(nnzProc, displs);
-  MPI_Gatherv(columns.data(), nnz, MPI_INT, columnsRoot.data(), nnzProc.data(), displs.data(),
-              MPI_INT, root, comm);
+  Teuchos::gatherv<int, int>(columns.data(), nnz, columnsRoot.data(), nnzProc.data(),
+                             displs.data(), root, *comm);
 }
 
-double GatherToRootSimple::checkMatrix(const std::vector<double> & values,
-                                       const std::vector<double> & valuesRoot)
+template <typename SC>
+SC GatherToRootSimple<SC>::checkMatrix(const std::vector<SC> & values,
+                                       const std::vector<SC> & valuesRoot)
 {
+  using STS = Teuchos::ScalarTraits<SC>;
+  using MAG = STS::magnitudeType;
   const int numRows = rowBegin.size() - 1;
-  std::vector<double> x(numRows), Ax(numRows);
+  std::vector<SC> x(numRows), Ax(numRows);
   srand(myPID + 7);
   for (int i=0; i<numRows; i++) {
     x[i] = 0.7*rand()/RAND_MAX;
   }
   int numRowsRoot = rowBeginRoot.size() - 1;
-  std::vector<double> xRoot(numRowsRoot);
+  std::vector<SC> xRoot(numRowsRoot);
   std::vector<int> displs;
   getDispls(numRowsProc, displs);
-  MPI_Gatherv(x.data(), numRows, MPI_DOUBLE, xRoot.data(), numRowsProc.data(), displs.data(),
-              MPI_DOUBLE, root, comm);
-  MPI_Bcast(&numRowsRoot, 1, MPI_INT, root, comm);
+  Teuchos::gatherv<int, SC>(x.data(), numRows, xRoot.data(), numRowsProc.data(),
+                            displs.data(), root, *comm);
+  Teuchos::broadcast<int, int>(*comm, root, 1, &numRowsRoot);
   xRoot.resize(numRowsRoot);
-  MPI_Bcast(xRoot.data(), numRowsRoot, MPI_DOUBLE, root, comm);
+  Teuchos::broadcast<int, SC>(*comm, root, numRowsRoot, xRoot.data());
   for (int i=0; i<numRows; i++) {
-    double sum = 0;
+    SC sum = 0;
     for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
       sum += values[j] * xRoot[columns[j]];
     }
     Ax[i] = sum;
   }
   numRowsRoot = rowBeginRoot.size() - 1;
-  std::vector<double> AxRootTrue(numRowsRoot);
+  std::vector<SC> AxRootTrue(numRowsRoot);
   getDispls(numRowsProc, displs);
-  MPI_Gatherv(Ax.data(), numRows, MPI_DOUBLE, AxRootTrue.data(), numRowsProc.data(), displs.data(),
-              MPI_DOUBLE, root, comm);
-  double maxRelError = 0;
+  Teuchos::gatherv<int, SC>(Ax.data(), numRows, AxRootTrue.data(), numRowsProc.data(),
+                            displs.data(), root, *comm);
+  MAG maxRelError = 0;
   for (int i=0; i<numRowsRoot; i++) {
-    double sum(0), sumAbsCoeff(0);
+    SC sum(0);
+    MAG sumAbsCoeff(0);
     for (int j=rowBeginRoot[i]; j<rowBeginRoot[i+1]; j++) {
       sum += valuesRoot[j] * xRoot[columnsRoot[j]];
-      sumAbsCoeff += std::abs(valuesRoot[j]);
+      sumAbsCoeff += STS::magnitude(valuesRoot[j]);
     }
-    const double relError = std::abs(sum - AxRootTrue[i]) / sumAbsCoeff;
+    const MAG relError = STS::magnitude(sum - AxRootTrue[i]) / sumAbsCoeff;
     if (relError > maxRelError) maxRelError = relError;
   }
-  MPI_Bcast(&maxRelError, 1, MPI_DOUBLE, root, comm);
+  Teuchos::broadcast<int, MAG>(*comm, root, 1, &maxRelError);
   return maxRelError;
 }
+
+// ...ETI...
+template class GatherToRootSimple<double>;
+#ifdef HAVE_TEUCHOS_INST_FLOAT
+template class GatherToRootSimple<float>;
+#endif
+#ifdef HAVE_TEUCHOS_INST_COMPLEX_DOUBLE
+//template class GatherToRootSimple<std::complex<double>>;
+//template class GatherToRootSimple<Kokkos::complex<double>>;
+#endif
+#ifdef HAVE_TEUCHOS_INST_COMPLEX_FLOAT
+//template class GatherToRootSimple<std::complex<float>>;
+//template class GatherToRootSimple<Kokkos::complex<float>>;
+#endif

@@ -59,28 +59,32 @@ struct TypeMap<D3S,double>
 template <>
 struct TypeMap<D3S,std::complex<float> >
 {
-  typedef std::complex<double> dtype;
-  typedef Kokkos::complex<double> type;
+  //typedef std::complex<float> dtype;
+  typedef float dtype; // TODO: D3S currently does not support complex
+  typedef Kokkos::complex<float> type;
 };
 
 template <>
 struct TypeMap<D3S,std::complex<double> >
 {
-  typedef std::complex<double> dtype;
+  //typedef std::complex<double> dtype;
+  typedef double dtype; // TODO: D3S currently does not support complex
   typedef Kokkos::complex<double> type;
 };
 
 template <>
 struct TypeMap<D3S,Kokkos::complex<float> >
 {
-  typedef std::complex<double> dtype;
-  typedef Kokkos::complex<double> type;
+  //typedef std::complex<double> dtype;
+  typedef float dtype; // TODO: D3S currently does not support complex
+  typedef Kokkos::complex<float> type;
 };
 
 template <>
 struct TypeMap<D3S,Kokkos::complex<double> >
 {
-  typedef std::complex<double> dtype;
+  //typedef std::complex<double> dtype;
+  typedef double dtype; // TODO: D3S currently does not support complex
   typedef Kokkos::complex<double> type;
 };
 
