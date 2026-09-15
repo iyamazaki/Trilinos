@@ -129,7 +129,7 @@ int main(int argc, char *argv[]){
   int r_val = 0;
   {
     // create solver
-    D3Solver solver(comm);
+    D3Solver<double> solver(comm);
 
     // set solver options
     solver.setNumThreads(num_threads);

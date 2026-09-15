@@ -27,6 +27,7 @@ namespace Amesos2 {
 
   #define AMESOS2_KOKKOS_IMPL_SOLVER_NAME D3S
   #include "Amesos2_Kokkos_Impl.hpp"
+  #include "Amesos2_Kokkos_std_Impl.hpp"
 }
 
 #endif  // HAVE_AMESOS2_EXPLICIT_INSTANTIATION

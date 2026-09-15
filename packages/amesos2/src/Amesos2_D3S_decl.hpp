@@ -68,10 +68,10 @@ public:
   typedef typename type_map::type                                 d3s_type;
   typedef typename type_map::dtype                               d3s_dtype;
 
-  typedef FunctionMap<Amesos2::D3S,d3s_dtype>                  function_map;
+  typedef FunctionMap<Amesos2::D3S,scalar_type>               function_map;
 
-  typedef Matrix                                                matrix_type;
-  typedef MatrixAdapter<matrix_type>                    matrix_adapter_type;
+  typedef Matrix                                               matrix_type;
+  typedef MatrixAdapter<matrix_type>                   matrix_adapter_type;
 
   /// \name Constructor/Destructor methods
   //@{
@@ -209,7 +209,7 @@ private:
   typedef Kokkos::DefaultHostExecutionSpace HostExecSpaceType;
   typedef Kokkos::View<int*,       HostExecSpaceType>    host_size_type_array;
   typedef Kokkos::View<int*,       HostExecSpaceType>    host_ordinal_type_array;
-  typedef Kokkos::View<d3s_dtype*, HostExecSpaceType>    host_value_type_array;
+  typedef Kokkos::View<scalar_type*, HostExecSpaceType>  host_value_type_array;
 
 private:
 
@@ -223,10 +223,10 @@ private:
 
   mutable int nrhs_;
   /// Persisting, contiguous, 1D store for X
-  mutable Teuchos::Array<d3s_dtype> xvals_;
-  mutable Teuchos::Array<d3s_dtype> tvals_;
+  mutable Teuchos::Array<scalar_type> xvals_;
+  mutable Teuchos::Array<scalar_type> tvals_;
   /// Persisting, contiguous, 1D store for B
-  mutable Teuchos::Array<d3s_dtype> bvals_;
+  mutable Teuchos::Array<scalar_type> bvals_;
 
   /// Transpose flag
   /// 0: Non-transpose, 1: Transpose, 2: Conjugate-transpose
@@ -250,7 +250,8 @@ private:
   Teuchos::RCP<const map_type> d3s_contig_rowmap_;
   Teuchos::RCP<const map_type> d3s_contig_colmap_;
 
-  Teuchos::RCP<D3Solver> solver;
+  // NOTE: instantidating with d3s_dtype = double or float
+  Teuchos::RCP<D3Solver<d3s_dtype>> solver;
 };                              // End class D3S
 
 

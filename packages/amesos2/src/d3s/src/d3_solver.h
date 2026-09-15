@@ -2,11 +2,12 @@
 
 #include <vector>
 
+#include "mpi.h"
 #include "metis.h"
 #include "throwAssert.h"
 
+#include "Teuchos_CommHelpers.hpp"
 #include "Teuchos_DefaultMpiComm.hpp"
-#include "mpi.h"
 #include "gather_to_root_simple.h"
 
 #include "Amesos2_Solver.hpp"
@@ -22,11 +23,13 @@
 #ifndef D3SOLVER_HPP
 #define D3SOLVER_HPP
 
+template <typename SC, typename GO = int>
 class D3Solver
 {
 public:
-  D3Solver(MPI_Comm commIn);
+  using comm_type = Teuchos::MpiComm<int>;
 
+  D3Solver(MPI_Comm commIn);
   ~D3Solver();
 
   void setNumThreads(const int num_threadsIn);
@@ -40,14 +43,14 @@ public:
                  const int startGID_in,
                  const int numProcSolver_in);
   
-  int factorize(const std::vector<double> & values);
+  int factorize(const std::vector<SC> & values);
   
-  int solve(const std::vector<double> & rhs,
-                  std::vector<double> & sol,
+  int solve(const std::vector<SC> & rhs,
+                  std::vector<SC> & sol,
             const int numRhs=1);
 
-  void gatherScatterSol(std::vector<double> & sol,
-                        std::vector<double> & solAll) const;
+  void gatherScatterSol(std::vector<SC> & sol,
+                        std::vector<SC> & solAll) const;
   
   void output_timers() const;
   
@@ -112,19 +115,19 @@ public:
                              const std::vector<std::vector<int>> & row_GIDs_send,
                              const std::vector<std::vector<int>> & column_counts_send,
                              const std::vector<std::vector<int>> & column_GIDs_send,
-                             const std::vector<std::vector<double>> & values_send_here,
+                             const std::vector<std::vector<SC>>  & values_send_here,
                              std::vector<std::vector<int>> & num_rows_recv,
                              std::vector<std::vector<int>> & row_GIDs_recv,
                              std::vector<std::vector<int>> & column_counts_recv,
                              std::vector<std::vector<int>> & column_GIDs_recv,
-                             std::vector<std::vector<double>> & values_recv_here,
+                             std::vector<std::vector<SC>>  & values_recv_here,
                              std::vector<int> & my_send_PIDs,
                              std::vector<int> & my_recv_PIDs);
   
-  void communicateMatrixValues(const std::vector<double> & values);
+  void communicateMatrixValues(const std::vector<SC> & values);
   
   void communicateMatrixValuesB(const int level,
-                                const std::vector<double> & values);
+                                const std::vector<SC> & values);
   
   void communicateRhsData(const std::vector<int> & activeSubs,
                           const std::vector<std::vector<int>> & num_rows_send_rhs);
@@ -143,7 +146,7 @@ public:
   
   void output_sub_matrices(const std::vector<int> & rowBegin,
                            const std::vector<int> & columns,
-                           const std::vector<double> & values);
+                           const std::vector<SC>  & values);
   
   void phase1(const std::vector<int> & rowBegin,
               const std::vector<int> & columns,
@@ -169,7 +172,7 @@ public:
                            const std::vector<std::vector<int>> & column_GIDs_recv,
                            std::vector<int> & rowBegin,
                            std::vector<int> & columns,
-                           std::vector<double> & values,
+                           std::vector<SC>  & values,
                            std::vector<int> & rowGIDs);
   
   void extractMatrixStructures(const int level,
@@ -178,7 +181,7 @@ public:
                      const std::vector<std::vector<int>> & column_GIDs_recv,
                      std::vector<int> & rowBegin,
                      std::vector<int> & columns,
-                     std::vector<double> & values,
+                     std::vector<SC>  & values,
                      std::vector<int> & rowGIDs);
   
   void extractMatrixValues(const int level);
@@ -188,12 +191,12 @@ public:
   void output_dense_matrix(const std::string prefix,
                            const int numRows,
                            const int level,
-                           const std::vector<double> & A) const;
+                           const std::vector<SC> & A) const;
   
   void output_matrices(const std::string prefix,
                        const std::vector<int> & rowBegin,
                        const std::vector<int> & columns,
-                       const std::vector<double> & values,
+                       const std::vector<SC>  & values,
                        const int level) const;
   
   std::vector<int> getSubRows(const std::vector<std::vector<int>> & row_GIDs_recv) const;
@@ -202,11 +205,11 @@ public:
                       const std::vector<int> & columns,
                       std::vector<int> & rowBeginSub,
                       std::vector<int> & columnsSub,
-                      std::vector<double> & valuesSub,
+                      std::vector<SC>  & valuesSub,
                       std::vector<int> & rowGIDsSub);
   
-  void getSubMatrices(const std::vector<double> & values,
-                      std::vector<double> & valuesSub);
+  void getSubMatrices(const std::vector<SC> & values,
+                            std::vector<SC> & valuesSub);
   
   std::vector<int> getRowGIDsSubB(const std::vector<int> & rowGIDsSub);
   
@@ -220,14 +223,14 @@ public:
                       const int recv_pid,
                       const std::vector<int> & sourceGIDs,
                       std::vector<int> & targetGIDs,
-                      MPI_Comm comm_here);
+		      Teuchos::RCP<comm_type> comm_here);
   
   template <typename T>
   void point_to_point_single(const int send_to_pid,
                              const int recv_from_pid,
                              const std::vector<T> & send_data,
                              std::vector<T> & recv_data,
-                             MPI_Comm comm_here);
+			     Teuchos::RCP<comm_type>);
     
   void initialize_schur_complement(const int level,
                                    const std::vector<int> & rowBegin,
@@ -236,10 +239,10 @@ public:
                                    std::vector<int> & not_in_sep);
   
   int compute_schur_complement(const int level,
-                               const std::vector<double> & values);
+                               const std::vector<SC> & values);
   
   int solve_schur_complement(const int level,
-                             const std::vector<double> & rhs);
+                             const std::vector<SC> & rhs);
   
   void assemble_rhs(const int level);
   
@@ -261,17 +264,17 @@ public:
   
   int eliminate_separator_rhs(const int level);
   
-  void convert_to_row_major(const std::vector<double> & A_col_major,
+  void convert_to_row_major(const std::vector<SC> & A_col_major,
                             const int num_rows,
                             const int num_cols,
-                            std::vector<double> & A_row_major) const;
+                            std::vector<SC> & A_row_major) const;
   
   bool determine_valid_row(const int gID,
                            const std::vector<int> & separators) const;
   
-  void getSubRhs(const std::vector<double> & rhs);
+  void getSubRhs(const std::vector<SC> & rhs);
   
-  void putSubSol(std::vector<double> & sol);
+  void putSubSol(std::vector<SC> & sol);
   
   void gatherSubRhsI();
   
@@ -300,7 +303,7 @@ public:
                   const int sep_number);
   
   void communicateRhsValuesB(const int level,
-                             const std::vector<double> & rhs);
+                             const std::vector<SC> & rhs);
   
   void communicateRhsData(const std::vector<int> & activeSubs,
                           const std::vector<std::vector<int>> & num_rows_send,
@@ -315,7 +318,7 @@ public:
                       int & sep_start) const;
   
   void communicate_solution(const int level,
-                            std::vector<double> & sol);
+                            std::vector<SC> & sol);
   
   void sort_and_add_zero_diags(std::vector<int> & rowBegin,
                                std::vector<int> & columns);
@@ -324,8 +327,8 @@ public:
                      const int recv_index) const;
   
   void permsolve(const std::vector<int> perm,
-                 const std::vector<double> & rhs,
-                       std::vector<double> & rhsRe);
+                 const std::vector<SC> & rhs,
+                       std::vector<SC> & rhsRe);
   void backsolve(const int level);
   
   void scatter_sol(const int level);
@@ -380,9 +383,9 @@ public:
                     const std::vector<int> & columns,
                     const std::vector<int> & extraEdges);
   
-  void assign_values(const std::vector<double> & values_in);
+  void assign_values(const std::vector<SC> & values_in);
   void assign_values(const std::vector<int> & rowBegin_in,
-                     const std::vector<double> & values_in);
+                     const std::vector<SC>  & values_in);
   
   int get_proc_for_row(const int row,
                        const std::vector<int> & numRowsAll,
@@ -407,9 +410,7 @@ public:
   void getProcName();
  
 private:
-  using comm_type = Teuchos::MpiComm<int>;
-  MPI_Comm comm;
-  Teuchos::RCP<comm_type> myComm;
+  Teuchos::RCP<comm_type> comm;
   int myPID, numProcs, numProcSolver, num_threads;
   int numRows_global, numRows_proc, startGID, num_level;
 
@@ -422,7 +423,7 @@ private:
 
   // 1D block row after row-matching
   std::vector<int> rowBeginRe, columnsRe;
-  std::vector<double> valuesRe;
+  std::vector<SC>  valuesRe;
 
   // comm for matching
   std::vector<int> fstRows;
@@ -436,67 +437,57 @@ private:
     rowsISub, rowsBSub;
   std::vector<int> rowBeginSub, columnsSub, my_send_PIDs_sub, my_recv_PIDs_sub,
     my_send_PIDs_rhs, my_recv_PIDs_rhs, old_to_new_indices, n1a, n2a;
+  std::vector<std::string> node_names;
 
+  const std::vector<int> *rowBeginPtr, *columnsPtr;
+  const std::vector<SC> *valuesPtr;
   std::vector<int> rowBeginUse, columnsUse;
   std::vector<int> rowBeginOrig;
-  std::vector<double> valuesSub, rhsSub, rhsI, rhs_interior, sol_interior,
-    timer_factor, timer_factor_dla, timer_solve, timer_solve_dla, valuesUse;
+  std::vector<SC> valuesSub, rhsSub, rhsI, rhs_interior, sol_interior, valuesUse;
   std::vector<std::vector<int>> sep_map, sep_map_recv, rhs_index_send, sc_GIDs,
     values_send_index, index_map_sub, sep_map_B,
     rowBegin_B, columns_B, my_send_PIDs_B, my_recv_PIDs_B, my_send_PIDs_sep,
     my_recv_PIDs_sep;
   std::vector<std::vector<std::vector<int>>> values_send_B_index,
     index_map_B, rhs_send_sep_index, rhs_recv_sep_index;
-  std::vector<std::vector<std::vector<double>>> values_send_B, values_recv_B,
+  std::vector<std::vector<std::vector<SC>>> values_send_B, values_recv_B,
     rhs_send_sep, rhs_recv_sep;
-  std::vector<std::vector<double>> AS, values_send, values_recv, AS_rhs,
+  std::vector<std::vector<SC>> AS, values_send, values_recv, AS_rhs,
     A11, A12, A21, A22;
   // Schur complement
-  std::vector<std::vector<double>> sc, sc_recv;
+  std::vector<std::vector<SC>> sc, sc_recv;
   // rhs vectors
-  std::vector<std::vector<double>> rhs_send, rhs_recv, rhs_sc, rhs_sc_recv,
+  std::vector<std::vector<SC>> rhs_send, rhs_recv, rhs_sc, rhs_sc_recv,
     rhs_sep, values_B;
-  std::vector<MPI_Comm> comm_level;
-  std::vector<Teuchos::RCP<comm_type>> my_comm_level;
+  std::vector<Teuchos::RCP<comm_type>> comm_level;
   std::string node_name;
-  std::vector<std::string> node_names;
+  // timers
   double timer_interior_numeric=0, timer_interior_symbolic=0,
-    timer_gather_matrices=0;
-  const std::vector<int> *rowBeginPtr, *columnsPtr;
-  const std::vector<double> *valuesPtr;
+         timer_gather_matrices=0;
+  std::vector<double> timer_factor, timer_factor_dla, timer_solve, timer_solve_dla;
   // getrf
   std::vector<std::vector<int>> ipiv;
 
   // Interior Amesos2 solver
   int debug_level_interior;
   std::string solvername;
-  using SC = double;
-  using LO = Tpetra::Map<>::local_ordinal_type;
-  using GO =  Tpetra::Map<>::global_ordinal_type;
-  using NO = Tpetra::Map<>::node_type;
-  using MAT = Tpetra::CrsMatrix<SC,LO,GO>;
-  using MV = Tpetra::MultiVector<SC,LO,GO>;
-  using map_type = Tpetra::Map<LO, GO, NO>;
   Kokkos::View<int*> m_parts;
-  Teuchos::RCP<const map_type > localMap;
-  Teuchos::RCP<MAT> A;
-  Teuchos::RCP<MV> X;
-  Teuchos::RCP<MV> B;
 
   // Kokkos backend
+  using NO = Kokkos::DefaultHostExecutionSpace;
   using execution_space = typename NO::execution_space;
   using memory_space = typename NO::memory_space;
   using device_t = Kokkos::Device<execution_space, memory_space>;
 
-  using crsmat_t = KokkosSparse::CrsMatrix<double, int, device_t>;
-  using mv_view_t = Kokkos::View<double**, Kokkos::LayoutLeft, device_t>;
+  using crsmat_t = KokkosSparse::CrsMatrix<SC, int, device_t>;
+  using mv_view_t = Kokkos::View<SC**, Kokkos::LayoutLeft, device_t>;
   Teuchos::RCP<Amesos2::Solver<crsmat_t,mv_view_t>> amesos2_solver;
   using graph_t = typename crsmat_t::StaticCrsGraphType;
   using rowmap_view_t = typename graph_t::row_map_type::non_const_type;
   using colind_view_t = typename graph_t::entries_type::non_const_type;
   using values_view_t = typename crsmat_t::values_type::non_const_type;
-  using UnmanagedScalar1DViewType = Kokkos::View<double*,  Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
-  using UnmanagedScalar2DViewType = Kokkos::View<double**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+  using UnmanagedScalar1DViewType = Kokkos::View<SC*,  Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+  using UnmanagedScalar2DViewType = Kokkos::View<SC**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
 
   // [D, G; H, S]
   // D in csrmat
