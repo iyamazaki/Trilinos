@@ -9,6 +9,7 @@
 #include "Teuchos_CommHelpers.hpp"
 #include "Teuchos_DefaultMpiComm.hpp"
 #include "gather_to_root_simple.h"
+#include "communication_helper.h"
 
 #include "Amesos2_Solver.hpp"
 
@@ -57,17 +58,6 @@ public:
  private:
   inline double clockIt() const;
 
-  int getLocalID(const int gID,
-                 const std::vector<int> & svec,
-                 const bool do_not_throw=false) const;
-
-  int getLocalID(const int gID,
-                 const int* array,
-                 const int length,
-                 const bool do_not_throw) const;
-  
-  int getLocalID_unsorted(const int gID,
-                          const std::vector<int> & vec) const;
   
   int getLocalID_col(const int gID,
                      const std::vector<int> & vec) const;
@@ -110,37 +100,6 @@ public:
   void getRowSubIDs(const std::vector<int> & rowBegin,
                     const std::vector<int> & columns);
   
-  void communicateMatrixData(const std::vector<int> & activeSubs,
-                             const std::vector<std::vector<int>> & num_rows_send,
-                             const std::vector<std::vector<int>> & row_GIDs_send,
-                             const std::vector<std::vector<int>> & column_counts_send,
-                             const std::vector<std::vector<int>> & column_GIDs_send,
-                             const std::vector<std::vector<SC>>  & values_send_here,
-                             std::vector<std::vector<int>> & num_rows_recv,
-                             std::vector<std::vector<int>> & row_GIDs_recv,
-                             std::vector<std::vector<int>> & column_counts_recv,
-                             std::vector<std::vector<int>> & column_GIDs_recv,
-                             std::vector<std::vector<SC>>  & values_recv_here,
-                             std::vector<int> & my_send_PIDs,
-                             std::vector<int> & my_recv_PIDs);
-  
-  void communicateMatrixValues(const std::vector<SC> & values);
-  
-  void communicateMatrixValuesB(const int level,
-                                const std::vector<SC> & values);
-  
-  void communicateRhsData(const std::vector<int> & activeSubs,
-                          const std::vector<std::vector<int>> & num_rows_send_rhs);
-  
-  std::vector<int> myReceives(const std::vector<int> & mySends);
-  
-  template <typename T>
-  void communicateData(const std::vector<std::vector<T>> & data_send,
-                       const std::vector<int> & my_recv_PIDs,
-                       const std::vector<int> & my_send_PIDs,
-                       std::vector<std::vector<T>> & data_recv,
-                       const bool reverse_comm=false);
-
   void output_rows(const std::string name,
                    const std::vector<int> & rows);
   
@@ -302,23 +261,11 @@ public:
                   const int delta_pid,
                   const int sep_number);
   
-  void communicateRhsValuesB(const int level,
-                             const std::vector<SC> & rhs);
-  
-  void communicateRhsData(const std::vector<int> & activeSubs,
-                          const std::vector<std::vector<int>> & num_rows_send,
-                          const std::vector<std::vector<int>> & row_GIDs_send,
-                          std::vector<std::vector<int>> & row_GIDs_recv,
-                          std::vector<int> & my_send_PIDs,
-                          std::vector<int> & my_recv_PIDs);
   
   void get_level_ints(const int level,
                       int & numSub,
                       int & mult,
                       int & sep_start) const;
-  
-  void communicate_solution(const int level,
-                            std::vector<SC> & sol);
   
   void sort_and_add_zero_diags(std::vector<int> & rowBegin,
                                std::vector<int> & columns);
