@@ -246,8 +246,12 @@ namespace Amesos2 {
       this->returnValues_kokkos_view(nzval);
       this->returnRowPtr_kokkos_view(rowptr);
       this->returnColInd_kokkos_view(colind);
+
+      // get nnz from rowptr (in case there are extra space in nzval or colind)
+      // currently, rowptr is on host
+      //  (e.g., Tacho only have nzval on device, cuSolver does not call this routine)
       size_t m = rowptr.extent(0)-1;
-      nnz = rowptr(m); //nzval.size(); // in case there are extra space in nzval or colind
+      nnz = rowptr(m); //nzval.size();
       return;
     }
 
@@ -260,8 +264,15 @@ namespace Amesos2 {
 
     RCP<const type> get_mat;
     if( *rowmap == *this->row_map_ && distribution != CONTIGUOUS_AND_ROOTED ){
-      // No need to redistribute
-      get_mat = rcp(this,false); // non-owning
+      if (ordering == NUMERICAL_VALUES) {
+        // Short-circuit just to copy numerical values out
+        this->returnValues_kokkos_view(nzval);
+        nnz = this->getLocalNNZ();
+        return;
+      } else {
+        // No need to redistribute
+        get_mat = rcp(this,false); // non-owning
+      }
     } else {
       get_mat = get(rowmap, distribution);
     }
