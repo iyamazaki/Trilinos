@@ -264,7 +264,7 @@ namespace Amesos2 {
 
     RCP<const type> get_mat;
     if( *rowmap == *this->row_map_ && distribution != CONTIGUOUS_AND_ROOTED ){
-      if (ordering == NUMERICAL_VALUES) {
+      if (ordering == NUMERICAL_VALUES_ONLY) {
         // Short-circuit just to copy numerical values out
         this->returnValues_kokkos_view(nzval);
         nnz = this->getLocalNNZ();

@@ -107,7 +107,7 @@ namespace Amesos2 {
   typedef enum {
     SORTED_INDICES,             /**< row/col indices need to appear in sorted order */
     ARBITRARY,                  /**< index order can be arbitrary */
-    NUMERICAL_VALUES            /**< just copy out numerical values */
+    NUMERICAL_VALUES_ONLY       /**< just copy out numerical values */
   } EStorage_Ordering;
 
 }
