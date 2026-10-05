@@ -416,6 +416,24 @@ class CrsGraph : public RowGraph<LocalOrdinal, GlobalOrdinal, Node>,
            const CrsGraph<local_ordinal_type, global_ordinal_type, node_type>& originalGraph,
            const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
 
+  /// \brief Constructor specifying map and an existing graph to view.
+  ///
+  /// \param rowMap [in] Distribution of rows of the graph.
+  /// \param colMap [in] Distribution of columns of the graph.
+  /// \param domainMap [in] Distribution of domain of the graph.
+  /// \param domainMap [in] Distribution of range of the graph.
+  /// \param originalGraph [in] The existing graph to view.
+  ///
+  /// \param params [in/out] Optional list of parameters.  If not
+  ///   null, any missing parameters will be filled in with their
+  ///   default values.
+  CrsGraph(const Teuchos::RCP<const map_type>& rowMap,
+           const Teuchos::RCP<const map_type>& colMap,
+           const Teuchos::RCP<const map_type>& domainMap,
+           const Teuchos::RCP<const map_type>& rangeMap,
+           const CrsGraph<local_ordinal_type, global_ordinal_type, node_type>& originalGraph,
+           const Teuchos::RCP<Teuchos::ParameterList>& params = Teuchos::null);
+
   /// \brief Constructor specifying column Map and arrays containing
   ///   the graph. In almost all cases the indices must be sorted on input,
   ///   but if they aren't sorted, "sorted" must be set to false in params.

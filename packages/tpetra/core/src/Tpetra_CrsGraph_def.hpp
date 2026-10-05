@@ -501,6 +501,16 @@ CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
              const Teuchos::RCP<const map_type>& colMap,
              const CrsGraph<local_ordinal_type, global_ordinal_type, node_type>& originalGraph,
              const Teuchos::RCP<Teuchos::ParameterList>& params)
+  : CrsGraph(rowMap, colMap, Teuchos::null, Teuchos::null, originalGraph, params) {}
+
+template <class LocalOrdinal, class GlobalOrdinal, class Node>
+CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
+    CrsGraph(const Teuchos::RCP<const map_type>& rowMap,
+             const Teuchos::RCP<const map_type>& colMap,
+             const Teuchos::RCP<const map_type>& domainMap,
+             const Teuchos::RCP<const map_type>& rangeMap,
+             const CrsGraph<local_ordinal_type, global_ordinal_type, node_type>& originalGraph,
+             const Teuchos::RCP<Teuchos::ParameterList>& params)
   : dist_object_type(rowMap)
   , rowMap_(rowMap)
   , colMap_(colMap)
@@ -531,6 +541,9 @@ CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
   } else {
     gblInds_wdv = global_inds_wdv_type(originalGraph.gblInds_wdv, 0, numNonZeros);
   }
+
+  setDomainRangeMaps(domainMap.is_null() ? originalGraph.getDomainMap() : domainMap,
+                     rangeMap.is_null() ? originalGraph.getRangeMap() : rangeMap);
 
   checkInternalState();
 }
