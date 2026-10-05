@@ -14,6 +14,7 @@
 /// \brief Definition of the Tpetra::CrsGraph class
 
 #include <memory>
+#include "Teuchos_Assert.hpp"
 #include "Tpetra_Details_iallreduce.hpp"
 #ifdef KOKKOS_ENABLE_SYCL
 #include <sycl/sycl.hpp>
@@ -526,20 +527,35 @@ CrsGraph<LocalOrdinal, GlobalOrdinal, Node>::
       originalGraph.getRowMap()->getLocalNumElements() != rowMap->getLocalNumElements(),
       std::runtime_error,
       ": The input row Map and the original graph need to have the same "
-      "number of rows.");
+      "number of elements.");
+  TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC(
+      originalGraph.getColMap()->getLocalNumElements() != colMap->getLocalNumElements(),
+      std::runtime_error,
+      ": The input column Map and the original graph need to have the same "
+      "number of elements.");
+  if (!domainMap.is_null()) {
+    TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC(
+        originalGraph.getDomainMap()->getLocalNumElements() != domainMap->getLocalNumElements(),
+        std::runtime_error,
+        ": The input domain Map and the original graph need to have the same "
+        "number of elements.");
+  }
+  if (!rangeMap.is_null()) {
+    TEUCHOS_TEST_FOR_EXCEPTION_CLASS_FUNC(
+        originalGraph.getRangeMap()->getLocalNumElements() != rangeMap->getLocalNumElements(),
+        std::runtime_error,
+        ": The input range Map and the original graph need to have the same "
+        "number of elements.");
+  }
 
-  int numRows        = rowMap->getLocalNumElements();
-  size_t numNonZeros = originalGraph.getRowPtrsPackedHost()(numRows);
-  auto rowsToUse     = Kokkos::pair<size_t, size_t>(0, numRows + 1);
-
-  this->setRowPtrsUnpacked(Kokkos::subview(originalGraph.getRowPtrsUnpackedDevice(), rowsToUse));
-  this->setRowPtrsPacked(Kokkos::subview(originalGraph.getRowPtrsPackedDevice(), rowsToUse));
+  this->setRowPtrsUnpacked(originalGraph.getRowPtrsUnpackedDevice());
+  this->setRowPtrsPacked(originalGraph.getRowPtrsPackedDevice());
 
   if (indicesAreLocal_) {
-    lclIndsUnpacked_wdv = local_inds_wdv_type(originalGraph.lclIndsUnpacked_wdv, 0, numNonZeros);
-    lclIndsPacked_wdv   = local_inds_wdv_type(originalGraph.lclIndsPacked_wdv, 0, numNonZeros);
+    lclIndsUnpacked_wdv = originalGraph.lclIndsUnpacked_wdv;
+    lclIndsPacked_wdv   = originalGraph.lclIndsPacked_wdv;
   } else {
-    gblInds_wdv = global_inds_wdv_type(originalGraph.gblInds_wdv, 0, numNonZeros);
+    gblInds_wdv = originalGraph.gblInds_wdv;
   }
 
   setDomainRangeMaps(domainMap.is_null() ? originalGraph.getDomainMap() : domainMap,
