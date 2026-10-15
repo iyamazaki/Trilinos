@@ -325,134 +325,82 @@ void communicateData<int>(const std::vector<std::vector<int>> & data_send,
                                 std::vector<std::vector<int>> & data_recv,
                                 Teuchos::RCP<Teuchos::MpiComm<int>> comm,
                           const bool reverse_comm);
-template
-void communicateData<double>(const std::vector<std::vector<double>> & data_send,
-                             const std::vector<int> & my_recv_PIDs,
-                             const std::vector<int> & my_send_PIDs,
-                                   std::vector<std::vector<double>> & data_recv,
-                                   Teuchos::RCP<Teuchos::MpiComm<int>> comm,
-                             const bool reverse_comm);
-template
-void communicateMatrixData<double>(const std::vector<int> & activeSubs,
-                                   const std::vector<std::vector<int>>     & num_rows_send,
-                                   const std::vector<std::vector<int>>     & row_GIDs_send,
-                                   const std::vector<std::vector<int>>     & column_counts_send,
-                                   const std::vector<std::vector<int>>     & column_GIDs_send,
-                                   const std::vector<std::vector<double>>  & values_send_here,
-                                         std::vector<std::vector<int>>     & num_rows_recv,
-                                         std::vector<std::vector<int>>     & row_GIDs_recv,
-                                         std::vector<std::vector<int>>     & column_counts_recv,
-                                         std::vector<std::vector<int>>     & column_GIDs_recv,
-                                         std::vector<std::vector<double>>  & values_recv_here,
-                                         std::vector<int> & my_send_PIDs,
-                                         std::vector<int> & my_recv_PIDs,
-                                   const std::vector<int> & targetMPIs,
-                                   Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicateMatrixValues<double>(const std::vector<double> & values,
-                                     const std::vector<std::vector<int>> & values_send_index,
-                                           std::vector<int> & my_send_PIDs_sub,
-                                           std::vector<std::vector<double>> & values_send,
-                                     const std::vector<int> & my_recv_PIDs_sub,
-                                           std::vector<std::vector<double>> & values_recv,
-                                     Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicateRhsData<double>(const std::vector<int> & activeSubs,
-                                const std::vector<int> & targetMPIs,
-                                const std::vector<std::vector<int>> & num_rows_send_rhs,
-                                      std::vector<int> & my_send_PIDs_rhs,
-                                      std::vector<int> & my_recv_PIDs_rhs,
-                                      std::vector<std::vector<double>> & rhs_recv,
-                                Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicateMatrixValuesB<double>(const int level, const std::vector<double> & values,
-                                      std::vector<std::vector<std::vector<int>>> & values_send_B_index,
-                                      std::vector<std::vector<std::vector<double>>> & values_send_B,
-                                      std::vector<std::vector<std::vector<double>>> & values_recv_B,
-                                      std::vector<std::vector<int>> & my_send_PIDs_B,
-                                      std::vector<std::vector<int>> & my_recv_PIDs_B,
-                                      Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicateRhsValuesB<double>(const int level, const std::vector<double> & rhs,
-                                   std::vector<std::vector<std::vector<int>>> & rhs_send_sep_index,
-                                   std::vector<std::vector<std::vector<double>>> & rhs_send_sep,
-                                   std::vector<std::vector<std::vector<double>>> & rhs_recv_sep,
-                                   std::vector<std::vector<int>> & my_send_PIDs_sep,
-                                   std::vector<std::vector<int>> & my_recv_PIDs_sep,
-                                   Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicate_solution<double>(const int level, std::vector<double> & sol,
-                                  std::vector<std::vector<double>> & AS_rhs,
-                                  std::vector<std::vector<std::vector<int>>> & rhs_send_sep_index,
-                                  std::vector<std::vector<std::vector<int>>> & rhs_recv_sep_index,
-                                  std::vector<std::vector<std::vector<double>>> & rhs_send_sep,
-                                  std::vector<std::vector<std::vector<double>>> & rhs_recv_sep,
-                                  std::vector<std::vector<int>> & my_send_PIDs_sep,
-                                  std::vector<std::vector<int>> & my_recv_PIDs_sep,
-                                  Teuchos::RCP<Teuchos::MpiComm<int>> comm);
+
+#define INSTANTIATE_COMMUNICATION_HELPER(T) \
+template \
+void communicateData<T>(const std::vector<std::vector<T>> & data_send,  \
+                        const std::vector<int> & my_recv_PIDs,          \
+                        const std::vector<int> & my_send_PIDs,          \
+                              std::vector<std::vector<T>> & data_recv,  \
+                              Teuchos::RCP<Teuchos::MpiComm<int>> comm, \
+                        const bool reverse_comm);                       \
+template \
+void communicateMatrixData<T>(const std::vector<int> & activeSubs,                      \
+                              const std::vector<std::vector<int>> & num_rows_send,      \
+                              const std::vector<std::vector<int>> & row_GIDs_send,      \
+                              const std::vector<std::vector<int>> & column_counts_send, \
+                              const std::vector<std::vector<int>> & column_GIDs_send,   \
+                              const std::vector<std::vector<T>>   & values_send_here,   \
+                                    std::vector<std::vector<int>> & num_rows_recv,      \
+                                    std::vector<std::vector<int>> & row_GIDs_recv,      \
+                                    std::vector<std::vector<int>> & column_counts_recv, \
+                                    std::vector<std::vector<int>> & column_GIDs_recv,   \
+                                    std::vector<std::vector<T>>   & values_recv_here,   \
+                                    std::vector<int> & my_send_PIDs,                    \
+                                    std::vector<int> & my_recv_PIDs,                    \
+                              const std::vector<int> & targetMPIs,                      \
+                              Teuchos::RCP<Teuchos::MpiComm<int>> comm);                \
+template \
+void communicateMatrixValues<T>(const std::vector<T> & values,                           \
+                                const std::vector<std::vector<int>> & values_send_index, \
+                                      std::vector<int> & my_send_PIDs_sub,               \
+                                      std::vector<std::vector<T>> & values_send,         \
+                                const std::vector<int> & my_recv_PIDs_sub,               \
+                                      std::vector<std::vector<T>> & values_recv,         \
+                                Teuchos::RCP<Teuchos::MpiComm<int>> comm);               \
+template \
+void communicateRhsData<T>(const std::vector<int> & activeSubs,                     \
+                           const std::vector<int> & targetMPIs,                     \
+                           const std::vector<std::vector<int>> & num_rows_send_rhs, \
+                                 std::vector<int> & my_send_PIDs_rhs,               \
+                                 std::vector<int> & my_recv_PIDs_rhs,               \
+                                 std::vector<std::vector<T>> & rhs_recv,            \
+                           Teuchos::RCP<Teuchos::MpiComm<int>> comm);               \
+template \
+void communicateMatrixValuesB<T>(const int level, const std::vector<T> & values,                   \
+                                 std::vector<std::vector<std::vector<int>>> & values_send_B_index, \
+                                 std::vector<std::vector<std::vector<T>>> & values_send_B,         \
+                                 std::vector<std::vector<std::vector<T>>> & values_recv_B,         \
+                                 std::vector<std::vector<int>> & my_send_PIDs_B,                   \
+                                 std::vector<std::vector<int>> & my_recv_PIDs_B,                   \
+                                 Teuchos::RCP<Teuchos::MpiComm<int>> comm);                        \
+template \
+void communicateRhsValuesB<T>(const int level, const std::vector<T> & rhs,                     \
+                              std::vector<std::vector<std::vector<int>>> & rhs_send_sep_index, \
+                              std::vector<std::vector<std::vector<T>>> & rhs_send_sep,         \
+                              std::vector<std::vector<std::vector<T>>> & rhs_recv_sep,         \
+                              std::vector<std::vector<int>> & my_send_PIDs_sep,                \
+                              std::vector<std::vector<int>> & my_recv_PIDs_sep,                \
+                              Teuchos::RCP<Teuchos::MpiComm<int>> comm);                       \
+template \
+void communicate_solution<T>(const int level, std::vector<T> & sol,                           \
+                             std::vector<std::vector<T>> & AS_rhs,                            \
+                             std::vector<std::vector<std::vector<int>>> & rhs_send_sep_index, \
+                             std::vector<std::vector<std::vector<int>>> & rhs_recv_sep_index, \
+                             std::vector<std::vector<std::vector<T>>> & rhs_send_sep,         \
+                             std::vector<std::vector<std::vector<T>>> & rhs_recv_sep,         \
+                             std::vector<std::vector<int>> & my_send_PIDs_sep,                \
+                             std::vector<std::vector<int>> & my_recv_PIDs_sep,                \
+                             Teuchos::RCP<Teuchos::MpiComm<int>> comm);
+
+
+INSTANTIATE_COMMUNICATION_HELPER(double)
 #ifdef HAVE_TEUCHOS_INST_FLOAT
-template
-void communicateData<float>(const std::vector<std::vector<float>> & data_send,
-                            const std::vector<int> & my_recv_PIDs,
-                            const std::vector<int> & my_send_PIDs,
-                                  std::vector<std::vector<float>> & data_recv,
-                                  Teuchos::RCP<Teuchos::MpiComm<int>> comm,
-                            const bool reverse_comm);
-template
-void communicateMatrixData<float>(const std::vector<int> & activeSubs,
-                                  const std::vector<std::vector<int>>    & num_rows_send,
-                                  const std::vector<std::vector<int>>    & row_GIDs_send,
-                                  const std::vector<std::vector<int>>    & column_counts_send,
-                                  const std::vector<std::vector<int>>    & column_GIDs_send,
-                                  const std::vector<std::vector<float>>  & values_send_here,
-                                        std::vector<std::vector<int>>    & num_rows_recv,
-                                        std::vector<std::vector<int>>    & row_GIDs_recv,
-                                        std::vector<std::vector<int>>    & column_counts_recv,
-                                        std::vector<std::vector<int>>    & column_GIDs_recv,
-                                        std::vector<std::vector<float>>  & values_recv_here,
-                                        std::vector<int> & my_send_PIDs,
-                                        std::vector<int> & my_recv_PIDs,
-                                  const std::vector<int> & targetMPIs,
-template
-void communicateMatrixValues<float>(const std::vector<float> & values,
-                                    const std::vector<std::vector<int>> & values_send_index,
-                                          std::vector<int> & my_send_PIDs_sub,
-                                          std::vector<std::vector<float>> & values_send,
-                                    const std::vector<int> & my_recv_PIDs_sub,
-                                          std::vector<std::vector<float>> & values_recv,
-                                    Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicateRhsData<float>(const std::vector<int> & activeSubs,
-                               const std::vector<int> & targetMPIs,
-                               const std::vector<std::vector<int>> & num_rows_send_rhs,
-                                     std::vector<int> & my_send_PIDs_rhs,
-                                     std::vector<int> & my_recv_PIDs_rhs,
-                                     std::vector<std::vector<float>> & rhs_recv,
-                               Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicateMatrixValuesB<float>(const int level, const std::vector<float> & values,
-                                     std::vector<std::vector<std::vector<int>>> & values_send_B_index,
-                                     std::vector<std::vector<std::vector<float>>> & values_send_B,
-                                     std::vector<std::vector<std::vector<float>>> & values_recv_B,
-                                     std::vector<std::vector<int>> & my_send_PIDs_B,
-                                     std::vector<std::vector<int>> & my_recv_PIDs_B,
-                                     Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicateRhsValuesB<float>(const int level, const std::vector<float> & rhs,
-                                  std::vector<std::vector<std::vector<int>>> & rhs_send_sep_index,
-                                  std::vector<std::vector<std::vector<float>>> & rhs_send_sep,
-                                  std::vector<std::vector<std::vector<float>>> & rhs_recv_sep,
-                                  std::vector<std::vector<int>> & my_send_PIDs_sep,
-                                  std::vector<std::vector<int>> & my_recv_PIDs_sep,
-                                  Teuchos::RCP<Teuchos::MpiComm<int>> comm);
-template
-void communicate_solution<float>(const int level, std::vector<float> & sol,
-                                 std::vector<std::vector<float>> & AS_rhs,
-                                 std::vector<std::vector<std::vector<int>>> & rhs_send_sep_index,
-                                 std::vector<std::vector<std::vector<int>>> & rhs_recv_sep_index,
-                                 std::vector<std::vector<std::vector<float>>> & rhs_send_sep,
-                                 std::vector<std::vector<std::vector<float>>> & rhs_recv_sep,
-                                 std::vector<std::vector<int>> & my_send_PIDs_sep,
-                                 std::vector<std::vector<int>> & my_recv_PIDs_sep,
-                                 Teuchos::RCP<Teuchos::MpiComm<int>> comm);
+INSTANTIATE_COMMUNICATION_HELPER(float)
+#endif
+#ifdef HAVE_TEUCHOS_INST_COMPLEX_DOUBLE
+//INSTANTIATE_COMMUNICATION_HELPER(std::complex<double>)
+#endif
+#ifdef HAVE_TEUCHOS_INST_COMPLEX_FLOAT
+//INSTANTIATE_COMMUNICATION_HELPER(std::complex<float>)
 #endif

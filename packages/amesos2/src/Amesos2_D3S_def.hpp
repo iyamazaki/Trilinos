@@ -77,8 +77,12 @@ D3S<Matrix,Vector>::D3S(
   MPI_Comm D3SComm = *(matMpiComm->getRawMpiComm ());
   D3SComm_ = MPI_Comm_c2f(D3SComm);
 
-  // NOTE: initialize with d3s_dtype = double or float
-  solver = Teuchos::rcp (new D3Solver<d3s_dtype>(D3SComm));
+  if constexpr (std::is_same_v<scalar_type, double> || std::is_same_v<scalar_type, float>) {
+    // NOTE: initialize with d3s_dtype = double or float
+    solver = Teuchos::rcp (new d3solver_type(D3SComm));
+  } else {
+    TEUCHOS_TEST_FOR_EXCEPTION(true, std::logic_error, "D3S supports only double or float");
+  }
 }
 
 
@@ -113,15 +117,19 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
 {
   int info = 0;
   try {
-    solver->setNumThreads(num_threads_);
-    solver->setOrderingOption(matching_option_, reorder_option_);
-    solver->setVerbose(msg_level_, debug_level_);
-    solver->setInteriorSolverName(solvername_);
+    if constexpr (std::is_same_v<scalar_type, double> || std::is_same_v<scalar_type, float>) {
+      solver->setNumThreads(num_threads_);
+      solver->setOrderingOption(matching_option_, reorder_option_);
+      solver->setVerbose(msg_level_, debug_level_);
+      solver->setInteriorSolverName(solvername_);
 
-    int nnz = colind_view_.extent(0);
-    std::vector<int> rowBegin(rowptr_view_.data(), rowptr_view_.data()+(numRows_+1));
-    std::vector<int> columns (colind_view_.data(), colind_view_.data()+(nnz));
-    info = solver->initialize(rowBegin, columns, startGID_, numProcSolver_);
+      int nnz = colind_view_.extent(0);
+      std::vector<global_size_type>    rowBegin(rowptr_view_.data(), rowptr_view_.data()+(numRows_+1));
+      std::vector<global_ordinal_type> columns (colind_view_.data(), colind_view_.data()+(nnz));
+      info = solver->initialize(rowBegin, columns, startGID_, numProcSolver_);
+    } else {
+      TEUCHOS_TEST_FOR_EXCEPTION(true, std::logic_error, "D3S supports only double or float");
+    }
   } catch (const std::exception& e) {
     if (msg_level_ > 0 &&  this->root_ ) {
       std::cout << "\n == D3S symbolic threw exception ==\n"
@@ -146,20 +154,18 @@ template <class Matrix, class Vector>
 int
 D3S<Matrix,Vector>::numericFactorization_impl()
 {
-  using Teuchos::as;
-
-  // Cleanup old L and U matrices if we are not reusing a symbolic
-  // factorization.  Stores and other data will be allocated in gstrf.
-  // Only rank 0 has valid pointers, TODO: for D3S
-
   int info = 0;
   try { // Do factorization
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor numFactTimer(this->timers_.numFactTime_);
 #endif
-    int nnz = nzvals_view_.extent(0);
-    std::vector<scalar_type> values(nzvals_view_.data(), nzvals_view_.data()+(nnz));
-    info = function_map::factorize(solver, values);
+    if constexpr (std::is_same_v<scalar_type, double> || std::is_same_v<scalar_type, float>) {
+      int nnz = nzvals_view_.extent(0);
+      std::vector<scalar_type> values(nzvals_view_.data(), nzvals_view_.data()+(nnz));
+      info = solver->factorize(values);
+    } else {
+      TEUCHOS_TEST_FOR_EXCEPTION(true, std::logic_error, "D3S supports only double or float");
+    }
   } catch (const std::exception& e) {
     if (msg_level_ > 0 &&  this->root_ ) {
       std::cout << "\n == D3S numeric threw exception ==\n"
@@ -213,14 +219,16 @@ D3S<Matrix,Vector>::solve_impl(
 #ifdef HAVE_AMESOS2_TIMERS
     Teuchos::TimeMonitor solveTimer(this->timers_.solveTime_);
 #endif
-    for (int j=0; j<nrhs_; j++) {
-      std::vector<scalar_type> rhs (bvals_.getRawPtr()+(j*ld_rhs), bvals_.getRawPtr()+((j+1)*ld_rhs));
-      std::vector<scalar_type> sol (tvals_.getRawPtr()+(j*ld_rhs), tvals_.getRawPtr()+((j+1)*ld_rhs));
+    if constexpr (std::is_same_v<scalar_type, double> || std::is_same_v<scalar_type, float>) {
+      for (int j=0; j<nrhs_; j++) {
+        std::vector<scalar_type> rhs (bvals_.getRawPtr()+(j*ld_rhs), bvals_.getRawPtr()+((j+1)*ld_rhs));
+        std::vector<scalar_type> sol (tvals_.getRawPtr()+(j*ld_rhs), tvals_.getRawPtr()+((j+1)*ld_rhs));
 
-      ierr = function_map::solve(solver, rhs, sol);
-
-      //TODO
-      for(int i=0; i<numRows_; i++) xvals_[i + j*ld_rhs] = sol[i];
+        ierr = solver->solve(rhs, sol);
+        for(int i=0; i<numRows_; i++) xvals_[i + j*ld_rhs] = sol[i];
+      }
+    } else {
+      TEUCHOS_TEST_FOR_EXCEPTION(true, std::logic_error, "D3S supports only double or float");
     }
   } catch (const std::exception& e) {
     if (msg_level_ > 0 &&  this->root_ ) {
@@ -370,6 +378,8 @@ D3S<Matrix,Vector>::loadA_impl(EPhase current_phase)
   // TODO:
   EDistribution dist_option = (true ? DISTRIBUTED_NO_OVERLAP : ((is_contiguous_ == true) ? ROOTED : CONTIGUOUS_AND_ROOTED));
   if (dist_option == DISTRIBUTED_NO_OVERLAP && !is_contiguous_) {
+    Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("Amesos2::D3S: comm 1");
+    Teuchos::TimeMonitor LocalTimer (*factorTimer);
     // Neeed to form contiguous matrix
     // Only reinex GIDs
     d3s_rowmap_ = this->matrixA_->getRowMap(); // use original map to redistribute vectors in solve
@@ -381,13 +391,13 @@ D3S<Matrix,Vector>::loadA_impl(EPhase current_phase)
         Kokkos::resize(colind_view_, contig_mat->getLocalNNZ());
         Kokkos::resize(rowptr_view_, contig_mat->getLocalNumRows() + 1);
     }
-    int nnz_ret = 0;
+    global_size_type nnz_ret = 0;
     {
 #ifdef HAVE_AMESOS2_TIMERS
       Teuchos::TimeMonitor mtxRedistTimer( this->timers_.mtxRedistTime_ );
 #endif
       Util::get_crs_helper_kokkos_view<MatrixAdapter<Matrix>,
-        host_value_type_array,host_ordinal_type_array, host_size_type_array >::do_get(
+        host_value_type_array, host_ordinal_type_array, host_size_type_array >::do_get(
                                          contig_mat.ptr(),
                                          nzvals_temp_, colind_view_, rowptr_view_,
                                          nnz_ret,
@@ -397,10 +407,12 @@ D3S<Matrix,Vector>::loadA_impl(EPhase current_phase)
                                          #else
                                          ROOTED,
                                          #endif
-                                         SORTED_INDICES);
+                                         ARBITRARY);
       Kokkos::deep_copy(nzvals_view_, nzvals_temp_);
     }
   } else {
+    Teuchos::RCP< Teuchos::Time > factorTimer = Teuchos::TimeMonitor::getNewCounter ("Amesos2::D3S: comm 2");
+    Teuchos::TimeMonitor LocalTimer (*factorTimer);
     if (current_phase == SYMBFACT) {
       if (dist_option == DISTRIBUTED_NO_OVERLAP) {
         Kokkos::resize(nzvals_temp_, this->matrixA_->getLocalNNZ());
@@ -421,19 +433,19 @@ D3S<Matrix,Vector>::loadA_impl(EPhase current_phase)
         }
       }
     }
-    int nnz_ret = 0;
+    global_size_type nnz_ret = 0;
     {
 #ifdef HAVE_AMESOS2_TIMERS
       Teuchos::TimeMonitor mtxRedistTimer( this->timers_.mtxRedistTime_ );
 #endif
       Util::get_crs_helper_kokkos_view<MatrixAdapter<Matrix>,
-        host_value_type_array,host_ordinal_type_array, host_size_type_array >::do_get(
+        host_value_type_array, host_ordinal_type_array, host_size_type_array >::do_get(
                                          this->matrixA_.ptr(),
                                          nzvals_temp_, colind_view_, rowptr_view_,
                                          nnz_ret,
                                          ptrInArg(*(this->matrixA_->getRowMap())),
                                          dist_option,
-                                         SORTED_INDICES);
+                                         (current_phase == NUMFACT ? NUMERICAL_VALUES_ONLY : ARBITRARY));
       Kokkos::deep_copy(nzvals_view_, nzvals_temp_);
     }
   }
