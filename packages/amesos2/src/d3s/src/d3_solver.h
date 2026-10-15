@@ -12,11 +12,7 @@
 #include "communication_helper.h"
 
 #include "Amesos2_Solver.hpp"
-
 #include "Tpetra_Core.hpp"
-#include "Tpetra_Map.hpp"
-#include "Tpetra_MultiVector.hpp"
-#include "Tpetra_CrsMatrix.hpp"
 
 #include "KokkosSparse_CrsMatrix.hpp"
 #include "trilinos_btf_decl.h"
@@ -24,7 +20,7 @@
 #ifndef D3SOLVER_HPP
 #define D3SOLVER_HPP
 
-template <typename SC, typename GO = int>
+template <typename SC, typename GO = int, typename GS = int>
 class D3Solver
 {
 public:
@@ -39,8 +35,8 @@ public:
   void setInteriorSolverName(const std::string solvername_in);
   bool supportedInteriorSolver(const std::string solvername_);
 
-  int initialize(const std::vector<int> & rowBegin_in,
-                 const std::vector<int> & columns_in,
+  int initialize(const std::vector<GS> & rowBegin_in,
+                 const std::vector<GO> & columns_in,
                  const int startGID_in,
                  const int numProcSolver_in);
   
@@ -65,8 +61,8 @@ public:
   void getDispls(const std::vector<int> & numEntriesProc,
                  std::vector<int> & displs) const;
   
-  void getGraphForMetis(const std::vector<int> & rowBegin,
-                        const std::vector<int> & columns,
+  void getGraphForMetis(const std::vector<GS> & rowBegin,
+                        const std::vector<GO> & columns,
                         std::vector<int> & rowperm,
                         std::vector<int> & irowperm,
                         std::vector<idx_t> & rowBeginMetis,
@@ -84,21 +80,21 @@ public:
   
   void checkRowSubIDs(const std::vector<int> & rowSubIDs,
                       const std::vector<int> & rowperm,
-                      const std::vector<int> & rowBegin,
-                      const std::vector<int> & columns) const;
+                      const std::vector<GS>  & rowBegin,
+                      const std::vector<GO>  & columns) const;
   
   void get_separators(const std::vector<int> & rowSubIDs,
                       std::vector<int> & sepIDs,
                       std::vector<int> & sepBegin,
                       std::vector<int> & sepRows) const;
   
-  void getGraphTranspose(const std::vector<int> & rowBegin,
-                         const std::vector<int> & columns,
-                         std::vector<int> & rowBeginT,
-                         std::vector<int> & columnsT) const;
+  void getGraphTranspose(const std::vector<GS> & rowBegin,
+                         const std::vector<GO> & columns,
+                         std::vector<GS> & rowBeginT,
+                         std::vector<GO> & columnsT) const;
   
-  void getRowSubIDs(const std::vector<int> & rowBegin,
-                    const std::vector<int> & columns);
+  void getRowSubIDs(const std::vector<GS> & rowBegin,
+                    const std::vector<GO> & columns);
   
   void output_rows(const std::string name,
                    const std::vector<int> & rows);
@@ -107,8 +103,8 @@ public:
                            const std::vector<int> & columns,
                            const std::vector<SC>  & values);
   
-  void phase1(const std::vector<int> & rowBegin,
-              const std::vector<int> & columns,
+  void phase1(const std::vector<GS> & rowBegin,
+              const std::vector<GO> & columns,
               std::vector<std::vector<int>> & num_rows_recv,
               std::vector<std::vector<int>> & row_GIDs_recv,
               std::vector<std::vector<int>> & column_counts_recv,                      
@@ -117,8 +113,8 @@ public:
   void phase1_rhs();
   
   void phase2(const int level,
-              const std::vector<int> & rowBegin,
-              const std::vector<int> & columns,
+              const std::vector<GS> & rowBegin,
+              const std::vector<GO> & columns,
               const std::vector<int> & separators,
               const int delta_pid,
               std::vector<std::vector<int>> & num_rows_recv,
@@ -160,8 +156,8 @@ public:
   
   std::vector<int> getSubRows(const std::vector<std::vector<int>> & row_GIDs_recv) const;
   
-  void getSubMatrices(const std::vector<int> & rowBegin,
-                      const std::vector<int> & columns,
+  void getSubMatrices(const std::vector<GS> & rowBegin,
+                      const std::vector<GO> & columns,
                       std::vector<int> & rowBeginSub,
                       std::vector<int> & columnsSub,
                       std::vector<SC>  & valuesSub,
@@ -182,18 +178,18 @@ public:
                       const int recv_pid,
                       const std::vector<int> & sourceGIDs,
                       std::vector<int> & targetGIDs,
-		      Teuchos::RCP<comm_type> comm_here);
+                      Teuchos::RCP<comm_type> comm_here);
   
   template <typename T>
   void point_to_point_single(const int send_to_pid,
                              const int recv_from_pid,
                              const std::vector<T> & send_data,
                              std::vector<T> & recv_data,
-			     Teuchos::RCP<comm_type>);
+                             Teuchos::RCP<comm_type>);
     
   void initialize_schur_complement(const int level,
-                                   const std::vector<int> & rowBegin,
-                                   const std::vector<int> & columns,
+                                   const std::vector<GS> & rowBegin,
+                                   const std::vector<GO> & columns,
                                    const std::vector<int> & rowGIDsSubB,
                                    std::vector<int> & not_in_sep);
   
@@ -317,22 +313,22 @@ public:
                     const std::vector<int> & nnz_proc,
                     std::vector<bool> & node_flag) const;
 
-  void assign_graph(const std::vector<int> & rowBegin,
-                    const std::vector<int> & columns,
+  void assign_graph(const std::vector<GS> & rowBegin,
+                    const std::vector<GO> & columns,
                     const std::vector<int> & extraEdges);
-  void assign_graph(const std::vector<int> & rowBegin_in,
-                    const std::vector<int> & columns_in,
-                    const std::vector<int> & rowBegin,
-                    const std::vector<int> & columns,
+  void assign_graph(const std::vector<GS> & rowBegin_in,
+                    const std::vector<GO> & columns_in,
+                    const std::vector<GS> & rowBegin,
+                    const std::vector<GO> & columns,
                     const std::vector<int> & extraEdges);
   
-  void update_graph(const std::vector<int> & rowBegin,
-                    const std::vector<int> & columns,
+  void update_graph(const std::vector<GS> & rowBegin,
+                    const std::vector<GO> & columns,
                     const std::vector<int> & extraEdges);
   
   void assign_values(const std::vector<SC> & values_in);
-  void assign_values(const std::vector<int> & rowBegin_in,
-                     const std::vector<SC>  & values_in);
+  void assign_values(const std::vector<GS> & rowBegin_in,
+                     const std::vector<SC> & values_in);
   
   int get_proc_for_row(const int row,
                        const std::vector<int> & numRowsAll,
@@ -345,11 +341,11 @@ public:
   
   int num_nodes_use(const int num_nodes) const;
 
-  std::vector<int> gather_nnz_proc(const std::vector<int> & rowBegin) const;
+  std::vector<int> gather_nnz_proc(const std::vector<GS> & rowBegin) const;
   
   std::vector<std::vector<int>> gather_node_pids(int & num_nodes);
 
-  void assignTargetMPIs(const std::vector<int> & rowBegin);
+  void assignTargetMPIs(const std::vector<GS> & rowBegin);
   
   void output_time(const std::string & message,
                    const double time) const;
@@ -369,7 +365,8 @@ private:
   std::vector<int> permMatching, ipermMatching;
 
   // 1D block row after row-matching
-  std::vector<int> rowBeginRe, columnsRe;
+  std::vector<GS> rowBeginRe;
+  std::vector<GO> columnsRe;
   std::vector<SC>  valuesRe;
 
   // comm for matching
@@ -386,10 +383,12 @@ private:
     my_send_PIDs_rhs, my_recv_PIDs_rhs, old_to_new_indices, n1a, n2a;
   std::vector<std::string> node_names;
 
-  const std::vector<int> *rowBeginPtr, *columnsPtr;
+  const std::vector<GS> *rowBeginPtr;
+  const std::vector<GO> *columnsPtr;
   const std::vector<SC> *valuesPtr;
-  std::vector<int> rowBeginUse, columnsUse;
-  std::vector<int> rowBeginOrig;
+  std::vector<GS> rowBeginUse;
+  std::vector<GO> columnsUse;
+  std::vector<GS> rowBeginOrig;
   std::vector<SC> valuesSub, rhsSub, rhsI, rhs_interior, sol_interior, valuesUse;
   std::vector<std::vector<int>> sep_map, sep_map_recv, rhs_index_send, sc_GIDs,
     values_send_index, index_map_sub, sep_map_B,

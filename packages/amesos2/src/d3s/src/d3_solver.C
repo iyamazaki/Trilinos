@@ -20,7 +20,7 @@
 // still calls Amesos2 with Kokkos-adapter
 //  to factor the interior and solve with right-interface (stored in dense)
 #include "KokkosSparse_spmv.hpp"
-#include "KokkosBlas3_gemm.hpp" // TODO: store G in crs and call spmv, instead
+#include "KokkosBlas3_gemm.hpp" // TODO: store G in crs and call spmv for solve
 // Used to solve dense Schur complement system
 #include "Teuchos_BLAS.hpp"
 #include "Teuchos_LAPACK.hpp"
@@ -31,8 +31,8 @@
 // domain decomposition concepts.
 // Author: Clark R. Dohrmann
 
-template <typename SC, typename GO>
-D3Solver<SC,GO>::D3Solver(MPI_Comm commIn)
+template <typename SC, typename GO, typename GS>
+D3Solver<SC,GO,GS>::D3Solver(MPI_Comm commIn)
 {
   comm = Teuchos::rcp(new comm_type (commIn));
   myPID = comm->getRank();
@@ -56,36 +56,36 @@ D3Solver<SC,GO>::D3Solver(MPI_Comm commIn)
   solvername = "KLU2";
 }
 
-template <typename SC, typename GO>
-D3Solver<SC,GO>::~D3Solver()
+template <typename SC, typename GO, typename GS>
+D3Solver<SC,GO,GS>::~D3Solver()
 {
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::setNumThreads(const int num_threadsIn) {
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::setNumThreads(const int num_threadsIn) {
   num_threads = num_threadsIn;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::setOrderingOption(const int matching_optionIn, const int reorder_optionIn) {
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::setOrderingOption(const int matching_optionIn, const int reorder_optionIn) {
   matching_option = matching_optionIn;
   reorder_option = reorder_optionIn;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::setVerbose(const int msg_levelIn, const int debug_levelIn) {
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::setVerbose(const int msg_levelIn, const int debug_levelIn) {
   msg_level = msg_levelIn;
   debug_level_interior = debug_levelIn;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::setInteriorSolverName(const std::string solvername_in) {
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::setInteriorSolverName(const std::string solvername_in) {
     solvername = solvername_in;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::gatherScatterSol(std::vector<SC> & sol,
-                                       std::vector<SC> & solAll) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::gatherScatterSol(std::vector<SC> & sol,
+                                          std::vector<SC> & solAll) const
 {
   const int numRows = sol.size();
   ThrowAssert(true, numRows == numRows_proc, "incompatible number of rows");
@@ -108,9 +108,9 @@ void D3Solver<SC,GO>::gatherScatterSol(std::vector<SC> & sol,
   Teuchos::broadcast<int, SC>(*comm, root, numRowsRoot, solAll.data());
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getDispls(const std::vector<int> & numEntriesProc,
-                                      std::vector<int> & displs) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getDispls(const std::vector<int> & numEntriesProc,
+                                         std::vector<int> & displs) const
 {
   const int numProc = numEntriesProc.size();
   displs.assign(numProc, 0);
@@ -120,14 +120,14 @@ void D3Solver<SC,GO>::getDispls(const std::vector<int> & numEntriesProc,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getGraphForMetis(const std::vector<int> & rowBegin,
-                                       const std::vector<int> & columns,
-                                             std::vector<int> &rowperm,
-                                             std::vector<int> &irowperm,
-                                             std::vector<idx_t> & rowBeginMetis,
-                                             std::vector<idx_t> & columnsMetis,
-                                             std::vector<std::pair<int,int>> & additional_edges)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
+                                          const std::vector<GO> & columns,
+                                                std::vector<int> &rowperm,
+                                                std::vector<int> &irowperm,
+                                                std::vector<idx_t> & rowBeginMetis,
+                                                std::vector<idx_t> & columnsMetis,
+                                                std::vector<std::pair<int,int>> & additional_edges)
 {
   const int numRows = rowBegin.size() - 1;
   std::vector<int> sort_perm;
@@ -145,8 +145,6 @@ void D3Solver<SC,GO>::getGraphForMetis(const std::vector<int> & rowBegin,
     int *iwork = const_cast <int*> (workspace.data());
     if (matching_option == 1) {
       // Compute max-cardinarity matching for col-permutation
-      int *col_ptr = const_cast <int*> (rowBegin.data());
-      int *row_idx = const_cast <int*> (columns.data());
       /*if (sort_columns_before_matching) {
         ns_sorted.resize(nnz, 0);
         for (int i=0; i<numRows; i++) {
@@ -159,15 +157,38 @@ void D3Solver<SC,GO>::getGraphForMetis(const std::vector<int> & rowBegin,
         }
         row_idx = const_cast <int*> (columns_sorted.data());
       }*/
-      nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr, row_idx, maxwork, &work, perm, iwork);
+      if constexpr (std::is_same_v<GS, int> && std::is_same_v<GO, int>) {
+        // can directly type-cast
+        GS *col_ptr = const_cast <GS*> (rowBegin.data());
+        GO *row_idx = const_cast <GO*> (columns.data());
+        nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr, row_idx, maxwork, &work, perm, iwork);
+      } else {
+        // need to copy to int
+        std::vector<int> col_ptr(rowBegin.size());
+	std::vector<int> row_idx(columns.size());
+	for (GS idx : rowBegin) col_ptr.push_back(static_cast<int>(idx));
+	for (GO idx : columns)  row_idx.push_back(static_cast<int>(idx));
+        nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr.data(), row_idx.data(), maxwork, &work, perm, iwork);
+      }
     } else {
       // Compute max-cardinarity matching for row-permutation
-      std::vector<int> rowBeginT, columnsT;
+      std::vector<GS> rowBeginT;
+      std::vector<GO> columnsT;
       getGraphTranspose(rowBegin, columns, rowBeginT, columnsT);
 
-      int *col_ptr = const_cast <int*> (rowBeginT.data());
-      int *row_idx = const_cast <int*> (columnsT.data());
-      nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr, row_idx, maxwork, &work, perm, iwork);
+      if constexpr (std::is_same_v<GS, int> && std::is_same_v<GO, int>) {
+        // can directly type-cast
+        GS *col_ptr = const_cast <GS*> (rowBeginT.data());
+        GO *row_idx = const_cast <GO*> (columnsT.data());
+        nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr, row_idx, maxwork, &work, perm, iwork);
+      } else {
+        // need to copy to int
+        std::vector<int> col_ptr(rowBeginT.size());
+	std::vector<int> row_idx(columnsT.size());
+	for (GS idx : rowBeginT) col_ptr.push_back(static_cast<int>(idx));
+	for (GO idx : columnsT)  row_idx.push_back(static_cast<int>(idx));
+        nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr.data(), row_idx.data(), maxwork, &work, perm, iwork);
+      }
     }
     if (msg_level > 0) {
       printf( " nMatch = %d / %d\n",nMatch,numRows );
@@ -188,8 +209,8 @@ void D3Solver<SC,GO>::getGraphForMetis(const std::vector<int> & rowBegin,
 #endif
   // remove edges to self (row or col matching is incorporated)
   int numTerms = rowBegin[numRows];
-  std::vector<int> rowBeginG(numRows+1, 0);
-  std::vector<int> columnsG(numTerms);
+  std::vector<GS> rowBeginG(numRows+1, 0);
+  std::vector<GO> columnsG(numTerms);
   numTerms = 0;
   for (int i=0; i<numRows; i++) {
     int row = (matching_option > 1 ? rowperm[i] : i); //row-matching
@@ -213,7 +234,8 @@ void D3Solver<SC,GO>::getGraphForMetis(const std::vector<int> & rowBegin,
   }
 #endif
   // next, make sure graph is symmetric
-  std::vector<int> rowBeginGT, columnsGT;
+  std::vector<GS> rowBeginGT;
+  std::vector<GO> columnsGT;
   getGraphTranspose(rowBeginG, columnsG, rowBeginGT, columnsGT);
   std::vector<int> count(numRows, 0);
   std::vector<bool> colFlag(numRows, false);
@@ -270,10 +292,10 @@ void D3Solver<SC,GO>::getGraphForMetis(const std::vector<int> & rowBegin,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getLevelsAndLocations(const int numProc,
-                                            std::vector<int> & level,
-                                            std::vector<int> & location) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getLevelsAndLocations(const int numProc,
+                                               std::vector<int> & level,
+                                               std::vector<int> & location) const
 {
   const int num_node_tree = 2*numProc - 1;
   level.resize(num_node_tree, 0);
@@ -301,11 +323,11 @@ void D3Solver<SC,GO>::getLevelsAndLocations(const int numProc,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::extractRowSubIDs(const std::vector<int> & node_begin,
-                                       const std::vector<int> & node_sub_id,
-                                       const std::vector<idx_t> & iperm,
-                                             std::vector<int> & out_rowSubIDs) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::extractRowSubIDs(const std::vector<int> & node_begin,
+                                          const std::vector<int> & node_sub_id,
+                                          const std::vector<idx_t> & iperm,
+                                                std::vector<int> & out_rowSubIDs) const
 {
   const int numRows = iperm.size();
   out_rowSubIDs.resize(numRows);
@@ -328,11 +350,11 @@ void D3Solver<SC,GO>::extractRowSubIDs(const std::vector<int> & node_begin,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC, GO>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
-                                      const std::vector<int> & rowperm,
-                                      const std::vector<int> & rowBegin,
-                                      const std::vector<int> & columns) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
+                                        const std::vector<int> & rowperm,
+                                        const std::vector<GS>  & rowBegin,
+                                        const std::vector<GO>  & columns) const
 {
   int maxSubID = 0;
   std::vector<std::vector<int>> subI(numProcSolver);
@@ -375,11 +397,11 @@ void D3Solver<SC, GO>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::get_separators(const std::vector<int> & in_rowSubIDs,
-                                           std::vector<int> & in_sepIDs,
-                                           std::vector<int> & in_sepBegin,
-                                           std::vector<int> & in_sepRows) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::get_separators(const std::vector<int> & in_rowSubIDs,
+                                              std::vector<int> & in_sepIDs,
+                                              std::vector<int> & in_sepBegin,
+                                              std::vector<int> & in_sepRows) const
 {
   const int numRows = in_rowSubIDs.size();
   const int num_sep = numProcSolver - 1;
@@ -416,11 +438,11 @@ void D3Solver<SC,GO>::get_separators(const std::vector<int> & in_rowSubIDs,
   }
 }
                     
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getGraphTranspose(const std::vector<int> & rowBegin,
-                                        const std::vector<int> & columns,
-                                              std::vector<int> & rowBeginT,
-                                              std::vector<int> & columnsT) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getGraphTranspose(const std::vector<GS> & rowBegin,
+                                           const std::vector<GO> & columns,
+                                                 std::vector<GS> & rowBeginT,
+                                                 std::vector<GO> & columnsT) const
 {
   // Assumption: number of columns equals number of rows
   const int numRows = rowBegin.size() - 1;
@@ -449,12 +471,12 @@ void D3Solver<SC,GO>::getGraphTranspose(const std::vector<int> & rowBegin,
   }
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::get_proc_for_row(const int row,
-                                      const std::vector<int> & numRowsAll,
-                                      const int numProc,
-                                            int & first_proc,
-                                            int & first_row) const
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::get_proc_for_row(const int row,
+                                         const std::vector<int> & numRowsAll,
+                                         const int numProc,
+                                               int & first_proc,
+                                               int & first_row) const
 {
   int proc = -1;
   while (first_proc < numProc) {
@@ -473,19 +495,19 @@ int D3Solver<SC,GO>::get_proc_for_row(const int row,
   return proc;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assign_graph(const std::vector<int> & rowBegin,
-                                   const std::vector<int> & columns,
-                                   const std::vector<int> & extraEdges) {
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assign_graph(const std::vector<GS> & rowBegin,
+                                      const std::vector<GO> & columns,
+                                      const std::vector<int> & extraEdges) {
   assign_graph(rowBegin, columns, rowBegin, columns, extraEdges);
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assign_graph(const std::vector<int> & rowBegin_in, // original input distributed matrix
-                                   const std::vector<int> & columns_in,
-                                   const std::vector<int> & rowBegin,    // after matching
-                                   const std::vector<int> & columns,
-                                   const std::vector<int> & extraEdges)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assign_graph(const std::vector<GS> & rowBegin_in, // original input distributed matrix
+                                      const std::vector<GO> & columns_in,
+                                      const std::vector<GS> & rowBegin,    // after matching
+                                      const std::vector<GO> & columns,
+                                      const std::vector<int> & extraEdges)
 {
   num_extra_edges = extraEdges.size() / 2;
   if (num_extra_edges == 0 && matching_option == 0) {
@@ -501,9 +523,9 @@ void D3Solver<SC,GO>::assign_graph(const std::vector<int> & rowBegin_in, // orig
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::scatter_additional_edges(const std::vector<std::pair<int,int>> & additional_edges,
-                                                     std::vector<int> & extraEdges)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::scatter_additional_edges(const std::vector<std::pair<int,int>> & additional_edges,
+                                                        std::vector<int> & extraEdges)
 {
   int root(0);
   std::vector<int> numRowsAll, count, displs;
@@ -544,10 +566,10 @@ void D3Solver<SC,GO>::scatter_additional_edges(const std::vector<std::pair<int,i
   num_extra /= 2;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::update_graph(const std::vector<int> & rowBegin,
-                                   const std::vector<int> & columns,
-                                   const std::vector<int> & extraEdges)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::update_graph(const std::vector<GS> & rowBegin,
+                                      const std::vector<GO> & columns,
+                                      const std::vector<int> & extraEdges)
 {
   std::vector<int> count(numRows_proc, 0);
   for (int i=0; i<numRows_proc; i++) {
@@ -586,15 +608,15 @@ void D3Solver<SC,GO>::update_graph(const std::vector<int> & rowBegin,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getRowSubIDs(const std::vector<int> & rowBegin, // original
-                                   const std::vector<int> & columns)  // original
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // original
+                                      const std::vector<GO> & columns)  // original
 {
   // Gather graph to root: (rowBegin, columns) in 1D block row -> (rowBeginRoot, columnsRoot) gathered
-  GatherToRootSimple<SC> gatherer(rowBegin, columns, comm);
+  GatherToRootSimple<SC,GO,GS> gatherer(rowBegin, columns, comm);
   gatherer.initialize();
-  const std::vector<int> & rowBeginRoot = gatherer.getRowBeginRoot(); // original
-  const std::vector<int> & columnsRoot = gatherer.getColumnsRoot();   // original
+  const std::vector<GS> & rowBeginRoot = gatherer.getRowBeginRoot(); // original
+  const std::vector<GO> & columnsRoot = gatherer.getColumnsRoot();   // original
   std::vector<std::pair<int,int>> additional_edges;
   int numRows, numSep, numTerms, numRowsB;
 
@@ -904,8 +926,8 @@ void D3Solver<SC,GO>::getRowSubIDs(const std::vector<int> & rowBegin, // origina
   Teuchos::broadcast<int, int>(*comm, root, numRowsB, rowsB.data());
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::phase1_rhs()
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::phase1_rhs()
 {
   const int numSubs = targetMPIs.size();
   std::vector<std::vector<int>> rhs_index(numSubs);
@@ -936,13 +958,13 @@ void D3Solver<SC,GO>::phase1_rhs()
 }
 
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::phase1(const std::vector<int> & rowBegin,
-                             const std::vector<int> & columns,
-                             std::vector<std::vector<int>> & num_rows_recv,
-                             std::vector<std::vector<int>> & row_GIDs_recv,
-                             std::vector<std::vector<int>> & column_counts_recv,
-                             std::vector<std::vector<int>> & column_GIDs_recv)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::phase1(const std::vector<GS> & rowBegin,
+                                const std::vector<GO> & columns,
+                                std::vector<std::vector<int>> & num_rows_recv,
+                                std::vector<std::vector<int>> & row_GIDs_recv,
+                                std::vector<std::vector<int>> & column_counts_recv,
+                                std::vector<std::vector<int>> & column_GIDs_recv)
 {
   // communicate [A_{II} A_{IB}; A_{BI}]
   const int numSubs = targetMPIs.size();
@@ -1053,25 +1075,25 @@ void D3Solver<SC,GO>::phase1(const std::vector<int> & rowBegin,
 }
  
 
-template <typename SC, typename GO>
-bool D3Solver<SC,GO>::determine_valid_row(const int gID,
-                                          const std::vector<int> & separators) const
+template <typename SC, typename GO, typename GS>
+bool D3Solver<SC,GO,GS>::determine_valid_row(const int gID,
+                                             const std::vector<int> & separators) const
 {
   const int sep = -rowSubIDs[gID];
   if (sep < separators[0]) return false;
   else return true;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::phase2(const int level,
-                             const std::vector<int> & rowBegin,
-                             const std::vector<int> & columns,
-                             const std::vector<int> & separators,
-                             const int delta_pid,
-                             std::vector<std::vector<int>> & num_rows_recv,
-                             std::vector<std::vector<int>> & row_GIDs_recv,
-                             std::vector<std::vector<int>> & column_counts_recv,
-                             std::vector<std::vector<int>> & column_GIDs_recv)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::phase2(const int level,
+                                const std::vector<GS> & rowBegin,
+                                const std::vector<GO> & columns,
+                                const std::vector<int> & separators,
+                                const int delta_pid,
+                                std::vector<std::vector<int>> & num_rows_recv,
+                                std::vector<std::vector<int>> & row_GIDs_recv,
+                                std::vector<std::vector<int>> & column_counts_recv,
+                                std::vector<std::vector<int>> & column_GIDs_recv)
 {
   // communicate [A_{SS} A_{SB}; A_{BS}]
   const int numSeps = separators.size();
@@ -1194,11 +1216,11 @@ void D3Solver<SC,GO>::phase2(const int level,
                         my_recv_PIDs_B[level], targetMPIs, comm);
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::phase2_rhs(const int level,
-                                 const std::vector<int> & separators,
-                                 const int delta_pid,
-                                 const int sep_number)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::phase2_rhs(const int level,
+                                    const std::vector<int> & separators,
+                                    const int delta_pid,
+                                    const int sep_number)
 {
   // only communicate rhs for rows in separators
   const int numSeps = separators.size();
@@ -1276,8 +1298,8 @@ void D3Solver<SC,GO>::phase2_rhs(const int level,
 }
 
 
-template <typename SC, typename GO>
-std::vector<int> D3Solver<SC,GO>::getSubRows(const std::vector<std::vector<int>> & row_GIDs_recv) const
+template <typename SC, typename GO, typename GS>
+std::vector<int> D3Solver<SC,GO,GS>::getSubRows(const std::vector<std::vector<int>> & row_GIDs_recv) const
 {
   const int num_recvs = row_GIDs_recv.size();
   int numRows = 0;
@@ -1292,14 +1314,14 @@ std::vector<int> D3Solver<SC,GO>::getSubRows(const std::vector<std::vector<int>>
   return rows;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::generateSubMatrices(const std::vector<std::vector<int>> & row_GIDs_recv,
-                                          const std::vector<std::vector<int>> & column_counts_recv,
-                                          const std::vector<std::vector<int>> & column_GIDs_recv,
-                                          std::vector<int> & rowBegin,
-                                          std::vector<int> & columns,
-                                          std::vector<SC>  & values,
-                                          std::vector<int> & rowGIDs)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::generateSubMatrices(const std::vector<std::vector<int>> & row_GIDs_recv,
+                                             const std::vector<std::vector<int>> & column_counts_recv,
+                                             const std::vector<std::vector<int>> & column_GIDs_recv,
+                                             std::vector<int> & rowBegin,
+                                             std::vector<int> & columns,
+                                             std::vector<SC>  & values,
+                                             std::vector<int> & rowGIDs)
 {
   rowGIDs = getSubRows(row_GIDs_recv); // these are in ascending order
   for (size_t i=1; i<rowGIDs.size(); i++) {
@@ -1365,11 +1387,11 @@ void D3Solver<SC,GO>::generateSubMatrices(const std::vector<std::vector<int>> & 
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::sort_cols_and_indices(int* cols,
-                                            int* indices,
-                                            std::pair<int,int>* col_index_pairs,
-                                            const int num_cols)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::sort_cols_and_indices(int* cols,
+                                               int* indices,
+                                               std::pair<int,int>* col_index_pairs,
+                                               const int num_cols)
 {
   for (int i=0; i<num_cols; i++) {
     col_index_pairs[i] = std::make_pair(cols[i], indices[i]);
@@ -1381,15 +1403,15 @@ void D3Solver<SC,GO>::sort_cols_and_indices(int* cols,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::extractMatrixStructures(const int level,
-                                              const std::vector<std::vector<int>> & row_GIDs_recv,
-                                              const std::vector<std::vector<int>> & column_counts_recv,
-                                              const std::vector<std::vector<int>> & column_GIDs_recv,
-                                              std::vector<int> & rowBegin,
-                                              std::vector<int> & columns,
-                                              std::vector<SC>  & values,
-                                              std::vector<int> & rowGIDs)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::extractMatrixStructures(const int level,
+                                                 const std::vector<std::vector<int>> & row_GIDs_recv,
+                                                 const std::vector<std::vector<int>> & column_counts_recv,
+                                                 const std::vector<std::vector<int>> & column_GIDs_recv,
+                                                 std::vector<int> & rowBegin,
+                                                 std::vector<int> & columns,
+                                                 std::vector<SC>  & values,
+                                                 std::vector<int> & rowGIDs)
 {
   rowGIDs = getSubRows(row_GIDs_recv); // these are in ascending order
   for (size_t i=1; i<rowGIDs.size(); i++) {
@@ -1434,8 +1456,8 @@ void D3Solver<SC,GO>::extractMatrixStructures(const int level,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::extractRhs(const int level)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::extractRhs(const int level)
 {
   std::vector<SC> & rhs = rhs_sep[level];
   const std::vector<std::vector<SC>> & rhs_recv_l = rhs_recv_sep[level];
@@ -1449,8 +1471,8 @@ void D3Solver<SC,GO>::extractRhs(const int level)
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::extractMatrixValues(const int level)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::extractMatrixValues(const int level)
 {
   const std::vector<std::vector<int>> & index_map = index_map_B[level];
   std::vector<SC> & values = values_B[level];
@@ -1488,13 +1510,13 @@ void D3Solver<SC>::sortColumns(const std::vector<int> & rowBegin,
 }
 */
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getSubMatrices(const std::vector<int> & rowBegin,
-                                     const std::vector<int> & columns,
-                                           std::vector<int> & in_rowBeginSub,
-                                           std::vector<int> & in_columnsSub,
-                                           std::vector<SC>  & in_valuesSub,
-                                           std::vector<int> & rowGIDsSub)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getSubMatrices(const std::vector<GS>  & rowBegin,
+                                        const std::vector<GO>  & columns,
+                                              std::vector<int> & in_rowBeginSub,
+                                              std::vector<int> & in_columnsSub,
+                                              std::vector<SC>  & in_valuesSub,
+                                              std::vector<int> & rowGIDsSub)
 {
   // subdomain matrices [A_{II} A_{IB}; A_{BI} 0]
   // redistribution from 2D block row to nested-dissection
@@ -1511,9 +1533,9 @@ void D3Solver<SC,GO>::getSubMatrices(const std::vector<int> & rowBegin,
   phase1_rhs();  
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::output_rows(const std::string name,
-                                  const std::vector<int> & rows)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::output_rows(const std::string name,
+                                     const std::vector<int> & rows)
 {
   std::string fname = name + std::to_string(myPID) + ".dat";
   std::ofstream fout;
@@ -1526,10 +1548,10 @@ void D3Solver<SC,GO>::output_rows(const std::string name,
   fout.close();
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::output_sub_matrices(const std::vector<int> & rowBegin,
-                                          const std::vector<int> & columns,
-                                          const std::vector<SC>  & values)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::output_sub_matrices(const std::vector<int> & rowBegin,
+                                             const std::vector<int> & columns,
+                                             const std::vector<SC>  & values)
 {
   if (msg_level < 2) return;
   const int numRows = rowsISub.size() + rowsBSub.size();
@@ -1551,8 +1573,8 @@ void D3Solver<SC,GO>::output_sub_matrices(const std::vector<int> & rowBegin,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::resize_vectors()
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::resize_vectors()
 {
   sep_map.resize(num_level);
   sep_map_recv.resize(num_level);
@@ -1592,9 +1614,9 @@ void D3Solver<SC,GO>::resize_vectors()
   timer_solve_dla.resize(num_level);
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::sort_and_add_zero_diags(std::vector<int> & rowBegin,
-                                              std::vector<int> & columns)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::sort_and_add_zero_diags(std::vector<int> & rowBegin,
+                                                 std::vector<int> & columns)
 {
   const int numRows = rowBegin.size() - 1;
   std::vector<bool> flagB(numRows, false);
@@ -1636,8 +1658,8 @@ void D3Solver<SC,GO>::sort_and_add_zero_diags(std::vector<int> & rowBegin,
   valuesSub.resize(numTermsNew, 0.0);
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getProcName()
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getProcName()
 {
   char name[MPI_MAX_PROCESSOR_NAME];
   int length;
@@ -1655,19 +1677,19 @@ void D3Solver<SC,GO>::getProcName()
   */
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::num_nodes_use(const int num_nodes) const
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::num_nodes_use(const int num_nodes) const
 {
   // nodes to use is a power of 2 for simplicity
   const int log_num_nodes = static_cast<int>(std::log2(num_nodes));
   return std::pow(2, log_num_nodes);
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::process_names(std::string & all_names,
-                                    const int numProc,
-                                    const int max_length,
-                                          int & num_nodes)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::process_names(std::string & all_names,
+                                       const int numProc,
+                                       const int max_length,
+                                             int & num_nodes)
 {
   node_names.resize(numProc);
   for (int i=0; i<numProc; i++) {
@@ -1684,8 +1706,8 @@ void D3Solver<SC,GO>::process_names(std::string & all_names,
   }
 }
 
-template <typename SC, typename GO>
-std::vector<std::vector<int>> D3Solver<SC,GO>::gather_node_pids(int & num_nodes)
+template <typename SC, typename GO, typename GS>
+std::vector<std::vector<int>> D3Solver<SC,GO,GS>::gather_node_pids(int & num_nodes)
 {
   const int length = node_name.size();
   int max_length;
@@ -1729,8 +1751,8 @@ std::vector<std::vector<int>> D3Solver<SC,GO>::gather_node_pids(int & num_nodes)
   return node_pids;
 }
 
-template <typename SC, typename GO>
-std::vector<int> D3Solver<SC,GO>::gather_nnz_proc(const std::vector<int> & rowBegin) const
+template <typename SC, typename GO, typename GS>
+std::vector<int> D3Solver<SC,GO,GS>::gather_nnz_proc(const std::vector<GS> & rowBegin) const
 {
   std::vector<int> nnz_sub(numProcSolver, 0);
   for (int i=0; i<numRows_proc; i++) {
@@ -1752,12 +1774,12 @@ std::vector<int> D3Solver<SC,GO>::gather_nnz_proc(const std::vector<int> & rowBe
   return nnz_sub_all;
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::get_best_node(const int sub_start,
-                                   const int num_subs_per_node,
-                                   const std::vector<std::vector<int>> & node_pids,
-                                   const std::vector<int> & nnz_proc,
-                                         std::vector<bool> & node_flag) const
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::get_best_node(const int sub_start,
+                                      const int num_subs_per_node,
+                                      const std::vector<std::vector<int>> & node_pids,
+                                      const std::vector<int> & nnz_proc,
+                                            std::vector<bool> & node_flag) const
 {
   const int num_nodes = node_flag.size();
   int max_nnz(0), best_node(-1);
@@ -1782,13 +1804,13 @@ int D3Solver<SC,GO>::get_best_node(const int sub_start,
   return best_node;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::get_best_ranks(const int node,
-                                     const int sub_start,
-                                     const int num_subs_per_node,
-                                     const std::vector<std::vector<int>> & node_pids,
-                                     const std::vector<int> & nnz_proc,
-                                           std::vector<int> & best_ranks) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::get_best_ranks(const int node,
+                                        const int sub_start,
+                                        const int num_subs_per_node,
+                                        const std::vector<std::vector<int>> & node_pids,
+                                        const std::vector<int> & nnz_proc,
+                                              std::vector<int> & best_ranks) const
 {
   const int num_pids = node_pids[node].size();
   std::vector<bool> pid_flag(num_pids, false);
@@ -1818,8 +1840,8 @@ void D3Solver<SC,GO>::get_best_ranks(const int node,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assignTargetMPIs(const std::vector<int> & rowBegin)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assignTargetMPIs(const std::vector<GS> & rowBegin)
 {
   int num_nodes;
   std::vector<std::vector<int>> node_pids = gather_node_pids(num_nodes);
@@ -1856,8 +1878,8 @@ void D3Solver<SC,GO>::assignTargetMPIs(const std::vector<int> & rowBegin)
   Teuchos::broadcast<int, int>(*comm, root, numProcSolver, targetMPIs.data());
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::setNumProcSolver(const int numProcSolver_in)
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::setNumProcSolver(const int numProcSolver_in)
 {
   int numProcSolver_out = numProcSolver_in;
   if (numProcSolver_out > numProcs) {
@@ -1883,16 +1905,16 @@ int D3Solver<SC,GO>::setNumProcSolver(const int numProcSolver_in)
   return numProcSolver_out;
 }
 
-template <typename SC, typename GO>
-bool D3Solver<SC,GO>::supportedInteriorSolver(const std::string solvername_) {
+template <typename SC, typename GO, typename GS>
+bool D3Solver<SC,GO,GS>::supportedInteriorSolver(const std::string solvername_) {
   return (solvername_ == "ShyLUBasker" || solvername_ == "PARDISOMKL" || solvername_ == "MUMPS");
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::initialize(const std::vector<int> & rowBegin_in,
-                                const std::vector<int> & columns_in,
-                                const int startGID_in,
-                                const int numProcSolver_in)
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::initialize(const std::vector<GS> & rowBegin_in,
+                                   const std::vector<GO> & columns_in,
+                                   const int startGID_in,
+                                   const int numProcSolver_in)
 {
   if (msg_level > 0) {
     comm->barrier();
@@ -1909,8 +1931,8 @@ int D3Solver<SC,GO>::initialize(const std::vector<int> & rowBegin_in,
   getProcName();
 
   // rowBeginPtr (after symmetrization of the original matrix)
-  const std::vector<int> & rowBegin = *rowBeginPtr;
-  const std::vector<int> & columns = *columnsPtr;
+  const std::vector<GS> & rowBegin = *rowBeginPtr;
+  const std::vector<GO> & columns = *columnsPtr;
   assignTargetMPIs(rowBegin);
 
   // redistribute to generate DD
@@ -2118,9 +2140,9 @@ int D3Solver<SC,GO>::initialize(const std::vector<int> & rowBegin_in,
   return r_val;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getSubMatrices(const std::vector<SC> & values,
-                                           std::vector<SC> & in_valuesSub)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getSubMatrices(const std::vector<SC> & values,
+                                              std::vector<SC> & in_valuesSub)
 {
   communicateMatrixValues(values, values_send_index, my_send_PIDs_sub, values_send,
                           my_recv_PIDs_sub, values_recv, comm);
@@ -2134,14 +2156,14 @@ void D3Solver<SC,GO>::getSubMatrices(const std::vector<SC> & values,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assign_values(const std::vector<SC> & values_in) {
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assign_values(const std::vector<SC> & values_in) {
   assign_values(rowBeginOrig, values_in);
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assign_values(const std::vector<int> & rowBegin_in,
-                                    const std::vector<SC>  & values_in)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assign_values(const std::vector<GS> & rowBegin_in,
+                                       const std::vector<SC> & values_in)
 {
   if (num_extra_edges == 0 && matching_option == 0) {
     valuesPtr = &values_in;
@@ -2159,8 +2181,8 @@ void D3Solver<SC,GO>::assign_values(const std::vector<int> & rowBegin_in,
   }
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::factorize(const std::vector<SC> & values_in)
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
 {
   int r_val = 0;
   if (msg_level > 0) {
@@ -2468,20 +2490,20 @@ int D3Solver<SC,GO>::factorize(const std::vector<SC> & values_in)
 }
 
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::get_comm_data(const int level,
-                                          int & send_to_pid,
-                                          int & recv_from_pid,
-                                          int & recv_index) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::get_comm_data(const int level,
+                                             int & send_to_pid,
+                                             int & recv_from_pid,
+                                             int & recv_index) const
 {
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
   get_comm_data(level, numSub, mult, send_to_pid, recv_from_pid, recv_index);
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::compute_schur_complement(const int level,
-                                              const std::vector<SC> & values)
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::compute_schur_complement(const int level,
+                                                 const std::vector<SC> & values)
 {
   int r_val = 0;
   int numSub, mult, sep_start;
@@ -2515,13 +2537,13 @@ int D3Solver<SC,GO>::compute_schur_complement(const int level,
   return r_val;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::get_comm_data(const int level,
-                                    const int numSub,
-                                    const int mult,
-                                          int & send_to_pid,
-                                          int & recv_from_pid,
-                                          int & recv_index) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::get_comm_data(const int level,
+                                       const int numSub,
+                                       const int mult,
+                                             int & send_to_pid,
+                                             int & recv_from_pid,
+                                             int & recv_index) const
 {
   int color, key;
   get_color_and_key(numSub, mult, color, key);
@@ -2533,15 +2555,15 @@ void D3Solver<SC,GO>::get_comm_data(const int level,
   get_comm_pairs(num_proc_level, myPID_level, send_to_pid, recv_from_pid, recv_index);
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::solve_schur_complement(const int level,
-                                            const std::vector<SC> & rhs)
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::solve_schur_complement(const int level,
+                                               const std::vector<SC> & rhs)
 {
   int r_val = 0;
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
   communicateRhsValuesB(level, rhs, rhs_send_sep_index, rhs_send_sep, rhs_recv_sep,
-		        my_send_PIDs_sep, my_recv_PIDs_sep, comm);
+                        my_send_PIDs_sep, my_recv_PIDs_sep, comm);
   extractRhs(level);
   int send_to_pid, recv_from_pid, recv_index;
   get_comm_data(level, numSub, mult, send_to_pid, recv_from_pid, recv_index);
@@ -2555,8 +2577,8 @@ int D3Solver<SC,GO>::solve_schur_complement(const int level,
   return r_val;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::scatter_sol(const int level)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::scatter_sol(const int level)
 {
   const std::vector<SC> & sol = AS_rhs[level];
   int length = sep_map[level].size();
@@ -2571,8 +2593,8 @@ void D3Solver<SC,GO>::scatter_sol(const int level)
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::getSubRhs(const std::vector<SC> & rhs)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::getSubRhs(const std::vector<SC> & rhs)
 {
   for (size_t i=0; i<rhs_index_send.size(); i++) {
     for (size_t j=0; j<rhs_index_send[i].size(); j++) {
@@ -2583,8 +2605,8 @@ void D3Solver<SC,GO>::getSubRhs(const std::vector<SC> & rhs)
   gatherSubRhsI();
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::putSubSol(std::vector<SC> & sol)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::putSubSol(std::vector<SC> & sol)
 {
   scatterSubSolI();
   const bool reverse_comm = true;
@@ -2596,8 +2618,8 @@ void D3Solver<SC,GO>::putSubSol(std::vector<SC> & sol)
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::gatherSubRhsI()
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::gatherSubRhsI()
 {
   const int num_recvs = rhs_recv.size();
   int num_rows = 0;
@@ -2611,8 +2633,8 @@ void D3Solver<SC,GO>::gatherSubRhsI()
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::scatterSubSolI()
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::scatterSubSolI()
 {
   const int num_recvs = rhs_recv.size();
   int index = 0;
@@ -2623,10 +2645,10 @@ void D3Solver<SC,GO>::scatterSubSolI()
   }
 }  
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::solve(const std::vector<SC> & rhs,
-                                 std::vector<SC> & sol,
-                           const int numRhs)
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
+                                    std::vector<SC> & sol,
+                              const int numRhs)
 {
   ThrowAssert(true, numRhs == 1, "solver currently setup for only a single rhs");
   int lengthRhs = rhs.size();
@@ -2829,7 +2851,7 @@ int D3Solver<SC,GO>::solve(const std::vector<SC> & rhs,
   //  (at this point, we have the root separator solution)
   level = num_level - 1;
   communicate_solution(level, sol, AS_rhs, rhs_send_sep_index, rhs_recv_sep_index,
-		       rhs_send_sep, rhs_recv_sep, my_send_PIDs_sep, my_recv_PIDs_sep, comm);
+                       rhs_send_sep, rhs_recv_sep, my_send_PIDs_sep, my_recv_PIDs_sep, comm);
   while (level >= 0) {
     const double startTime = clockIt();
     backsolve(level);
@@ -2927,10 +2949,10 @@ int D3Solver<SC,GO>::solve(const std::vector<SC> & rhs,
   return r_val;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::permsolve(const std::vector<int> perm,
-                                const std::vector<SC> & rhs,
-                                      std::vector<SC> & rhsRe) {
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::permsolve(const std::vector<int> perm,
+                                   const std::vector<SC> & rhs,
+                                         std::vector<SC> & rhsRe) {
   int lengthRhs = rhs.size();
   std::vector<int> sendcounts_rhs;
   sendcounts_rhs.resize(numProcs, 0);
@@ -2995,8 +3017,8 @@ void D3Solver<SC,GO>::permsolve(const std::vector<int> perm,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::backsolve(const int level)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::backsolve(const int level)
 {
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
@@ -3024,11 +3046,11 @@ void D3Solver<SC,GO>::backsolve(const int level)
                         rhs_sc[level], comm_level[level]);
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::get_level_ints(const int level,
-                                           int & numSub,
-                                           int & mult,
-                                           int & sep_start) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::get_level_ints(const int level,
+                                              int & numSub,
+                                              int & mult,
+                                              int & sep_start) const
 {
   numSub = numProcSolver / std::pow(2, level);
   mult = std::pow(2, level);
@@ -3036,8 +3058,8 @@ void D3Solver<SC,GO>::get_level_ints(const int level,
 }
 
 
-template <typename SC, typename GO>
-std::vector<int> D3Solver<SC,GO>::getRowGIDsSubB(const std::vector<int> & rowGIDsSub)
+template <typename SC, typename GO, typename GS>
+std::vector<int> D3Solver<SC,GO,GS>::getRowGIDsSubB(const std::vector<int> & rowGIDsSub)
 {
   const int numRowsB = rowsBSub.size();
   std::vector<int> rowGIDsSubB(numRowsB);
@@ -3047,12 +3069,12 @@ std::vector<int> D3Solver<SC,GO>::getRowGIDsSubB(const std::vector<int> & rowGID
   return rowGIDsSubB;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::get_comm_pairs(const int num_proc_here,
-                                     const int myPID_here,
-                                           int & send_to_pid,
-                                           int & recv_from_pid,
-                                           int & recv_index) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::get_comm_pairs(const int num_proc_here,
+                                        const int myPID_here,
+                                              int & send_to_pid,
+                                              int & recv_from_pid,
+                                              int & recv_index) const
 {
   send_to_pid = -1; recv_from_pid = -1; recv_index = -1;
   if (myPID_here == -1) return;
@@ -3068,13 +3090,13 @@ void D3Solver<SC,GO>::get_comm_pairs(const int num_proc_here,
   }
 }
 
-template <typename SC, typename GO>
+template <typename SC, typename GO, typename GS>
 template <typename T>
-void D3Solver<SC,GO>::point_to_point_single(const int send_to_pid,
-                                            const int recv_from_pid,
-                                            const std::vector<T> & send_data,
-                                            std::vector<T> & recv_data,
-                                            Teuchos::RCP<comm_type> comm_here)
+void D3Solver<SC,GO,GS>::point_to_point_single(const int send_to_pid,
+                                               const int recv_from_pid,
+                                               const std::vector<T> & send_data,
+                                               std::vector<T> & recv_data,
+                                               Teuchos::RCP<comm_type> comm_here)
 {
   const int num_send = send_data.size();
   const int num_recv = recv_data.size();
@@ -3104,12 +3126,12 @@ void D3Solver<SC,GO>::point_to_point_single(const int send_to_pid,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::get_schur_gids(const int send_to_pid,
-                                     const int recv_from_pid,
-                                     const std::vector<int> & sourceGIDs,
-                                     std::vector<int> & targetGIDs,
-                                     Teuchos::RCP<comm_type> comm_here)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::get_schur_gids(const int send_to_pid,
+                                        const int recv_from_pid,
+                                        const std::vector<int> & sourceGIDs,
+                                        std::vector<int> & targetGIDs,
+                                        Teuchos::RCP<comm_type> comm_here)
 {
   std::vector<int> num_source(1, sourceGIDs.size()), num_target(1);
   point_to_point_single(send_to_pid, recv_from_pid, num_source, num_target,
@@ -3119,9 +3141,9 @@ void D3Solver<SC,GO>::get_schur_gids(const int send_to_pid,
                         comm_here);
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assemble_dense(const int level,
-                                     const int n)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assemble_dense(const int level,
+                                        const int n)
 {
   // recall that sc and sc_recv use row-major ordering
   // and we choose A to also be col-major
@@ -3147,8 +3169,8 @@ void D3Solver<SC,GO>::assemble_dense(const int level,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assemble_rhs(const int level)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assemble_rhs(const int level)
 {
   const int n = n1a[level] + n2a[level];
   std::vector<SC> & rhs = AS_rhs[level];
@@ -3167,11 +3189,11 @@ void D3Solver<SC,GO>::assemble_rhs(const int level)
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::add_sparse_contrib(const int level,
-                                         const int sep_number,
-                                         const std::vector<int> & not_in_sep,
-                                         const std::vector<int> & rowGIDsB)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::add_sparse_contrib(const int level,
+                                            const int sep_number,
+                                            const std::vector<int> & not_in_sep,
+                                            const std::vector<int> & rowGIDsB)
 {
   const int sep = getLocalID(sep_number, sepIDs);
   const int* sep_gIDs = &sepRows[sepBegin[sep]];
@@ -3186,9 +3208,9 @@ void D3Solver<SC,GO>::add_sparse_contrib(const int level,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::add_sparse_contrib(const int level,
-                                         const int num_rows)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::add_sparse_contrib(const int level,
+                                            const int num_rows)
 {
   const std::vector<int> & rowBeginB = rowBegin_B[level];
   const std::vector<int> & columnsB = columns_B[level];
@@ -3205,8 +3227,8 @@ void D3Solver<SC,GO>::add_sparse_contrib(const int level,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::add_sep_contrib(const int level)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::add_sep_contrib(const int level)
 {
   std::vector<SC> & rhs_here = AS_rhs[level];
   for (size_t i=0; i<rhs_sep[level].size(); i++) {
@@ -3214,20 +3236,20 @@ void D3Solver<SC,GO>::add_sep_contrib(const int level)
   }
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::get_num_rows_sep(const int sep_number) const
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::get_num_rows_sep(const int sep_number) const
 {
   const int sep = getLocalID(sep_number, sepIDs);
   return sepBegin[sep+1] - sepBegin[sep];
 }
                                
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assemble_dense(const int level,
-                                     const std::vector<int> & gIDs,
-                                     const std::vector<int> & gIDs_recv,
-                                     const int sep_number,
-                                     const std::vector<int> & rowGIDsB,
-                                           std::vector<int> & not_in_sep)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assemble_dense(const int level,
+                                        const std::vector<int> & gIDs,
+                                        const std::vector<int> & gIDs_recv,
+                                        const int sep_number,
+                                        const std::vector<int> & rowGIDsB,
+                                              std::vector<int> & not_in_sep)
 {
   const int sep = getLocalID(sep_number, sepIDs);
   const int* sep_gIDs = &sepRows[sepBegin[sep]];
@@ -3282,11 +3304,11 @@ void D3Solver<SC,GO>::assemble_dense(const int level,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::output_dense_matrix(const std::string prefix,
-                                          const int numRows,
-                                          const int level,
-                                          const std::vector<SC> & A_in) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::output_dense_matrix(const std::string prefix,
+                                             const int numRows,
+                                             const int level,
+                                             const std::vector<SC> & A_in) const
 {
   if (numRows == 0) return;
   if (msg_level < 2) return;
@@ -3304,12 +3326,12 @@ void D3Solver<SC,GO>::output_dense_matrix(const std::string prefix,
   fout.close();
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::output_matrices(const std::string prefix,
-                                      const std::vector<int> & rowBegin,
-                                      const std::vector<int> & columns,
-                                      const std::vector<SC>  & values,
-                                      const int level) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::output_matrices(const std::string prefix,
+                                         const std::vector<int> & rowBegin,
+                                         const std::vector<int> & columns,
+                                         const std::vector<SC>  & values,
+                                         const int level) const
 {
   if (msg_level < 2) return;
   const int numRows = rowBegin.size() - 1;
@@ -3329,11 +3351,11 @@ void D3Solver<SC,GO>::output_matrices(const std::string prefix,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::get_color_and_key(const int numSub,
-                                        const int mult,
-                                              int & color,
-                                              int & key) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::get_color_and_key(const int numSub,
+                                           const int mult,
+                                                 int & color,
+                                                 int & key) const
 {
   color = MPI_UNDEFINED; key = -1;
   for (int i=0; i<numSub; i++) {
@@ -3345,12 +3367,12 @@ void D3Solver<SC,GO>::get_color_and_key(const int numSub,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::initialize_schur_complement(const int level,
-                                                  const std::vector<int> & rowBegin,
-                                                  const std::vector<int> & columns,
-                                                  const std::vector<int> & rowGIDsSubB,
-                                                        std::vector<int> & not_in_sep)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::initialize_schur_complement(const int level,
+                                                     const std::vector<GS> & rowBegin,
+                                                     const std::vector<GO> & columns,
+                                                     const std::vector<int> & rowGIDsSubB,
+                                                           std::vector<int> & not_in_sep)
 {
   int numSub, mult, sep_start;
   get_level_ints(level, numSub, mult, sep_start);
@@ -3396,9 +3418,9 @@ void D3Solver<SC,GO>::initialize_schur_complement(const int level,
   comm->barrier();
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::get_sep_number(const int sep_start,
-                                    const int recv_index) const
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::get_sep_number(const int sep_start,
+                                       const int recv_index) const
 {
   int sep_number = -1;
   if (recv_index != -1) {
@@ -3407,8 +3429,8 @@ int D3Solver<SC,GO>::get_sep_number(const int sep_start,
   return sep_number;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::assign_matrix_blocks(const int level)
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::assign_matrix_blocks(const int level)
 {
   const int n1 = n1a[level];
   const int n2 = n2a[level];
@@ -3438,11 +3460,11 @@ void D3Solver<SC,GO>::assign_matrix_blocks(const int level)
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::convert_to_row_major(const std::vector<SC> & A_col_major,
-                                           const int num_rows,
-                                           const int num_cols,
-                                           std::vector<SC> & A_row_major) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::convert_to_row_major(const std::vector<SC> & A_col_major,
+                                              const int num_rows,
+                                              const int num_cols,
+                                              std::vector<SC> & A_row_major) const
 {
   int index = 0;
   for (int j=0; j<num_cols; j++) {
@@ -3452,8 +3474,8 @@ void D3Solver<SC,GO>::convert_to_row_major(const std::vector<SC> & A_col_major,
   }
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::eliminate_separator(const int level)
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::eliminate_separator(const int level)
 {
   const int n1 = n1a[level];
   const int n2 = n2a[level];
@@ -3503,8 +3525,8 @@ int D3Solver<SC,GO>::eliminate_separator(const int level)
   return info;
 }
 
-template <typename SC, typename GO>
-int D3Solver<SC,GO>::eliminate_separator_rhs(const int level)
+template <typename SC, typename GO, typename GS>
+int D3Solver<SC,GO,GS>::eliminate_separator_rhs(const int level)
 {
   const double startTime = clockIt();
   const int n1 = n1a[level];
@@ -3542,9 +3564,9 @@ int D3Solver<SC,GO>::eliminate_separator_rhs(const int level)
   return info;
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::output_time(const std::string & message,
-                                  const double time) const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::output_time(const std::string & message,
+                                     const double time) const
 {
   double time_max;
   Teuchos::reduceAll<int,double>(*comm, Teuchos::REDUCE_MAX, 1, &time, &time_max);
@@ -3553,8 +3575,8 @@ void D3Solver<SC,GO>::output_time(const std::string & message,
   }
 }
 
-template <typename SC, typename GO>
-void D3Solver<SC,GO>::output_timers() const
+template <typename SC, typename GO, typename GS>
+void D3Solver<SC,GO,GS>::output_timers() const
 {
   std::string message = "max interior symbolic time = ";
   output_time(message, timer_interior_symbolic);
@@ -3578,8 +3600,8 @@ void D3Solver<SC,GO>::output_timers() const
   */
 }
 
-template <typename SC, typename GO>
-inline double D3Solver<SC,GO>::clockIt() const
+template <typename SC, typename GO, typename GS>
+inline double D3Solver<SC,GO,GS>::clockIt() const
 {
   struct timeval start;
   gettimeofday(&start, NULL);
@@ -3590,15 +3612,22 @@ inline double D3Solver<SC,GO>::clockIt() const
 
 
 // ..ETI..
-template class D3Solver<double>;
+template class D3Solver<double, long long, size_t>;
+#ifdef HAVE_TPETRA_INST_INT_INT
+template class D3Solver<double, int, size_t>;
+#endif
+
 #ifdef HAVE_TEUCHOS_INST_FLOAT
-template class D3Solver<float>;
+template class D3Solver<float, long long, size_t>;
+#ifdef HAVE_TPETRA_INST_INT_INT
+template class D3Solver<float, int, size_t>;
+#endif
 #endif
 #ifdef HAVE_TEUCHOS_INST_COMPLEX_DOUBLE
-//template class D3Solver<std::complex<double>>;
-//template class D3Solver<Kokkos::complex<double>>;
+//template class D3Solver<std::complex<double>, long long, size_t>;
+//template class D3Solver<Kokkos::complex<double>, long long, size_t>;
 #endif
 #ifdef HAVE_TEUCHOS_INST_COMPLEX_FLOAT
-//template class D3Solver<std::complex<float>>;
-//template class D3Solver<Kokkos::complex<float>>;
+//template class D3Solver<std::complex<float>, long long, size_t>;
+//template class D3Solver<Kokkos::complex<float>, long long, size_t>;
 #endif

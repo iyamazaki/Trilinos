@@ -55,8 +55,8 @@ public:
   typedef typename super_type::global_size_type            global_size_type;
   typedef typename super_type::node_type                          node_type;
   typedef Tpetra::Map<local_ordinal_type,
-                                 global_ordinal_type,
-                                 node_type>                        map_type;
+                      global_ordinal_type,
+                      node_type>                                   map_type;
 
   typedef TypeMap<Amesos2::D3S,scalar_type>                        type_map;
 
@@ -73,6 +73,8 @@ public:
   typedef Matrix                                               matrix_type;
   typedef MatrixAdapter<matrix_type>                   matrix_adapter_type;
 
+  typedef D3Solver<d3s_dtype, global_ordinal_type, global_size_type> d3solver_type;
+
   /// \name Constructor/Destructor methods
   //@{
 
@@ -83,8 +85,8 @@ public:
    * Amesos2::create() to initialize a D3S interface.
    */
   D3S(Teuchos::RCP<const Matrix> A,
-          Teuchos::RCP<Vector>       X,
-          Teuchos::RCP<const Vector> B);
+      Teuchos::RCP<Vector>       X,
+      Teuchos::RCP<const Vector> B);
 
 
   /// Destructor
@@ -207,9 +209,9 @@ private:
 
 
   typedef Kokkos::DefaultHostExecutionSpace HostExecSpaceType;
-  typedef Kokkos::View<int*,       HostExecSpaceType>    host_size_type_array;
-  typedef Kokkos::View<int*,       HostExecSpaceType>    host_ordinal_type_array;
-  typedef Kokkos::View<scalar_type*, HostExecSpaceType>  host_value_type_array;
+  typedef Kokkos::View<global_size_type*,    HostExecSpaceType>    host_size_type_array;
+  typedef Kokkos::View<global_ordinal_type*, HostExecSpaceType>    host_ordinal_type_array;
+  typedef Kokkos::View<scalar_type*, HostExecSpaceType>            host_value_type_array;
 
 private:
 
@@ -251,7 +253,7 @@ private:
   Teuchos::RCP<const map_type> d3s_contig_colmap_;
 
   // NOTE: instantidating with d3s_dtype = double or float
-  Teuchos::RCP<D3Solver<d3s_dtype>> solver;
+  Teuchos::RCP<d3solver_type>  solver;
 };                              // End class D3S
 
 

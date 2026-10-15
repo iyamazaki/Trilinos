@@ -5,15 +5,16 @@
 #include "throwAssert.h"
 
 #include "Teuchos_CommHelpers.hpp"
+#include "Tpetra_Core.hpp"
 
-template <typename SC>
+template <typename SC, typename GO = int, typename GS = int>
 class GatherToRootSimple
 {
 public:
   using comm_type = Teuchos::MpiComm<int>;
 
-  GatherToRootSimple(const std::vector<int> & rowBeginIn,
-                     const std::vector<int> & columnsIn,
+  GatherToRootSimple(const std::vector<GS> & rowBeginIn,
+                     const std::vector<GO> & columnsIn,
                      Teuchos::RCP<comm_type> commIn);
 
   int getMyPID();
@@ -34,20 +35,22 @@ public:
   SC checkMatrix(const std::vector<SC> & values,
                  const std::vector<SC> & valuesTarget);
 
-  const std::vector<int> & getRowBeginRoot();
+  const std::vector<GS> & getRowBeginRoot();
 
-  const std::vector<int> & getColumnsRoot();
+  const std::vector<GO> & getColumnsRoot();
 
  private:
   
   void getDispls(const std::vector<int> & numEntriesProc,
                  std::vector<int> & displs) const;
 
-  const std::vector<int> & rowBegin;
-  const std::vector<int> & columns;
+  const std::vector<GS> & rowBegin;
+  const std::vector<GO> & columns;
   Teuchos::RCP<comm_type> comm;
 
-  std::vector<int> rowBeginRoot, columnsRoot, numRowsProc, nnzProc;
+  std::vector<GS> rowBeginRoot;
+  std::vector<GO> columnsRoot;
+  std::vector<int> numRowsProc, nnzProc;
   int myPID, numProc, root=0;
   
 };

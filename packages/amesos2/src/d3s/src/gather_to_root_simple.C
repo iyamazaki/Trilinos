@@ -11,10 +11,10 @@
 #include <cstdlib>
 #include "gather_to_root_simple.h"
 
-template <typename SC>
-GatherToRootSimple<SC>::GatherToRootSimple(const std::vector<int> & rowBeginIn,
-                                           const std::vector<int> & columnsIn,
-                                           Teuchos::RCP<comm_type> commIn):
+template <typename SC, typename GO, typename GS>
+GatherToRootSimple<SC,GO,GS>::GatherToRootSimple(const std::vector<GS> & rowBeginIn,
+                                                 const std::vector<GO> & columnsIn,
+                                                 Teuchos::RCP<comm_type> commIn):
   rowBegin(rowBeginIn),
   columns(columnsIn),
   comm(commIn)
@@ -23,27 +23,27 @@ GatherToRootSimple<SC>::GatherToRootSimple(const std::vector<int> & rowBeginIn,
   numProc = comm->getSize();
 }
 
-template <typename SC>
-const std::vector<int> & GatherToRootSimple<SC>::getRowBeginRoot()
+template <typename SC, typename GO, typename GS>
+const std::vector<GS> & GatherToRootSimple<SC,GO,GS>::getRowBeginRoot()
 {
   return rowBeginRoot;
 }
 
-template <typename SC>
-const std::vector<int> & GatherToRootSimple<SC>::getColumnsRoot()
+template <typename SC, typename GO, typename GS>
+const std::vector<GO> & GatherToRootSimple<SC,GO,GS>::getColumnsRoot()
 {
   return columnsRoot;
 }
 
-template <typename SC>
-int GatherToRootSimple<SC>::getMyPID()
+template <typename SC, typename GO, typename GS>
+int GatherToRootSimple<SC,GO,GS>::getMyPID()
 {
   return myPID;
 }
 
-template <typename SC>
-void GatherToRootSimple<SC>::gatherMatrix(const std::vector<SC> & values,
-                                                std::vector<SC> & valuesRoot)
+template <typename SC, typename GO, typename GS>
+void GatherToRootSimple<SC,GO,GS>::gatherMatrix(const std::vector<SC> & values,
+                                                      std::vector<SC> & valuesRoot)
 {
   std::vector<int> displs;
   getDispls(nnzProc, displs);
@@ -56,9 +56,9 @@ void GatherToRootSimple<SC>::gatherMatrix(const std::vector<SC> & values,
                             displs.data(), root, *comm);
 }
 
-template <typename SC>
-void GatherToRootSimple<SC>::gatherRhs(const std::vector<SC> & rhs,
-                                             std::vector<SC> & rhsRoot)
+template <typename SC, typename GO, typename GS>
+void GatherToRootSimple<SC,GO,GS>::gatherRhs(const std::vector<SC> & rhs,
+                                                   std::vector<SC> & rhsRoot)
 {
   std::vector<int> displs;
   const int numRows = rowBegin.size() - 1;
@@ -69,9 +69,9 @@ void GatherToRootSimple<SC>::gatherRhs(const std::vector<SC> & rhs,
                             displs.data(), root, *comm);
 }
 
-template <typename SC>
-void GatherToRootSimple<SC>::scatterSol(const std::vector<SC> & solRoot,
-                                              std::vector<SC> & sol)
+template <typename SC, typename GO, typename GS>
+void GatherToRootSimple<SC,GO,GS>::scatterSol(const std::vector<SC> & solRoot,
+                                                    std::vector<SC> & sol)
 {
   std::vector<int> displs;
   getDispls(numRowsProc, displs);
@@ -81,8 +81,8 @@ void GatherToRootSimple<SC>::scatterSol(const std::vector<SC> & solRoot,
                              sol.data(), numRows, root, *comm);
 }
 
-template <typename SC>
-void GatherToRootSimple<SC>::broadcastSol(std::vector<SC> & solRoot)
+template <typename SC, typename GO, typename GS>
+void GatherToRootSimple<SC,GO,GS>::broadcastSol(std::vector<SC> & solRoot)
 {
   int numRowsRoot = rowBeginRoot.size() - 1;
   Teuchos::broadcast<int, int>(*comm, root, 1, &numRowsRoot);
@@ -90,9 +90,9 @@ void GatherToRootSimple<SC>::broadcastSol(std::vector<SC> & solRoot)
   Teuchos::broadcast<int, SC>(*comm, root, numRowsRoot, solRoot.data());
 }
 
-template <typename SC>
-void GatherToRootSimple<SC>::getDispls(const std::vector<int> & numEntriesProc,
-                                             std::vector<int> & displs) const
+template <typename SC, typename GO, typename GS>
+void GatherToRootSimple<SC,GO,GS>::getDispls(const std::vector<int> & numEntriesProc,
+                                                   std::vector<int> & displs) const
 {
   if (myPID == root) {
     displs.resize(numProc, 0);
@@ -102,8 +102,8 @@ void GatherToRootSimple<SC>::getDispls(const std::vector<int> & numEntriesProc,
   }
 }
 
-template <typename SC>
-void GatherToRootSimple<SC>::initialize()
+template <typename SC, typename GO, typename GS>
+void GatherToRootSimple<SC,GO,GS>::initialize()
 {
   const int numRows = rowBegin.size() - 1;
   const int nnz = rowBegin[numRows];
@@ -134,13 +134,13 @@ void GatherToRootSimple<SC>::initialize()
   // gather nonzero columns
   columnsRoot.resize(nnzRoot);
   getDispls(nnzProc, displs);
-  Teuchos::gatherv<int, int>(columns.data(), nnz, columnsRoot.data(), nnzProc.data(),
-                             displs.data(), root, *comm);
+  Teuchos::gatherv<int, GO>(columns.data(), nnz, columnsRoot.data(), nnzProc.data(),
+                            displs.data(), root, *comm);
 }
 
-template <typename SC>
-SC GatherToRootSimple<SC>::checkMatrix(const std::vector<SC> & values,
-                                       const std::vector<SC> & valuesRoot)
+template <typename SC, typename GO, typename GS>
+SC GatherToRootSimple<SC,GO,GS>::checkMatrix(const std::vector<SC> & values,
+                                             const std::vector<SC> & valuesRoot)
 {
   using STS = Teuchos::ScalarTraits<SC>;
   using MAG = STS::magnitudeType;
@@ -187,15 +187,24 @@ SC GatherToRootSimple<SC>::checkMatrix(const std::vector<SC> & values,
 }
 
 // ...ETI...
-template class GatherToRootSimple<double>;
-#ifdef HAVE_TEUCHOS_INST_FLOAT
-template class GatherToRootSimple<float>;
+// double
+template class GatherToRootSimple<double, long long, size_t>;
+#ifdef HAVE_TPETRA_INST_INT_INT
+template class GatherToRootSimple<double, int, size_t>;
 #endif
+// float
+#ifdef HAVE_TEUCHOS_INST_FLOAT
+template class GatherToRootSimple<float, long long, size_t>;
+#ifdef HAVE_TPETRA_INST_INT_INT
+template class GatherToRootSimple<float, int, size_t>;
+#endif
+#endif
+// complex
 #ifdef HAVE_TEUCHOS_INST_COMPLEX_DOUBLE
-//template class GatherToRootSimple<std::complex<double>>;
-//template class GatherToRootSimple<Kokkos::complex<double>>;
+//template class GatherToRootSimple<std::complex<double>, long long, size_t>;
+//template class GatherToRootSimple<Kokkos::complex<double>, long long, size_t>;
 #endif
 #ifdef HAVE_TEUCHOS_INST_COMPLEX_FLOAT
-//template class GatherToRootSimple<std::complex<float>>;
-//template class GatherToRootSimple<Kokkos::complex<float>>;
+//template class GatherToRootSimple<std::complex<float>, long long, size_t>;
+//template class GatherToRootSimple<Kokkos::complex<float>, long long, size_t>;
 #endif
