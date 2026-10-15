@@ -260,8 +260,14 @@ namespace Amesos2 {
 
     RCP<const type> get_mat;
     if( *rowmap == *this->row_map_ && distribution != CONTIGUOUS_AND_ROOTED ){
-      // No need to redistribute
-      get_mat = rcp(this,false); // non-owning
+      if (ordering == NUMERICAL_VALUES_ONLY) {
+        this->returnValues_kokkos_view(nzval);
+        nnz = this->getLocalNNZ();
+        return;
+      } else {
+        // No need to redistribute
+        get_mat = rcp(this,false); // non-owning
+      }
     } else {
       get_mat = get(rowmap, distribution);
     }
