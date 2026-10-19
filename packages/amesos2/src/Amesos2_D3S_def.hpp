@@ -124,8 +124,8 @@ D3S<Matrix,Vector>::symbolicFactorization_impl()
       solver->setInteriorSolverName(solvername_);
 
       int nnz = colind_view_.extent(0);
-      std::vector<global_size_type>    rowBegin(rowptr_view_.data(), rowptr_view_.data()+(numRows_+1));
-      std::vector<global_ordinal_type> columns (colind_view_.data(), colind_view_.data()+(nnz));
+      std::vector<d3s_gs_type> rowBegin(rowptr_view_.data(), rowptr_view_.data()+(numRows_+1));
+      std::vector<d3s_go_type> columns (colind_view_.data(), colind_view_.data()+(nnz));
       info = solver->initialize(rowBegin, columns, startGID_, numProcSolver_);
     } else {
       TEUCHOS_TEST_FOR_EXCEPTION(true, std::logic_error, "D3S supports only double or float");
@@ -391,7 +391,7 @@ D3S<Matrix,Vector>::loadA_impl(EPhase current_phase)
         Kokkos::resize(colind_view_, contig_mat->getLocalNNZ());
         Kokkos::resize(rowptr_view_, contig_mat->getLocalNumRows() + 1);
     }
-    global_size_type nnz_ret = 0;
+    d3s_gs_type nnz_ret = 0;
     {
 #ifdef HAVE_AMESOS2_TIMERS
       Teuchos::TimeMonitor mtxRedistTimer( this->timers_.mtxRedistTime_ );
@@ -433,7 +433,7 @@ D3S<Matrix,Vector>::loadA_impl(EPhase current_phase)
         }
       }
     }
-    global_size_type nnz_ret = 0;
+    d3s_gs_type nnz_ret = 0;
     {
 #ifdef HAVE_AMESOS2_TIMERS
       Teuchos::TimeMonitor mtxRedistTimer( this->timers_.mtxRedistTime_ );

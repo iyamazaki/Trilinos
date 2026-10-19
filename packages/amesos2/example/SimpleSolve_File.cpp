@@ -70,7 +70,6 @@ int main(int argc, char *argv[]) {
   //
   Teuchos::RCP<const Teuchos::Comm<int> > comm = Tpetra::getDefaultComm();
   int myRank = comm->getRank();
-
   Teuchos::oblackholestream blackhole;
 
   size_t numVectors = 1;
@@ -120,7 +119,9 @@ int main(int argc, char *argv[]) {
   RCP<Teuchos::FancyOStream> fos = Teuchos::fancyOStream(Teuchos::rcpFromRef(out));
 
   // Say hello
-  out << myRank << " : " << Amesos2::version() << " on " << comm->getSize() << " MPIs" << std::endl << std::endl;
+  out << Amesos2::version() << " on " << comm->getSize() << " MPIs" << std::endl;
+  out << "Scalar type: " << typeid(Scalar).name() << ", GO = " << typeid(GO).name()
+      << ", LO = " << typeid(LO).name() << std::endl << std::endl;
 
   // Read matrix
   if( verbose && myRank == 0) std::cout << "Reading A from " << mat_filename << std::endl;
