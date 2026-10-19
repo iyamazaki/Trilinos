@@ -188,12 +188,14 @@ SC GatherToRootSimple<SC,GO,GS>::checkMatrix(const std::vector<SC> & values,
 
 // ...ETI...
 // double
+template class GatherToRootSimple<double, int, int>;
 template class GatherToRootSimple<double, long long, size_t>;
 #ifdef HAVE_TPETRA_INST_INT_INT
 template class GatherToRootSimple<double, int, size_t>;
 #endif
 // float
 #ifdef HAVE_TEUCHOS_INST_FLOAT
+template class GatherToRootSimple<float, int, int>;
 template class GatherToRootSimple<float, long long, size_t>;
 #ifdef HAVE_TPETRA_INST_INT_INT
 template class GatherToRootSimple<float, int, size_t>;

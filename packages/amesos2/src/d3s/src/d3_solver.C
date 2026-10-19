@@ -165,9 +165,9 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
       } else {
         // need to copy to int
         std::vector<int> col_ptr(rowBegin.size());
-	std::vector<int> row_idx(columns.size());
-	for (GS idx : rowBegin) col_ptr.push_back(static_cast<int>(idx));
-	for (GO idx : columns)  row_idx.push_back(static_cast<int>(idx));
+        std::vector<int> row_idx(columns.size());
+        for (GS idx : rowBegin) col_ptr.push_back(static_cast<int>(idx));
+        for (GO idx : columns)  row_idx.push_back(static_cast<int>(idx));
         nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr.data(), row_idx.data(), maxwork, &work, perm, iwork);
       }
     } else {
@@ -184,9 +184,9 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
       } else {
         // need to copy to int
         std::vector<int> col_ptr(rowBeginT.size());
-	std::vector<int> row_idx(columnsT.size());
-	for (GS idx : rowBeginT) col_ptr.push_back(static_cast<int>(idx));
-	for (GO idx : columnsT)  row_idx.push_back(static_cast<int>(idx));
+        std::vector<int> row_idx(columnsT.size());
+        for (GS idx : rowBeginT) col_ptr.push_back(static_cast<int>(idx));
+        for (GO idx : columnsT)  row_idx.push_back(static_cast<int>(idx));
         nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr.data(), row_idx.data(), maxwork, &work, perm, iwork);
       }
     }
@@ -214,7 +214,7 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
   numTerms = 0;
   for (int i=0; i<numRows; i++) {
     int row = (matching_option > 1 ? rowperm[i] : i); //row-matching
-    for (int j=rowBegin[row]; j<rowBegin[row+1]; j++) {
+    for (GS j=rowBegin[row]; j<rowBegin[row+1]; j++) {
       const int col = (matching_option == 1 ? irowperm[columns[j]] : columns[j]); //col-matching
       if (col != i) {
         columnsG[numTerms++] = col;
@@ -241,16 +241,16 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
   std::vector<bool> colFlag(numRows, false);
   int num_additional_edges = 0;
   for (int i=0; i<numRows; i++) {
-    for (int j=rowBeginG[i]; j<rowBeginG[i+1]; j++) colFlag[columnsG[j]] = true;
+    for (GS j=rowBeginG[i]; j<rowBeginG[i+1]; j++) colFlag[columnsG[j]] = true;
     int num_cols = rowBeginG[i+1] - rowBeginG[i];
-    for (int j=rowBeginGT[i]; j<rowBeginGT[i+1]; j++) {
+    for (GS j=rowBeginGT[i]; j<rowBeginGT[i+1]; j++) {
       if (colFlag[columnsGT[j]] == false) {
         num_additional_edges++;
         num_cols++;
       }
     }
     count[i] = num_cols;
-    for (int j=rowBeginG[i]; j<rowBeginG[i+1]; j++) colFlag[columnsG[j]] = false;
+    for (GS j=rowBeginG[i]; j<rowBeginG[i+1]; j++) colFlag[columnsG[j]] = false;
   }
   rowBeginMetis.resize(numRows+1, 0);
   for (int i=0; i<numRows; i++) {
@@ -262,18 +262,18 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
   columnsMetis.resize(numTerms);
   numTerms = 0;
   for (int i=0; i<numRows; i++) {
-    for (int j=rowBeginG[i]; j<rowBeginG[i+1]; j++) {
+    for (GS j=rowBeginG[i]; j<rowBeginG[i+1]; j++) {
       const int col = columnsG[j];
       colFlag[col] = true;
       columnsMetis[numTerms++] = columnsG[j];
     }
-    for (int j=rowBeginGT[i]; j<rowBeginGT[i+1]; j++) {
+    for (GS j=rowBeginGT[i]; j<rowBeginGT[i+1]; j++) {
       if (colFlag[columnsGT[j]] == false) {
         columnsMetis[numTerms++] = columnsGT[j];
         additional_edges[num_additional_edges++] = std::make_pair(i, columnsGT[j]);
       }
     }
-    for (int j=rowBeginG[i]; j<rowBeginG[i+1]; j++) colFlag[columnsG[j]] = false;
+    for (GS j=rowBeginG[i]; j<rowBeginG[i+1]; j++) colFlag[columnsG[j]] = false;
   }
   // sort columns
   for (int i=0; i<numRows; i++) {
@@ -351,10 +351,10 @@ void D3Solver<SC,GO,GS>::extractRowSubIDs(const std::vector<int> & node_begin,
 }
 
 template <typename SC, typename GO, typename GS>
-void D3Solver<SC,GO,GS>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
-                                        const std::vector<int> & rowperm,
-                                        const std::vector<GS>  & rowBegin,
-                                        const std::vector<GO>  & columns) const
+int D3Solver<SC,GO,GS>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
+                                       const std::vector<int> & rowperm,
+                                       const std::vector<GS>  & rowBegin,
+                                       const std::vector<GO>  & columns) const
 {
   int maxSubID = 0;
   std::vector<std::vector<int>> subI(numProcSolver);
@@ -367,7 +367,6 @@ void D3Solver<SC,GO,GS>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
     sub = std::abs(in_rowSubIDs[i]);
     if (sub > maxSubID) maxSubID = sub;
   }
-  char msg[100];
   const int num_group = maxSubID + 1;
   // numProcSolver == # of interior subdomains
   for (int i=0; i<numProcSolver; i++) {
@@ -376,7 +375,7 @@ void D3Solver<SC,GO,GS>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
       // subI stores row ids after matching
       // rowperm: ith row after matching is rowperm[i] of original
       const int row = rowperm[subI[i][j]];
-      for (int k=rowBegin[row]; k<rowBegin[row+1]; k++) {
+      for (GS k=rowBegin[row]; k<rowBegin[row+1]; k++) {
         const int col = columns[k];
         const int sub2 = std::abs(in_rowSubIDs[col]);
         adj_sub[sub2] = 1;
@@ -386,15 +385,20 @@ void D3Solver<SC,GO,GS>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
     //  (numProcSolver == # of interior subdomains)
     for (int j=0; j<numProcSolver; j++) {
       if (j == i) {
-        sprintf(msg, "%d: subdomain %d has no interior unknowns", myPID,i);
-        ThrowAssert(true, adj_sub[j] == 1, msg);
+        if (adj_sub[j] == 0) {
+          printf("%d: subdomain %d has no interior unknowns", myPID,i);
+          return -1;
+        }
       }
       else {
-        sprintf(msg, "%d:%d: partitioning error for subdomain %d", myPID,i,j);
-        ThrowAssert(true, adj_sub[j] == 0, msg);
+        if (adj_sub[j] == 1) {
+          printf("%d:%d: partitioning error for subdomain %d", myPID,i,j);
+          return -1;
+        }
       }
     }
   }
+  return 0;
 }
 
 template <typename SC, typename GO, typename GS>
@@ -448,7 +452,7 @@ void D3Solver<SC,GO,GS>::getGraphTranspose(const std::vector<GS> & rowBegin,
   const int numRows = rowBegin.size() - 1;
   std::vector<int> count(numRows, 0);
   for (int i=0; i<numRows; i++) {
-    for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+    for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
       const int col = columns[j];
       ThrowAssert(true, col < numRows, "graph not square");
       count[col]++;
@@ -462,7 +466,7 @@ void D3Solver<SC,GO,GS>::getGraphTranspose(const std::vector<GS> & rowBegin,
   const int num_terms = rowBeginT[numRows];
   columnsT.resize(num_terms);
   for (int i=0; i<numRows; i++) {
-    for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+    for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
       const int col = columns[j];
       const int index = rowBeginT[col] + count[col];
       columnsT[index] = i;
@@ -592,7 +596,7 @@ void D3Solver<SC,GO,GS>::update_graph(const std::vector<GS> & rowBegin,
   valuesUse.resize(numTerms, 0);
   // original distributed matrix (in 1D block row)
   for (int i=0; i<numRows_proc; i++) {
-    for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+    for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
       const int index = rowBeginUse[i] + count[i];
       columnsUse[index] = columns[j];;
       count[i]++;
@@ -609,8 +613,8 @@ void D3Solver<SC,GO,GS>::update_graph(const std::vector<GS> & rowBegin,
 }
 
 template <typename SC, typename GO, typename GS>
-void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // original
-                                      const std::vector<GO> & columns)  // original
+int D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // original
+                                     const std::vector<GO> & columns)  // original
 {
   // Gather graph to root: (rowBegin, columns) in 1D block row -> (rowBeginRoot, columnsRoot) gathered
   GatherToRootSimple<SC,GO,GS> gatherer(rowBegin, columns, comm);
@@ -620,7 +624,9 @@ void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origi
   std::vector<std::pair<int,int>> additional_edges;
   int numRows, numSep, numTerms, numRowsB;
 
-  if (myPID == 0) {
+  int r_val = 0;
+  int root = 0;
+  if (myPID == root) {
     numRows = rowBeginRoot.size() - 1;
     std::vector<idx_t> rowBeginMetis, columnsMetis;
     permMatching.resize(numRows, 0);
@@ -628,12 +634,24 @@ void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origi
     // Prepar graph for calling Metis
     getGraphForMetis(rowBeginRoot, columnsRoot, permMatching, ipermMatching,
                      rowBeginMetis, columnsMetis, additional_edges);
-    // calling Metis
+    // setting Metis parameters
+    idx_t* vwgt = nullptr;
     std::vector<idx_t> options(METIS_NOPTIONS), perm(numRows), iperm(numRows), sizes(2*numProcSolver);
     int info = METIS_SetDefaultOptions(options.data());
     ThrowAssert(true, info == METIS_OK, "METIS_SetDefaultOptions failed");
-    idx_t* vwgt = nullptr;
+    options[METIS_OPTION_SEED] = 1; // to keep it deterministic
     if (true) {
+      // to improve load-balance
+      options[METIS_OPTION_UFACTOR] = 10;
+      //options[METIS_OPTION_RTYPE] = METIS_RTYPE_SEP2SIDED; // this seems to up residual norm?
+      if (false) { // this makes separator huge?
+        vwgt = (idx_t*)malloc(numRows * sizeof(idx_t));
+        for (int i = 0; i <numRows; i++) vwgt[i] = (rowBeginRoot[i+1]-rowBeginRoot[i]);
+      }
+    }
+
+    // calling Metis
+    if (false) {
       // sort for debugging
       std::vector<int> sortedCols(numRows);
       std::vector<idx_t> columnsSorted(columnsMetis.size());
@@ -645,35 +663,25 @@ void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origi
         index = rowBeginMetis[i];
         for (int j=0; j<num_cols; j++) columnsSorted[index++] = sortedCols[j];
       }
-      METIS_NodeNDP(numRows, rowBeginMetis.data(), columnsSorted.data(), vwgt,
-                    numProcSolver, options.data(), perm.data(), iperm.data(), 
-                    sizes.data());
-#ifdef MATRIX_OUT
-      {
-        FILE *fp = fopen("G_Metis.dat", "w");
-        for (int i=0; i<numRows; i++) {
-          for (int k=rowBeginMetis[i]; k<rowBeginMetis[i+1]; k++)
-            fprintf(fp,"%d %d\n",columnsSorted[k],i);
-        }
-        fclose(fp);
-      }
-#endif
+      info = METIS_NodeNDP(numRows, rowBeginMetis.data(), columnsSorted.data(), vwgt,
+                           numProcSolver, options.data(), perm.data(), iperm.data(), 
+                           sizes.data());
     } else {
-      METIS_NodeNDP(numRows, rowBeginMetis.data(), columnsMetis.data(), vwgt,
-                    numProcSolver, options.data(), perm.data(), iperm.data(), 
-                    sizes.data());
-#ifdef MATRIX_OUT
-      {
-        FILE *fp = fopen("G_Metis.dat", "w");
-        for (int i=0; i<numRows; i++) {
-          for (int k=rowBeginMetis[i]; k<rowBeginMetis[i+1]; k++)
-            fprintf(fp,"%d %d\n",columnsMetis[k],i);
-        }
-        fclose(fp);
-      }
-#endif
+      info = METIS_NodeNDP(numRows, rowBeginMetis.data(), columnsMetis.data(), vwgt,
+                           numProcSolver, options.data(), perm.data(), iperm.data(), 
+                           sizes.data());
     }
-#ifdef MATRIX_OUT
+    if (info != METIS_OK) r_val = -1;
+    if(vwgt != nullptr) free(vwgt);
+    #ifdef MATRIX_OUT
+    {
+      FILE *fp = fopen("G_Metis.dat", "w");
+      for (int i=0; i<numRows; i++) {
+        for (int k=rowBeginMetis[i]; k<rowBeginMetis[i+1]; k++)
+          fprintf(fp,"%d %d\n",columnsMetis[k],i);
+      }
+      fclose(fp);
+    }
     if (matching_option) {
       printf("\n");
       for (int i=0; i<2*numProcSolver; i++) printf("%d\n",sizes[i]);
@@ -688,111 +696,112 @@ void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origi
       }
       fclose(fp);
     }
-#endif
-    int lowerIndex = 2*numProcSolver - 2;
-    int numSepLevel(1), interfaceSize(0);
-    const int numLevel = std::log2(numProcSolver) + 1;
-    for (int level=0; level<numLevel; level++) {
-      if (msg_level > 0) {
-        if (level < numLevel-1) {
-          std::cout << "separator sizes for level " << level << ": \n";
-        }
-        else {
-          std::cout << "subdomain interior sizes:\n";
-        }
-      }
-      for (int i=0; i<numSepLevel; i++) {
-        const int sepSize = sizes[lowerIndex--];
-        if (msg_level > 0) std::cout << sepSize << std::endl;
-        if (level < numLevel-1) interfaceSize += sepSize;
-      }
-      numSepLevel *= 2;
-    }
-    if (msg_level > 0) {
-      std::cout << "total interface size = " << interfaceSize << std::endl;
-    }
-    std::vector<int> level, location;
-    getLevelsAndLocations(numProcSolver, level, location);
-    const int num_level_nd = std::log2(numProcSolver) + 1;
-    std::vector<int> start_level(num_level_nd);
-    int delta = numProcSolver;
-    for (int i=1; i<num_level_nd; i++) {
-      start_level[i] = start_level[i-1] + delta;
-      delta /= 2;
-    }
-
-    // Map from post-order (METIS) to bottom-up ordering of nested-dissection tree of subdomains, 
-    //  e.g., [0, 1 | -4 | 2, 3 | -5 | -6] with 4 MPIs
-    const int num_node = location.size();
-    std::vector<int> node_size(num_node), node_sub_id(num_node), node_begin(num_node+1, 0);
-    for (int i=0; i<num_node; i++) {
-      node_size[i] = sizes[start_level[level[i]] + location[i]];
-      node_sub_id[i] = start_level[level[i]] + location[i];
-      if (level[i] > 0) node_sub_id[i] *= -1;
-      node_begin[i+1] = node_begin[i] + node_size[i];
-    }
-
-    // Mapping of rows to subdomains (interior or separators)
-    //   perm: ith row after ND is perm[i] of original
-    //  iperm: ith row of original is iperm[i] row after ND
-    extractRowSubIDs(node_begin, node_sub_id, iperm, rowSubIDs);
-#ifdef MATRIX_OUT
-    {
-      FILE *fp = fopen("rowperm.dat", "w");
-      for (int i=0; i<numRows; i++) {
-        fprintf(fp,"%d %d %d\n",i,permMatching[i],ipermMatching[i]);
-      }
-      fclose(fp);
-    }
-#endif
-
-    // Checking (to make sure each iterior is not connected to another interior)
-    checkRowSubIDs(rowSubIDs, permMatching, rowBeginRoot, columnsRoot);
-
-    //
-    get_separators(rowSubIDs, sepIDs, sepBegin, sepRows);
-    //    getS2I(rowSubIDs, rowBeginRoot, columnsRoot, sepIDs, s2i, s2iBegin);
-    numSep = sepIDs.size();
-    numTerms = sepRows.size();
-    // rowsB
-    numRowsB = 0;
-    for (int i=0; i<numRows; i++) {
-      if (rowSubIDs[i] < 0) numRowsB++;
-    }
-    rowsB.resize(numRowsB);
-    numRowsB = 0;
-    for (int i=0; i<numRows; i++) {
-      if (rowSubIDs[i] < 0) rowsB[numRowsB++] = i;
-    }
-    for (int i=0; i<numProcSolver/2; i++) {
-      std::vector<bool> adjacent_sep(numProcSolver/2, false);
-      for (int j=sepBegin[i]; j<sepBegin[i+1]; j++) {
-        int row = sepRows[j]; // after row-matching
-        if (matching_option == 2) {
-          row = permMatching[sepRows[j]]; // to original
-        }
-        for (int k=rowBeginRoot[row]; k<rowBeginRoot[row+1]; k++) {
-          int col = columnsRoot[k]; // original
-          if (matching_option == 1) {
-            col = ipermMatching[col]; // after col-matching
+    #endif
+    if (r_val == 0) {
+      int lowerIndex = 2*numProcSolver - 2;
+      int numSepLevel(1), interfaceSize(0);
+      const int numLevel = std::log2(numProcSolver) + 1;
+      for (int level=0; level<numLevel; level++) {
+        if (msg_level > 0) {
+          if (level < numLevel-1) {
+            std::cout << "separator sizes for level " << level << ": \n";
           }
-          const int sub = rowSubIDs[col];
-          if (sub < 0) {
-            const int sep2 = -sub - numProcSolver;
-            if (sep2 < numProcSolver/2) adjacent_sep[sep2] = true;
+          else {
+            std::cout << "subdomain interior sizes:\n";
+          }
+        }
+        for (int i=0; i<numSepLevel; i++) {
+          const int sepSize = sizes[lowerIndex--];
+          if (msg_level > 0) std::cout << sepSize << std::endl;
+          if (level < numLevel-1) interfaceSize += sepSize;
+        }
+        numSepLevel *= 2;
+      }
+      if (msg_level > 0) {
+        std::cout << "total interface size = " << interfaceSize << std::endl;
+      }
+      std::vector<int> level, location;
+      getLevelsAndLocations(numProcSolver, level, location);
+      const int num_level_nd = std::log2(numProcSolver) + 1;
+      std::vector<int> start_level(num_level_nd);
+      int delta = numProcSolver;
+      for (int i=1; i<num_level_nd; i++) {
+        start_level[i] = start_level[i-1] + delta;
+        delta /= 2;
+      }
+
+      // Map from post-order (METIS) to bottom-up ordering of nested-dissection tree of subdomains, 
+      //  e.g., [0, 1 | -4 | 2, 3 | -5 | -6] with 4 MPIs
+      const int num_node = location.size();
+      std::vector<int> node_size(num_node), node_sub_id(num_node), node_begin(num_node+1, 0);
+      for (int i=0; i<num_node; i++) {
+        node_size[i] = sizes[start_level[level[i]] + location[i]];
+        node_sub_id[i] = start_level[level[i]] + location[i];
+        if (level[i] > 0) node_sub_id[i] *= -1;
+        node_begin[i+1] = node_begin[i] + node_size[i];
+      }
+
+      // Mapping of rows to subdomains (interior or separators)
+      //   perm: ith row after ND is perm[i] of original
+      //  iperm: ith row of original is iperm[i] row after ND
+      extractRowSubIDs(node_begin, node_sub_id, iperm, rowSubIDs);
+      #ifdef MATRIX_OUT
+      {
+        FILE *fp = fopen("rowperm.dat", "w");
+        for (int i=0; i<numRows; i++) {
+          fprintf(fp,"%d %d %d\n",i,permMatching[i],ipermMatching[i]);
+        }
+        fclose(fp);
+      }
+      #endif
+      // Checking (to make sure each iterior is not connected to another interior)
+      r_val = checkRowSubIDs(rowSubIDs, permMatching, rowBeginRoot, columnsRoot);
+    }
+    if (r_val == 0) {
+      get_separators(rowSubIDs, sepIDs, sepBegin, sepRows);
+      //    getS2I(rowSubIDs, rowBeginRoot, columnsRoot, sepIDs, s2i, s2iBegin);
+      numSep = sepIDs.size();
+      numTerms = sepRows.size();
+      // rowsB
+      numRowsB = 0;
+      for (int i=0; i<numRows; i++) {
+        if (rowSubIDs[i] < 0) numRowsB++;
+      }
+      rowsB.resize(numRowsB);
+      numRowsB = 0;
+      for (int i=0; i<numRows; i++) {
+        if (rowSubIDs[i] < 0) rowsB[numRowsB++] = i;
+      }
+      for (int i=0; i<numProcSolver/2; i++) {
+        std::vector<bool> adjacent_sep(numProcSolver/2, false);
+        for (int j=sepBegin[i]; j<sepBegin[i+1]; j++) {
+          int row = sepRows[j]; // after row-matching
+          if (matching_option == 2) {
+            row = permMatching[sepRows[j]]; // to original
+          }
+          for (GS k=rowBeginRoot[row]; k<rowBeginRoot[row+1]; k++) {
+            int col = columnsRoot[k]; // original
+            if (matching_option == 1) {
+              col = ipermMatching[col]; // after col-matching
+            }
+            const int sub = rowSubIDs[col];
+            if (sub < 0) {
+              const int sep2 = -sub - numProcSolver;
+              if (sep2 < numProcSolver/2) adjacent_sep[sep2] = true;
+            }
           }
         }
       }
     }
   }
-  comm->barrier();
+  Teuchos::broadcast<int, int>(*comm, root, 1, &r_val);
+  if (r_val !=0) return r_val;
 
   // symmetrize the original local matrix
   std::vector<int> extraEdges; // extra edges on each proc (to make it structurally-symmetric)
   scatter_additional_edges(additional_edges, extraEdges);
 
   // global DoFs
-  int root = 0;
   Teuchos::broadcast<int, int>(*comm, root, 1, &numRows);
   numRows_global = numRows;
 
@@ -820,7 +829,7 @@ void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origi
       columnsRe.resize(nnz, 0);
       valuesRe.resize(nnz, 0);
       for (int i=0; i<numRows_proc; i++) {
-        for (int k=rowBegin[i]; k<rowBegin[i+1]; k++) {
+        for (GS k=rowBegin[i]; k<rowBegin[i+1]; k++) {
           int col = ipermMatching[columns[k]]; // after col-matching
           columnsRe[k] = col;
         }
@@ -853,7 +862,7 @@ void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origi
         for (int p=0; p<numProcs; p++) {
           if (row >= fstRows[p] && row < fstRows[p+1]) {
             nnz = senddispls[p];
-            for (int k=0; k<rowBegin[i+1]-rowBegin[i]; k++) {
+            for (GS k=0; k<rowBegin[i+1]-rowBegin[i]; k++) {
               int col = columns[rowBegin[i]+k];
               sendbuf[nnz + 2*k+0] = row;
               sendbuf[nnz + 2*k+1] = col;
@@ -924,6 +933,7 @@ void D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origi
   Teuchos::broadcast<int, int>(*comm, root, numTerms, sepRows.data());
   Teuchos::broadcast<int, int>(*comm, root, numSep+1, sepBegin.data());
   Teuchos::broadcast<int, int>(*comm, root, numRowsB, rowsB.data());
+  return r_val;
 }
 
 template <typename SC, typename GO, typename GS>
@@ -996,7 +1006,7 @@ void D3Solver<SC,GO,GS>::phase1(const std::vector<GS> & rowBegin,
     }
     else { // row is on the interface
       std::unordered_set<int> sub_set2;
-      for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+      for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
         const int gID2 = columns[j];         // called with rowBeginPtr = after matching
         const int sub2 = rowSubIDs[gID2];
         if (sub2 >= 0) {
@@ -1036,7 +1046,7 @@ void D3Solver<SC,GO,GS>::phase1(const std::vector<GS> & rowBegin,
     if (sub >= 0) { // row is in interior of a subdomain
       const int local_sub = getLocalID(sub, activeSubs);
       const int row_sub = num_rows_sub[local_sub];
-      for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+      for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
         const int index = num_terms_sub[local_sub];
         const int gID2 = columns[j];         // original
         column_GIDs_send[local_sub][index] = gID2;
@@ -1048,7 +1058,7 @@ void D3Solver<SC,GO,GS>::phase1(const std::vector<GS> & rowBegin,
     }
     else { // row is on the interface
       std::unordered_set<int> sub_set_local;
-      for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+      for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
         const int gID2 = columns[j];         // original
         const int sub2 = rowSubIDs[gID2];
         if (sub2 >= 0) {
@@ -1112,7 +1122,7 @@ void D3Solver<SC,GO,GS>::phase2(const int level,
       if (local_sep >= 0) { // row is on a separator in list of separators
         sep_flag[local_sep] = true;
         row_GIDs[local_sep].push_back(gID);
-        for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+        for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
           const int gID2 = columns[j];
           const int validRow2 = determine_valid_row(gID2, separators);
           if (validRow2) num_terms_sep[local_sep]++;
@@ -1120,7 +1130,7 @@ void D3Solver<SC,GO,GS>::phase2(const int level,
       }
       else { // row is on the interface but not on separator in separators list
         std::unordered_set<int> local_sep2_set;
-        for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+        for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
           const int gID2 = columns[j];
           const int sep2 = -rowSubIDs[gID2];
           const int local_sep2 = getLocalID(sep2, separators, do_not_throw);
@@ -1167,7 +1177,7 @@ void D3Solver<SC,GO,GS>::phase2(const int level,
       if (local_sep >= 0) { // row is on a separator in list of separators
         const int local_sep_active = getLocalID(local_sep, activeSeps);
         const int row_sep = num_rows_sep[local_sep_active];
-        for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+        for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
           const int gID2 = columns[j];
           const int validRow2 = determine_valid_row(gID2, separators);
           if (validRow2) {
@@ -1183,7 +1193,7 @@ void D3Solver<SC,GO,GS>::phase2(const int level,
       }
       else { // row is on the interface but not on separator in separators list
         std::unordered_set<int> local_sep2_set;
-        for (int j=rowBegin[i]; j<rowBegin[i+1]; j++) {
+        for (GS j=rowBegin[i]; j<rowBegin[i+1]; j++) {
           const int gID2 = columns[j];
           const int sep2 = -rowSubIDs[gID2];
           const int local_sep2 = getLocalID(sep2, separators, do_not_throw);
@@ -1357,7 +1367,7 @@ void D3Solver<SC,GO,GS>::generateSubMatrices(const std::vector<std::vector<int>>
     for (size_t j=0; j<row_GIDs_recv[i].size(); j++) {
       const int gID = row_GIDs_recv[i][j];
       const int local_row = getLocalID(gID, rowGIDs);
-      for (size_t k=0; k<column_counts_recv[i][j]; k++) {
+      for (int k=0; k<column_counts_recv[i][j]; k++) {
         const int col = column_GIDs_recv[i][num_terms_data];
         bool check = true;
         if ((rowSubIDs[gID] < 0) && (rowSubIDs[col] < 0)) {
@@ -1443,9 +1453,8 @@ void D3Solver<SC,GO,GS>::extractMatrixStructures(const int level,
     for (size_t j=0; j<row_GIDs_recv[i].size(); j++) {
       const int gID = row_GIDs_recv[i][j];
       const int local_row = getLocalID(gID, rowGIDs);
-      for (size_t k=0; k<column_counts_recv[i][j]; k++) {
+      for (int k=0; k<column_counts_recv[i][j]; k++) {
         const int col = column_GIDs_recv[i][num_terms_data];
-        //        const double value = values_recv_here[i][num_terms_data];
         const int localCol = getLocalID(col, rowGIDs);
         const int index = rowBegin[local_row] + count[local_row];
         index_map[i][num_terms_data++] = index;
@@ -1922,13 +1931,16 @@ int D3Solver<SC,GO,GS>::initialize(const std::vector<GS> & rowBegin_in,
       printf( "\n -- D3Solver::initialize -- \n" ); fflush(stdout);
     }
   }
+  int r_val = 0;
   startGID = startGID_in;
   numProcSolver = setNumProcSolver(numProcSolver_in);
   num_level = std::log2(numProcSolver);
   numRows_proc = rowBegin_in.size() - 1;
-  // call METIS to get nested-dissection
-  getRowSubIDs(rowBegin_in, columns_in);
   getProcName();
+  // call METIS to get nested-dissection
+  r_val = getRowSubIDs(rowBegin_in, columns_in);
+  Teuchos::reduceAll<int,int>(*comm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
+  if (r_val !=0) return r_val;
 
   // rowBeginPtr (after symmetrization of the original matrix)
   const std::vector<GS> & rowBegin = *rowBeginPtr;
@@ -1943,7 +1955,6 @@ int D3Solver<SC,GO,GS>::initialize(const std::vector<GS> & rowBegin_in,
   resize_vectors();
 
   // calling Pardiso Initialize
-  int r_val = 0;
   double startTime = clockIt();
   if (num_rows_sub > 0) {
     // at this point the matrix is structurally symmetric by construction
@@ -1998,10 +2009,16 @@ int D3Solver<SC,GO,GS>::initialize(const std::vector<GS> & rowBegin_in,
             //  = storage for output Schur
             solver_params.set("SchurOut", (SC*)S_view.data());
             if (msg_level > 0) {
-              solver_params.set("verbose", (myPID == 0));
+              //solver_params.set("verbose", (myPID == 0));
+              solver_params.set("verbose", (myPID == 2));
             }
             if (debug_level_interior > 0) {
               solver_params.set("DebugLevel", (myPID == 0 ? debug_level_interior : 0));
+            }
+            if (solvername == "ShyLUBasker") {
+              solver_params.set("run_nd_on_leaves",  false);
+              solver_params.set("run_amd_on_leaves", true);
+              //solver_params.set("worker_threads", true);
             }
             if (robust_option && solvername == "PARDISOMKL") {
               solver_params.set("IPARM(10)", 16); // pivoting option
@@ -2173,7 +2190,7 @@ void D3Solver<SC,GO,GS>::assign_values(const std::vector<GS> & rowBegin_in,
     //       are at the end of each row (and hence no need to assign values)
     for (int i=0; i<numRows_proc; i++) {
       int index = rowBeginUse[i];
-      for (int j=rowBegin_in[i]; j<rowBegin_in[i+1]; j++) {
+      for (GS j=rowBegin_in[i]; j<rowBegin_in[i+1]; j++) {
         valuesUse[index++] = values_in[j];
       }
     }
@@ -2199,7 +2216,7 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
     if (matching_option == 1) {
       // assign values
       assign_values(rowBeginRe,values_in);
-#ifdef MATRIX_OUT
+      #ifdef MATRIX_OUT
       {
         char filename[100];
         sprintf(filename, "lW_%d.dat", myPID);
@@ -2211,7 +2228,7 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
         }
         fclose(fp);
       }
-#endif
+      #endif
     } else {
       // fill send-buffer
       int nnz = rowBeginOrig[numRows_proc];
@@ -2222,7 +2239,7 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
         for (int p=0; p<numProcs; p++) {
           if (row >= fstRows[p] && row < fstRows[p+1]) {
             nnz = senddispls[p];
-            for (int k=0; k<rowBeginOrig[i+1]-rowBeginOrig[i]; k++) {
+            for (GS k=0; k<rowBeginOrig[i+1]-rowBeginOrig[i]; k++) {
               SC val = values_in[rowBeginOrig[i]+k];
               sendbuf[nnz + 2*k+0] = SC(row);
               sendbuf[nnz + 2*k+1] = val;
@@ -2260,7 +2277,7 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
 
       // assign values
       assign_values(rowBeginRe,valuesRe);
-#ifdef MATRIX_OUT
+      #ifdef MATRIX_OUT
       {
         char filename[100];
         sprintf(filename, "lW_%d.dat", myPID);
@@ -2271,7 +2288,7 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
         }
         fclose(fp);
       }
-#endif
+      #endif
     }
   }
   const std::vector<SC> & values = *valuesPtr;
@@ -2283,17 +2300,20 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
   startTime = clockIt();
   {
     // Amesos2 numerical factorization
-    size_t n = rowBeginSub.size()-1;
+    Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("D3S::PartialFactorization");
+    Teuchos::TimeMonitor timeMonitor (*localTimer);
+
+    const size_t n = rowBeginSub.size()-1;
+    const int n1 = rowsISub.size(); // interior
+    const int n2 = rowsBSub.size(); // boundary
     if (msg_level > 0) {
       comm->barrier();
-      printf("%d: n=%d\n",myPID,int(n)); fflush(stdout);
+      printf("%d: n=%d (n1=%d, n2=%d), nnz=%d\n",myPID,int(n),n1,n2,int(rowmap_view_D(n))); fflush(stdout);
       if (myPID == 0) {
         printf( " > Amesos2:factorize\n" ); fflush(stdout);
       }
     }
     if (n > 0) {
-      const int n1 = rowsISub.size(); // interior
-      const int n2 = rowsBSub.size(); // boundary
       try {
         if (supportedInteriorSolver(solvername)) {
           // == Amesos2 for ShyLU-Basker/PardisoMKL/MUMPS as local solver ==
@@ -2324,17 +2344,17 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
                   values_view_D(nnzD) = valuesSub[k];
                   nnzD ++;
                 } else {
-                  // separator->interior, G
+                  // separator->interior, E
                   E_view(row, -col-1) = valuesSub[k];
                 }
               }
               n1_++;
             } else {
-              // [H, C]
+              // [F, C]
               for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) {
                 int col = m_parts(columnsSub[k]);
                 if (col >= 0) {
-                  // interior->separator, H
+                  // interior->separator, F
                   values_view_F(nnzF) = valuesSub[k];
                   nnzF ++;
                 } else {
@@ -2351,47 +2371,45 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
             // wrap into Kokkos::CrsMatrix
             graph_t static_graph(colind_view_D, rowmap_view_D);
             crsmat_t crsmat("CrsMatrix", n1, values_view_D, static_graph);
-#ifdef MATRIX_OUT
+            #ifdef MATRIX_OUT
             {
               char filename[250];
               FILE *fp;
-              /*sprintf(filename,"A%d.dat", myPID);
+              sprintf(filename,"A%d.dat", myPID);
               fp = fopen(filename,"w");;
               for (int i=0; i<n; i++) for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++) fprintf(fp,"%d %d %.16e\n",1+i,1+columnsSub[k],valuesSub[k]);
-              fclose(fp);*/
+              fclose(fp);
               sprintf(filename,"D%d.dat", myPID);
               fp = fopen(filename,"w");;
               for (int i=0; i<n1; i++) for (int k=rowmap_view_D(i); k<rowmap_view_D(i+1); k++) fprintf(fp,"%d %d %.16e\n",1+i,1+colind_view_D(k),values_view_D(k));
               fclose(fp);
-              /*sprintf(filename,"E%d.dat", myPID);
+              sprintf(filename,"E%d.dat", myPID);
               fp = fopen(filename,"w");;
               for (int i=0; i<n1; i++) {
-                for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",E_view(i,j));
-                fprintf(fp,"\n");
+                for (int j=0; j<n2; j++) if (E_view(i,j) != 0.0) fprintf(fp,"%d %d %.16e\n",1+i,1+j,E_view(i,j));
               }
               fclose(fp);
               sprintf(filename,"F%d.dat", myPID);
               fp = fopen(filename,"w");;
               for (int i=0; i<n2; i++) {
-                for (int j=0; j<n1; j++) fprintf(fp,"%.16e ",F_view(i,j));
-                fprintf(fp,"\n");
+                //for (int j=0; j<n1; j++) fprintf(fp,"%.16e ",F_view(i,j));
+                //fprintf(fp,"\n");
+                for (int k=rowmap_view_F(i); k<rowmap_view_F(i+1); k++) fprintf(fp,"%d %d %.16e\n",1+i,1+colind_view_F(k),values_view_F(k));
               }
               fclose(fp);
               sprintf(filename,"C%d.dat", myPID);
               fp = fopen(filename,"w");;
               for (int i=0; i<n2; i++) {
-                for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",S_view(i,j));
-                fprintf(fp,"\n");
+                for (int j=0; j<n2; j++) if (S_view(i,j) != 0.0) fprintf(fp,"%d %d %.16e\n",1+i,1+j,S_view(i,j));
               }
               fclose(fp);
-              */
               sprintf(filename,"part%d.dat", myPID);
               fp = fopen(filename,"w");;
               for (int i=0; i<n; i++) fprintf(fp,"%d\n",m_parts(i));
               fclose(fp);
             }
             comm->barrier();
-#endif
+            #endif
             // kokkos-backend for numeric factorization
             amesos2_solver->setA(Teuchos::rcpFromRef(crsmat), Amesos2::SYMBFACT);
             amesos2_solver->numericFactorization();
@@ -2405,7 +2423,7 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
 
           // Form local Schur
           {
-#ifdef MATRIX_OUT
+            #ifdef MATRIX_OUT
             {
               char filename[250];
               sprintf(filename,"G%d.dat", myPID);
@@ -2416,23 +2434,22 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
               }
               fclose(fp);
             }
-#endif
+            #endif
             // S = S - H*G by SpMV (H in CRS, S and G in View)
             graph_t static_graph(colind_view_F, rowmap_view_F);
             crsmat_t crsmat("CrsMatrix", n1, values_view_F, static_graph);
             KokkosSparse::spmv("N", -1.0, crsmat, G_view, 1.0, S_view);
-#ifdef MATRIX_OUT
+            #ifdef MATRIX_OUT
             {
               char filename[250];
               sprintf(filename,"S_A%d.dat", myPID);
               FILE *fp = fopen(filename,"w");;
               for (int i=0; i<n2; i++) {
-                for (int j=0; j<n2; j++) fprintf(fp,"%.16e ",S_view(i,j));
-                fprintf(fp,"\n");
+                for (int j=0; j<n2; j++) if (S_view(i,j) != 0.0) fprintf(fp,"%d %d %.16e\n",i,j,S_view(i,j));
               }
               fclose(fp);
             }
-#endif
+            #endif
           }
         }
       } catch (const std::exception& e) {
@@ -2469,17 +2486,21 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
   timer_interior_numeric = clockIt() - startTime;
   
   if (r_val == 0) {
+    Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("D3S::GlobalSchurComplement");
+    Teuchos::TimeMonitor timeMonitor (*localTimer);
+
     int level = 0;
     while (level < num_level) {
       startTime = clockIt();
-      r_val = compute_schur_complement(level, values);
-      timer_factor[level] = clockIt() - startTime;
-      // check at each level;
-      r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
-      Teuchos::reduceAll<int,int>(*comm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
-      if (r_val != 0) break;
+      int rval_l = compute_schur_complement(level, values);
+      timer_factor[level] = clockIt() - startTime; // time at each level
+      // keep track of error at each level, to be checked after the loop
+      if (rval_l != 0) r_val = rval_l;
       level++;
     }
+    // check error
+    r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
+    Teuchos::reduceAll<int,int>(*comm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
   }
 
   if (msg_level > 0) {
@@ -2506,25 +2527,36 @@ int D3Solver<SC,GO,GS>::compute_schur_complement(const int level,
                                                  const std::vector<SC> & values)
 {
   int r_val = 0;
+  int recv_index = 0;
   int numSub, mult, sep_start;
-  get_level_ints(level, numSub, mult, sep_start);
-  communicateMatrixValuesB(level, values, values_send_B_index, values_send_B, values_recv_B,
-                           my_send_PIDs_B, my_recv_PIDs_B, comm);
-  extractMatrixValues(level);
-  bool output_mats = false;
-  if (msg_level >= 2) output_mats = true;
-  if (output_mats) {
-    output_matrices("A_BB", rowBegin_B[level], columns_B[level], values_B[level], level);
+  bool output_mats = (msg_level >= 2 ? true : false);
+  {
+    Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("D3S::SchurComplement(Comm)");
+    Teuchos::TimeMonitor timeMonitor (*localTimer);
+
+    get_level_ints(level, numSub, mult, sep_start);
+    communicateMatrixValuesB(level, values, values_send_B_index, values_send_B, values_recv_B,
+                             my_send_PIDs_B, my_recv_PIDs_B, comm);
+    extractMatrixValues(level);
+    if (output_mats) {
+      output_matrices("A_BB", rowBegin_B[level], columns_B[level], values_B[level], level);
+    }
+    int send_to_pid, recv_from_pid;
+    get_comm_data(level, numSub, mult, send_to_pid, recv_from_pid, recv_index);
+    point_to_point_single(send_to_pid, recv_from_pid, sc[level], sc_recv[level], comm_level[level]);
   }
-  int send_to_pid, recv_from_pid, recv_index;
-  get_comm_data(level, numSub, mult, send_to_pid, recv_from_pid, recv_index);
-  point_to_point_single(send_to_pid, recv_from_pid, sc[level], sc_recv[level], comm_level[level]);
   if (recv_index != -1) {
+    Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("D3S::SchurComplement(Compute)");
+    Teuchos::TimeMonitor timeMonitor (*localTimer);
     const int num_rows = n1a[level] + n2a[level];
-    // assemeble local schurs from neighbors
-    assemble_dense(level, num_rows);
-    // add original separator block
-    add_sparse_contrib(level, num_rows);
+    {
+      Teuchos::RCP< Teuchos::Time > d3sTimer = Teuchos::TimeMonitor::getNewCounter ("D3S::Assemble");
+      Teuchos::TimeMonitor d3sMonitor (*d3sTimer);
+      // assemeble local schurs from neighbors
+      assemble_dense(level, num_rows);
+      // add original separator block
+      add_sparse_contrib(level, num_rows);
+    }
     r_val = eliminate_separator(level);
     rhs_sep[level].resize(n1a[level]);
     if (output_mats) {
@@ -3141,6 +3173,25 @@ void D3Solver<SC,GO,GS>::get_schur_gids(const int send_to_pid,
                         comm_here);
 }
 
+
+template <typename SC>
+struct AssembleDenseFunctor {
+  SC* sc_l;
+  SC* a_l;
+  const int* map_l;
+  int length;
+  int n;
+
+  KOKKOS_INLINE_FUNCTION
+  void operator()(const size_t i) const {
+    const int row = map_l[i];
+    for (int j = 0; j < length; j++) {
+      const int col = map_l[j];
+      a_l[row + col * n] = sc_l[i * length + j];
+    }
+  }
+};
+
 template <typename SC, typename GO, typename GS>
 void D3Solver<SC,GO,GS>::assemble_dense(const int level,
                                         const int n)
@@ -3149,22 +3200,34 @@ void D3Solver<SC,GO,GS>::assemble_dense(const int level,
   // and we choose A to also be col-major
   std::vector<SC> & A_l = AS[level];
   A_l.assign(n*n, 0);
-  int index = 0;
   int length = sep_map[level].size();
+  #if 1
+  using range_policy = Kokkos::RangePolicy<execution_space>;
+  AssembleDenseFunctor<SC> dense_assembler{
+    sc[level].data(),
+    AS[level].data(),
+    sep_map[level].data(),
+    length,
+    n
+  };
+  Kokkos::parallel_for(
+    "D3Solver::assemble_dense", range_policy(0, length),
+     dense_assembler);
+  #else
   for (int i=0; i<length; i++) {
     const int row = sep_map[level][i];
     for (int j=0; j<length; j++) {
       const int col = sep_map[level][j];
-      A_l[row+col*n] = sc[level][index++];
+      A_l[row+col*n] = sc[level][i*length + j];
     }
   }
-  index = 0;
+  #endif
   length = sep_map_recv[level].size();
   for (int i=0; i<length; i++) {
     const int row = sep_map_recv[level][i];
     for (int j=0; j<length; j++) {
       const int col = sep_map_recv[level][j];
-      A_l[row+col*n] += sc_recv[level][index++];
+      A_l[row+col*n] += sc_recv[level][i*length + j];
     }
   }
 }
@@ -3394,13 +3457,15 @@ void D3Solver<SC,GO,GS>::initialize_schur_complement(const int level,
   // split communicator
   int color, key;
   get_color_and_key(numSub, mult, color, key);
-  comm_level[level] = rcp_dynamic_cast<Teuchos::MpiComm<int> >(comm->split(color, key));
+  comm_level[level] = Teuchos::rcp_dynamic_cast<comm_type>(
+    Teuchos::rcp_const_cast<Teuchos::Comm<int>>(comm->split(color, key)));
 
   int myPID_level(-1), num_proc_level(-1);
   if (color == 1) {
     myPID_level = comm_level[level]->getRank();
     num_proc_level = comm_level[level]->getSize();
   }
+
   // next step is to gather and sum dense matrix contributions to Schur complements
   int send_to_pid, recv_from_pid, recv_index;
   get_comm_pairs(num_proc_level, myPID_level, send_to_pid, recv_from_pid, recv_index);
@@ -3483,14 +3548,12 @@ int D3Solver<SC,GO,GS>::eliminate_separator(const int level)
   const double startTime = clockIt();
 
   int info = 0;
+  Teuchos::BLAS<int, SC> blas;
   Teuchos::LAPACK<int, SC> lapack;
   if (n1 > 0) {
+    Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("D3S::GETRF");
+    Teuchos::TimeMonitor timeMonitor (*localTimer);
     ipiv[level].resize(n1);
-    //printf("C=[\n");
-    //for (int i=0; i<n1; i++) {
-    //  for (int j=0; j<n1; j++) printf("%.16e ",A11[level][i+j*n1]);
-    //}
-    //printf("];\n");
     lapack.GETRF(n1, n1, A11[level].data(), n1,
                  ipiv[level].data(), &info);
     ThrowAssert(false, info == 0, "error in call to dgetrf");
@@ -3504,19 +3567,26 @@ int D3Solver<SC,GO,GS>::eliminate_separator(const int level)
     return info;
   }
   if (n1 > 0) {
-    lapack.GETRS('N', n1, n2, A11[level].data(), n1,
-                 ipiv[level].data(), A12[level].data(), n1, &info);
+    {
+      Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("D3S::GETRS");
+      Teuchos::TimeMonitor timeMonitor (*localTimer);
+      lapack.GETRS('N', n1, n2, A11[level].data(), n1,
+                   ipiv[level].data(), A12[level].data(), n1, &info);
+    }
     ThrowAssert(false, info == 0, "error in call to dgetrs");
     if (info != 0) {
       fprintf(stderr, "DGETRS(%dx%d) failed with info=%d in D3S::eliminate_separator\n",n1,n2,info);
       return info;
     }
-    SC alpha(-1), beta(1);
-    Teuchos::BLAS<int, SC> blas;
-    blas.GEMM(Teuchos::NO_TRANS, Teuchos::NO_TRANS, n2, n2, n1,
-              alpha, A21[level].data(), n2,
-                     A12[level].data(), n1,
-              beta,  A22[level].data(), n2);
+    {
+      Teuchos::RCP< Teuchos::Time > localTimer = Teuchos::TimeMonitor::getNewCounter ("D3S::GEMM ");
+      Teuchos::TimeMonitor timeMonitor (*localTimer);
+      SC alpha(-1), beta(1);
+      blas.GEMM(Teuchos::NO_TRANS, Teuchos::NO_TRANS, n2, n2, n1,
+                alpha, A21[level].data(), n2,
+                       A12[level].data(), n1,
+                beta,  A22[level].data(), n2);
+    }
     timer_factor_dla[level] = clockIt() - startTime;
   }
   // recall that we use row-major ordering for sc --> convert A22 accordingly
@@ -3612,12 +3682,14 @@ inline double D3Solver<SC,GO,GS>::clockIt() const
 
 
 // ..ETI..
+template class D3Solver<double, int, int>;
 template class D3Solver<double, long long, size_t>;
 #ifdef HAVE_TPETRA_INST_INT_INT
 template class D3Solver<double, int, size_t>;
 #endif
 
 #ifdef HAVE_TEUCHOS_INST_FLOAT
+template class D3Solver<float, int, int>;
 template class D3Solver<float, long long, size_t>;
 #ifdef HAVE_TPETRA_INST_INT_INT
 template class D3Solver<float, int, size_t>;

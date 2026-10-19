@@ -78,10 +78,10 @@ public:
                         const std::vector<idx_t> & iperm,
                         std::vector<int> & row_sub_id) const;
   
-  void checkRowSubIDs(const std::vector<int> & rowSubIDs,
-                      const std::vector<int> & rowperm,
-                      const std::vector<GS>  & rowBegin,
-                      const std::vector<GO>  & columns) const;
+  int checkRowSubIDs(const std::vector<int> & rowSubIDs,
+                     const std::vector<int> & rowperm,
+                     const std::vector<GS>  & rowBegin,
+                     const std::vector<GO>  & columns) const;
   
   void get_separators(const std::vector<int> & rowSubIDs,
                       std::vector<int> & sepIDs,
@@ -93,8 +93,8 @@ public:
                          std::vector<GS> & rowBeginT,
                          std::vector<GO> & columnsT) const;
   
-  void getRowSubIDs(const std::vector<GS> & rowBegin,
-                    const std::vector<GO> & columns);
+  int getRowSubIDs(const std::vector<GS> & rowBegin,
+                   const std::vector<GO> & columns);
   
   void output_rows(const std::string name,
                    const std::vector<int> & rows);
@@ -383,6 +383,23 @@ private:
     my_send_PIDs_rhs, my_recv_PIDs_rhs, old_to_new_indices, n1a, n2a;
   std::vector<std::string> node_names;
 
+  // Kokkos default types
+  using NO = Kokkos::DefaultHostExecutionSpace;
+  using execution_space = typename NO::execution_space;
+  using memory_space = typename NO::memory_space;
+  using device_t = Kokkos::Device<execution_space, memory_space>;
+
+  // Kokkos backend
+  using dense_matrix = Kokkos::View<SC**, Kokkos::LayoutLeft, device_t>;
+  using crsmat_t = KokkosSparse::CrsMatrix<SC, int, device_t>;
+  using mv_view_t = Kokkos::View<SC**, Kokkos::LayoutLeft, device_t>;
+  using graph_t = typename crsmat_t::StaticCrsGraphType;
+  using rowmap_view_t = typename graph_t::row_map_type::non_const_type;
+  using colind_view_t = typename graph_t::entries_type::non_const_type;
+  using values_view_t = typename crsmat_t::values_type::non_const_type;
+  using UnmanagedScalar1DViewType = Kokkos::View<SC*,  Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+  using UnmanagedScalar2DViewType = Kokkos::View<SC**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
+
   const std::vector<GS> *rowBeginPtr;
   const std::vector<GO> *columnsPtr;
   const std::vector<SC> *valuesPtr;
@@ -398,10 +415,13 @@ private:
     index_map_B, rhs_send_sep_index, rhs_recv_sep_index;
   std::vector<std::vector<std::vector<SC>>> values_send_B, values_recv_B,
     rhs_send_sep, rhs_recv_sep;
-  std::vector<std::vector<SC>> AS, values_send, values_recv, AS_rhs,
+  std::vector<std::vector<SC>> AS;
+  std::vector<std::vector<SC>> values_send, values_recv, AS_rhs,
     A11, A12, A21, A22;
+
   // Schur complement
-  std::vector<std::vector<SC>> sc, sc_recv;
+  std::vector<std::vector<SC>> sc;
+  std::vector<std::vector<SC>> sc_recv;
   // rhs vectors
   std::vector<std::vector<SC>> rhs_send, rhs_recv, rhs_sc, rhs_sc_recv,
     rhs_sep, values_B;
@@ -419,21 +439,8 @@ private:
   std::string solvername;
   Kokkos::View<int*> m_parts;
 
-  // Kokkos backend
-  using NO = Kokkos::DefaultHostExecutionSpace;
-  using execution_space = typename NO::execution_space;
-  using memory_space = typename NO::memory_space;
-  using device_t = Kokkos::Device<execution_space, memory_space>;
-
-  using crsmat_t = KokkosSparse::CrsMatrix<SC, int, device_t>;
-  using mv_view_t = Kokkos::View<SC**, Kokkos::LayoutLeft, device_t>;
+  // Amesos2 local solver
   Teuchos::RCP<Amesos2::Solver<crsmat_t,mv_view_t>> amesos2_solver;
-  using graph_t = typename crsmat_t::StaticCrsGraphType;
-  using rowmap_view_t = typename graph_t::row_map_type::non_const_type;
-  using colind_view_t = typename graph_t::entries_type::non_const_type;
-  using values_view_t = typename crsmat_t::values_type::non_const_type;
-  using UnmanagedScalar1DViewType = Kokkos::View<SC*,  Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
-  using UnmanagedScalar2DViewType = Kokkos::View<SC**, Kokkos::HostSpace, Kokkos::MemoryUnmanaged>;
 
   // [D, G; H, S]
   // D in csrmat

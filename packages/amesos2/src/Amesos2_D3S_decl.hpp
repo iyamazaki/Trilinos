@@ -65,15 +65,24 @@ public:
    * - the D3S type that corresponds to scalar_type and
    * - the corresponding type to use for magnitude
    */
-  typedef typename type_map::type                                 d3s_type;
+  typedef typename type_map::type                                d3s_type;
   typedef typename type_map::dtype                               d3s_dtype;
+  // Also, integer types for colind and rowptr
+   #if 1
+  // To inherit from Tpetra
+  typedef global_ordinal_type                                    d3s_go_type;
+  typedef global_size_type                                       d3s_gs_type;
+  #else
+  // To hard-code to be int
+  typedef int                                                    d3s_go_type;
+  typedef int                                                    d3s_gs_type;
+  #endif
+  typedef D3Solver<d3s_dtype, d3s_go_type, d3s_gs_type> d3solver_type;
 
   typedef FunctionMap<Amesos2::D3S,scalar_type>               function_map;
-
   typedef Matrix                                               matrix_type;
   typedef MatrixAdapter<matrix_type>                   matrix_adapter_type;
 
-  typedef D3Solver<d3s_dtype, global_ordinal_type, global_size_type> d3solver_type;
 
   /// \name Constructor/Destructor methods
   //@{
@@ -209,9 +218,9 @@ private:
 
 
   typedef Kokkos::DefaultHostExecutionSpace HostExecSpaceType;
-  typedef Kokkos::View<global_size_type*,    HostExecSpaceType>    host_size_type_array;
-  typedef Kokkos::View<global_ordinal_type*, HostExecSpaceType>    host_ordinal_type_array;
-  typedef Kokkos::View<scalar_type*, HostExecSpaceType>            host_value_type_array;
+  typedef Kokkos::View<d3s_gs_type*, HostExecSpaceType>    host_size_type_array;
+  typedef Kokkos::View<d3s_go_type*, HostExecSpaceType>    host_ordinal_type_array;
+  typedef Kokkos::View<scalar_type*, HostExecSpaceType>    host_value_type_array;
 
 private:
 

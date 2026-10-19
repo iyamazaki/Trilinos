@@ -22,7 +22,6 @@ namespace Amesos2 {
                               Tpetra::MultiVector<S, LO, GO, N> >;
 
   TPETRA_ETI_MANGLING_TYPEDEFS()
-
   TPETRA_INSTANTIATE_SLGN_NO_ORDINAL_SCALAR(AMESOS2_D3S_LOCAL_INSTANT)
 
   #define AMESOS2_KOKKOS_IMPL_SOLVER_NAME D3S
