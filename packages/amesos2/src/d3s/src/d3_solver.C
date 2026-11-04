@@ -141,7 +141,7 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
     double work;
     double maxwork = 0.0;
     std::vector<int> workspace(5*numRows, 0);
-    int *perm  = const_cast <int*> (rowperm.data());
+    int *perm  = const_cast <int*> (irowperm.data());
     int *iwork = const_cast <int*> (workspace.data());
     if (matching_option == 1) {
       // Compute max-cardinarity matching for col-permutation
@@ -166,8 +166,8 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
         // need to copy to int
         std::vector<int> col_ptr(rowBegin.size());
         std::vector<int> row_idx(columns.size());
-        for (GS idx : rowBegin) col_ptr.push_back(static_cast<int>(idx));
-        for (GO idx : columns)  row_idx.push_back(static_cast<int>(idx));
+        for (size_t idx=0; idx < rowBegin.size(); idx++) col_ptr[idx] = static_cast<int>(rowBegin[idx]);
+        for (size_t idx=0; idx < columns.size(); idx++)  row_idx[idx] = static_cast<int>(columns[idx]);
         nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr.data(), row_idx.data(), maxwork, &work, perm, iwork);
       }
     } else {
@@ -185,8 +185,8 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
         // need to copy to int
         std::vector<int> col_ptr(rowBeginT.size());
         std::vector<int> row_idx(columnsT.size());
-        for (GS idx : rowBeginT) col_ptr.push_back(static_cast<int>(idx));
-        for (GO idx : columnsT)  row_idx.push_back(static_cast<int>(idx));
+        for (size_t idx=0; idx < rowBegin.size(); idx++) col_ptr[idx] = static_cast<int>(rowBeginT[idx]);
+        for (size_t idx=0; idx < columns.size(); idx++)  row_idx[idx] = static_cast<int>(columnsT[idx]);
         nMatch = trilinos_btf_maxtrans(numRows, numRows, col_ptr.data(), row_idx.data(), maxwork, &work, perm, iwork);
       }
     }
@@ -195,9 +195,14 @@ void D3Solver<SC,GO,GS>::getGraphForMetis(const std::vector<GS> & rowBegin,
     }
   }
   // inverse-matching
-  for (int i=0; i<numRows; i++) irowperm[rowperm[i]] = i;
+  for (int i=0; i<numRows; i++) rowperm[irowperm[i]] = i;
 //#define MATRIX_OUT
 #ifdef MATRIX_OUT
+  {
+    FILE *fp = fopen("match.dat", "w");
+    for (int i=0; i<numRows; i++) fprintf(fp,"%d %d\n",rowperm[i],irowperm[i]);
+    fclose(fp);
+  }
   {
     FILE *fp = fopen("G.dat", "w");
     for (int i=0; i<numRows; i++) {
@@ -374,9 +379,9 @@ int D3Solver<SC,GO,GS>::checkRowSubIDs(const std::vector<int> & in_rowSubIDs,
     for (size_t j=0; j<subI[i].size(); j++) {
       // subI stores row ids after matching
       // rowperm: ith row after matching is rowperm[i] of original
-      const int row = rowperm[subI[i][j]];
+      const int row = (matching_option == 2 ? rowperm[subI[i][j]] : subI[i][j]);
       for (GS k=rowBegin[row]; k<rowBegin[row+1]; k++) {
-        const int col = columns[k];
+        const int col = (matching_option == 1 ? ipermMatching[columns[k]] : columns[k]);
         const int sub2 = std::abs(in_rowSubIDs[col]);
         adj_sub[sub2] = 1;
       }
@@ -640,9 +645,11 @@ int D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origin
     int info = METIS_SetDefaultOptions(options.data());
     ThrowAssert(true, info == METIS_OK, "METIS_SetDefaultOptions failed");
     options[METIS_OPTION_SEED] = 1; // to keep it deterministic
-    if (true) {
+    if (matching_option == 0) {
       // to improve load-balance
       options[METIS_OPTION_UFACTOR] = 10;
+      //options[METIS_OPTION_NITER] = 20; // default = 10
+      //options[METIS_OPTION_NSEPS] = 10; // default = 1
       //options[METIS_OPTION_RTYPE] = METIS_RTYPE_SEP2SIDED; // this seems to up residual norm?
       if (false) { // this makes separator huge?
         vwgt = (idx_t*)malloc(numRows * sizeof(idx_t));
@@ -756,6 +763,8 @@ int D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origin
       #endif
       // Checking (to make sure each iterior is not connected to another interior)
       r_val = checkRowSubIDs(rowSubIDs, permMatching, rowBeginRoot, columnsRoot);
+    } else {
+      printf( " METIS_NodeNDP failed with info = %d\n",info );
     }
     if (r_val == 0) {
       get_separators(rowSubIDs, sepIDs, sepBegin, sepRows);
@@ -818,8 +827,9 @@ int D3Solver<SC,GO,GS>::getRowSubIDs(const std::vector<GS> & rowBegin, // origin
     Teuchos::broadcast<int, int>(*comm, root, numRows, ipermMatching.data());
 
     // row-distribution
+    // recvcount is numProcs because Teuchos::gatherAll expects recvcount to be "total" number of elements received?
     fstRows.resize(numProcs+1, 0);
-    Teuchos::gatherAll<int, int> (*comm, 1, &startGID, 1, fstRows.data());
+    Teuchos::gatherAll<int, int> (*comm, 1, &startGID, numProcs, fstRows.data());
     fstRows[numProcs] = numRows_global;
 
     int nnz = rowBegin[numRows_proc];
@@ -1562,7 +1572,6 @@ void D3Solver<SC,GO,GS>::output_sub_matrices(const std::vector<int> & rowBegin,
                                              const std::vector<int> & columns,
                                              const std::vector<SC>  & values)
 {
-  if (msg_level < 2) return;
   const int numRows = rowsISub.size() + rowsBSub.size();
   if (numRows > 0) {
     output_rows("rowsI", rowsISub);
@@ -2010,7 +2019,7 @@ int D3Solver<SC,GO,GS>::initialize(const std::vector<GS> & rowBegin_in,
             solver_params.set("SchurOut", (SC*)S_view.data());
             if (msg_level > 0) {
               //solver_params.set("verbose", (myPID == 0));
-              solver_params.set("verbose", (myPID == 2));
+              solver_params.set("verbose", (myPID == 1));
             }
             if (debug_level_interior > 0) {
               solver_params.set("DebugLevel", (myPID == 0 ? debug_level_interior : 0));
@@ -2018,6 +2027,9 @@ int D3Solver<SC,GO,GS>::initialize(const std::vector<GS> & rowBegin_in,
             if (solvername == "ShyLUBasker") {
               solver_params.set("run_nd_on_leaves",  false);
               solver_params.set("run_amd_on_leaves", true);
+              //if (matching_option != 0) {
+              //  solver_params.set("replace_tiny_pivot",true);
+              //}
               //solver_params.set("worker_threads", true);
             }
             if (robust_option && solvername == "PARDISOMKL") {
@@ -2216,19 +2228,6 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
     if (matching_option == 1) {
       // assign values
       assign_values(rowBeginRe,values_in);
-      #ifdef MATRIX_OUT
-      {
-        char filename[100];
-        sprintf(filename, "lW_%d.dat", myPID);
-        FILE *fp = fopen(filename, "w");
-        const int num_rows_sub = rowBeginSub.size() - 1;
-        for (int i=0; i<num_rows_sub; i++) {
-          for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++)
-            fprintf(fp,"%d %d %.16e\n",i,columnsSub[k],valuesSub[k]);
-        }
-        fclose(fp);
-      }
-      #endif
     } else {
       // fill send-buffer
       int nnz = rowBeginOrig[numRows_proc];
@@ -2277,25 +2276,26 @@ int D3Solver<SC,GO,GS>::factorize(const std::vector<SC> & values_in)
 
       // assign values
       assign_values(rowBeginRe,valuesRe);
-      #ifdef MATRIX_OUT
-      {
-        char filename[100];
-        sprintf(filename, "lW_%d.dat", myPID);
-        FILE *fp = fopen(filename, "w");
-        for (int i=0; i<numRows_proc; i++) {
-          for (int k=rowBeginRe[i]; k<rowBeginRe[i+1]; k++)
-            fprintf(fp,"%d %d %.16e\n",i,columnsRe[k],valuesRe[k]);
-        }
-        fclose(fp);
-      }
-      #endif
     }
   }
   const std::vector<SC> & values = *valuesPtr;
   getSubMatrices(values, valuesSub);
   timer_gather_matrices = clockIt() - startTime;
   
-  output_sub_matrices(rowBeginSub, columnsSub, valuesSub);
+  #ifdef MATRIX_OUT
+  {
+    char filename[100];
+    sprintf(filename, "lW_%d.dat", myPID);
+    FILE *fp = fopen(filename, "w");
+    const int num_rows_sub = rowBeginSub.size() - 1;
+    for (int i=0; i<num_rows_sub; i++) {
+      for (int k=rowBeginSub[i]; k<rowBeginSub[i+1]; k++)
+        fprintf(fp,"%d %d %.16e\n",i,columnsSub[k],valuesSub[k]);
+    }
+    fclose(fp);
+  }
+  #endif
+  if (msg_level >= 2) output_sub_matrices(rowBeginSub, columnsSub, valuesSub);
 
   startTime = clockIt();
   {
@@ -2690,7 +2690,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
       printf( "\n -- D3Solver::solve(%dx%d) -- \n",lengthRhs,numRhs ); fflush(stdout);
     }
   }
-#ifdef MATRIX_OUT
+  #ifdef MATRIX_OUT
   {
     char filename[250];
     sprintf(filename,"RHS%d.dat", myPID);
@@ -2700,7 +2700,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
     }
     fclose(fp);
   }
-#endif
+  #endif
   std::vector<SC> rhsRe;
   if (matching_option == 0) {
     getSubRhs(rhs);
@@ -2711,9 +2711,9 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
     } else {
       permsolve(ipermMatching, rhs, rhsRe);
       getSubRhs(rhsRe);
-#ifdef MATRIX_OUT
+      #ifdef MATRIX_OUT
       {
-        int myRank = comm->getRank ()
+        int myRank = comm->getRank ();
         char filename[250];
         sprintf(filename,"RHS%d_RE.dat", myRank);
         FILE *fp = fopen(filename, "w");
@@ -2722,10 +2722,10 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
         }
         fclose(fp);
       }
-#endif
+      #endif
     }
   }
-#ifdef MATRIX_OUT
+  #ifdef MATRIX_OUT
   {
     char filename[250];
     sprintf(filename,"RHS_I%d.dat", myPID);
@@ -2739,7 +2739,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
     for (int i=0; i<rowsISub.size(); i++) fprintf(fp,"%d\n",rowsISub[i]);
     fclose(fp);
   }
-#endif
+  #endif
 
   // initialize rhs to be zero
   int num_rows = rowBeginSub.size() - 1;
@@ -2775,7 +2775,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
         solver_params.set("OnlyBackwardSolve", false);
         amesos2_solver->setParameters(Teuchos::rcpFromRef(amesos2Params));
       }
-#ifdef MATRIX_OUT
+      #ifdef MATRIX_OUT
       {
         char filename[250];
         FILE *fp;
@@ -2784,7 +2784,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
         for (int i=0; i<X_view.extent(0); i++) fprintf(fp,"%d %.16e %.16e\n",i,B_view(i,0),X_view(i,0));
         fclose(fp);
       }
-#endif
+      #endif
       amesos2_solver->solve();
 
       // copying out (TODO: fix)
@@ -2825,7 +2825,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
         for (int i=0; i<n1; i++) sol_interior[i+j*n1] = X_view(i,j);
       }
     }
-#ifdef MATRIX_OUT
+    #ifdef MATRIX_OUT
     {
       char filename[250];
       sprintf(filename,"sol1_%d.dat", myPID);
@@ -2833,7 +2833,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
       for (int i=0; i<n1; i++) fprintf(fp,"%.16e %.16e\n",rhs_interior[i],sol_interior[i]);
       fclose(fp);
     }
-#endif
+    #endif
     // * update rhs for the Schur solve, b2 -= F*x1
     {
       rhs_sc[0].resize(rowsBSub.size());
@@ -2845,7 +2845,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
       KokkosSparse::spmv("N", -1.0, crsmat, X1, 0.0, B2);
     }
   }
-#ifdef MATRIX_OUT
+  #ifdef MATRIX_OUT
   {
     printf("%d: n1=%d n2=%d\n",myPID,n1,n2);
     char filename[250];
@@ -2858,26 +2858,28 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
     for (int i=0; i<X_view.extent(0); i++) fprintf(fp,"%d %.16e %.16e\n",i,B_view(i,0),X_view(i,0));
     fclose(fp);
   }
-#endif
+  #endif
 
   // forward solve Schur complement
   //  (solve_schur_complement will communicate original rhs to add to rhs_sc[0])
   int level = 0;
   while (level < num_level) {
+    int rval_l = 0;
     const double startTime = clockIt();
     if (matching_option == 0 || matching_option == 1) {
-      r_val = solve_schur_complement(level, rhs);
+      rval_l = solve_schur_complement(level, rhs);
     } else {
-      r_val = solve_schur_complement(level, rhsRe);
+      rval_l = solve_schur_complement(level, rhsRe);
     }
-    timer_solve[level] += clockIt() - startTime;
     // check at each level;
-    r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
-    Teuchos::reduceAll<int,int>(*comm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
-    if (r_val != 0) return r_val;
+    if (rval_l != 0) r_val = rval_l;
+    timer_solve[level] += clockIt() - startTime;
 
     level++;
   }
+  r_val = -std::abs(r_val); // making sure non-positive (error-code is negative)
+  Teuchos::reduceAll<int,int>(*comm, Teuchos::REDUCE_MIN, 1, &r_val, &r_val);
+  if (r_val != 0) return r_val;
 
   // backward  solve Schur complement
   //  (at this point, we have the root separator solution)
@@ -2908,6 +2910,16 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
       amesos2_solver->setB(Teuchos::rcpFromRef(B_view));
       amesos2_solver->setX(Teuchos::rcpFromRef(X_view));
 
+      #ifdef MATRIX_OUT
+      {
+        char filename[250];
+        FILE *fp;
+        sprintf(filename,"Y_%d.dat", myPID);
+        fp = fopen(filename,"w");
+        for (int i=0; i<X_view.extent(0); i++) fprintf(fp,"%d %.16e %.16e\n",i,B_view(i,0),X_view(i,0));
+        fclose(fp);
+      }
+      #endif
       // do backward solve
       {
         Teuchos::ParameterList amesos2Params;
@@ -2941,7 +2953,7 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
                      -1.0, G_view,
                            X2,
                       1.0, B1);
-#ifdef MATRIX_OUT
+    #ifdef MATRIX_OUT
     {
       char filename[250];
       sprintf(filename,"solI3_%d.dat", myPID);
@@ -2953,20 +2965,20 @@ int D3Solver<SC,GO,GS>::solve(const std::vector<SC> & rhs,
       for (size_t i=0; i<n2; i++) fprintf(fp,"%.16e \n",rhs_sc[0][i]);
       fclose(fp);
     }
-#endif
+    #endif
     // copy back interior solution
     for (size_t i=0; i<rowsISub.size(); i++) {
       rhsI[i] = sol_interior[i];
     }
   }
   putSubSol(sol);
-#ifdef MATRIX_OUT
+  #ifdef MATRIX_OUT
   if (myPID == 0) {
     printf("SOL=[\n");
     for (size_t i=0; i<sol.size(); i++) printf("%d %e\n",i,sol[i]);
     printf("];\n");
   }
-#endif
+  #endif
 
   if (matching_option == 1) {
     permsolve(permMatching, sol, rhsRe);
