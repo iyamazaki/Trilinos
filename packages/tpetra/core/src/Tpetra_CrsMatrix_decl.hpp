@@ -2978,7 +2978,7 @@ class CrsMatrix : public RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>,
 
  private:
   void
-  copyAndPermuteStorageOptimizedGraph(
+  copyAndPermuteStaticGraph(
       const RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& source,
       const size_t numSameIDs,
       const LocalOrdinal permuteToLIDs[],
@@ -2986,7 +2986,7 @@ class CrsMatrix : public RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>,
       const size_t numPermutes);
 
   void
-  copyAndPermuteNonStorageOptimizedGraph(
+  copyAndPermuteNonStaticGraph(
       const RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& source,
       const size_t numSameIDs,
       const Kokkos::DualView<const local_ordinal_type*, buffer_device_type>& permuteToLIDs_dv,

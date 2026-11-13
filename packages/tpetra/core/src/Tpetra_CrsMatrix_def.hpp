@@ -5489,7 +5489,7 @@ void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
 }
 
 template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
-void copyAndPermuteStorageOptimizedGraphNew(
+void copyAndPermuteStaticGraphNew(
     const RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& srcMat,
     RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& tgtMat,
     const size_t numSameIDs,
@@ -5499,7 +5499,7 @@ void copyAndPermuteStorageOptimizedGraphNew(
 
 template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
 void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
-    copyAndPermuteStorageOptimizedGraph(
+    copyAndPermuteStaticGraph(
         const RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& srcMat,
         const size_t numSameIDs,
         const LocalOrdinal permuteToLIDs[],
@@ -5511,10 +5511,10 @@ void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
   using Teuchos::ArrayView;
   using LO                   = LocalOrdinal;
   using GO                   = GlobalOrdinal;
-  const char tfecfFuncName[] = "copyAndPermuteStorageOptimizedGraph";
+  const char tfecfFuncName[] = "copyAndPermuteStaticGraph";
   const char suffix[] =
       "  Please report this bug to the Tpetra developers.";
-  ProfilingRegion regionCAP("Tpetra::CrsMatrix::copyAndPermuteStorageOptimizedGraph");
+  ProfilingRegion regionCAP("Tpetra::CrsMatrix::copyAndPermuteStaticGraph");
 
   const bool debug   = Details::Behavior::debug("CrsGraph");
   const bool verbose = Details::Behavior::verbose("CrsGraph");
@@ -5734,7 +5734,7 @@ void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
 
 template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
 void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
-    copyAndPermuteNonStorageOptimizedGraph(
+    copyAndPermuteNonStaticGraph(
         const RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& srcMat,
         const size_t numSameIDs,
         const Kokkos::DualView<const local_ordinal_type*, buffer_device_type>& permuteToLIDs_dv,
@@ -5746,10 +5746,10 @@ void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
   using Teuchos::ArrayView;
   using LO                   = LocalOrdinal;
   using GO                   = GlobalOrdinal;
-  const char tfecfFuncName[] = "copyAndPermuteNonStorageOptimizedGraph";
+  const char tfecfFuncName[] = "copyAndPermuteNonStaticGraph";
   const char suffix[] =
       "  Please report this bug to the Tpetra developers.";
-  ProfilingRegion regionCAP("Tpetra::CrsMatrix::copyAndPermuteNonStorageOptimizedGraph");
+  ProfilingRegion regionCAP("Tpetra::CrsMatrix::copyAndPermuteNonStaticGraph");
 
   const bool debug   = Details::Behavior::debug("CrsGraph");
   const bool verbose = Details::Behavior::verbose("CrsGraph");
@@ -5964,13 +5964,13 @@ void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
   // it in checkSizes().
   using RMT         = RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>;
   const RMT& srcMat = dynamic_cast<const RMT&>(srcObj);
-  if (isStaticGraph() || isStorageOptimized()) {
+  if (isStaticGraph()) {
     if (Details::Behavior::useNewCopyAndPermute()) {
       TEUCHOS_ASSERT(!permuteToLIDs.need_sync_device());
       auto permuteToLIDs_d = permuteToLIDs.view_device();
       TEUCHOS_ASSERT(!permuteFromLIDs.need_sync_device());
       auto permuteFromLIDs_d = permuteFromLIDs.view_device();
-      copyAndPermuteStorageOptimizedGraphNew(
+      copyAndPermuteStaticGraphNew(
           srcMat, *this, numSameIDs, permuteToLIDs_d.data(), permuteFromLIDs_d.data(), numPermute);
 
     } else {
@@ -5979,14 +5979,14 @@ void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
       TEUCHOS_ASSERT(!permuteFromLIDs.need_sync_host());
       auto permuteFromLIDs_h = permuteFromLIDs.view_host();
 
-      copyAndPermuteStorageOptimizedGraph(srcMat, numSameIDs,
-                                          permuteToLIDs_h.data(),
-                                          permuteFromLIDs_h.data(),
-                                          numPermute);
+      copyAndPermuteStaticGraph(srcMat, numSameIDs,
+                                permuteToLIDs_h.data(),
+                                permuteFromLIDs_h.data(),
+                                numPermute);
     }
   } else {
-    copyAndPermuteNonStorageOptimizedGraph(srcMat, numSameIDs, permuteToLIDs,
-                                           permuteFromLIDs, numPermute);
+    copyAndPermuteNonStaticGraph(srcMat, numSameIDs, permuteToLIDs,
+                                 permuteFromLIDs, numPermute);
   }
 
   if (verbose) {
@@ -6676,7 +6676,7 @@ void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
         const bool verbose) {
   const char tfecfFuncName[] = "combineGlobalValues: ";
 
-  if (isStaticGraph() || isStorageOptimized()) {
+  if (isStaticGraph()) {
     // INSERT doesn't make sense for a static graph, since you
     // aren't allowed to change the structure of the graph.
     // However, all the other combine modes work.
@@ -8871,7 +8871,7 @@ void CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>::
 }
 
 template <class Scalar, class LocalOrdinal, class GlobalOrdinal, class Node>
-void copyAndPermuteStorageOptimizedGraphNew(
+void copyAndPermuteStaticGraphNew(
     const RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& srcMat,
     RowMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>& tgtMat,
     const size_t numSameIDs,
@@ -8895,7 +8895,7 @@ void copyAndPermuteStorageOptimizedGraphNew(
 
   const LocalOrdinal LINV = Teuchos::OrdinalTraits<LocalOrdinal>::invalid();
 
-  ProfilingRegion regionCAP("Tpetra::CrsMatrix::copyAndPermuteStorageOptimizedGraphNew");
+  ProfilingRegion regionCAP("Tpetra::CrsMatrix::copyAndPermuteStaticGraphNew");
 
   const crs_matrix_type* srcMatCrsPtr = dynamic_cast<const crs_matrix_type*>(&srcMat);
   TEUCHOS_TEST_FOR_EXCEPTION(srcMatCrsPtr == nullptr, std::runtime_error, "bad srcMatCrsPtr");
@@ -8965,7 +8965,7 @@ void copyAndPermuteStorageOptimizedGraphNew(
     auto tvals = tgtMatCrs.getLocalValuesDevice(Access::ReadWrite);
 
     Kokkos::parallel_for(
-        "Tpetra_CrsMatrix::copyAndPermuteStorageOptimizedGraph",
+        "Tpetra_CrsMatrix::copyAndPermuteStaticGraph",
         range_type(0, numSameIDs_as_LID),
         KOKKOS_LAMBDA(const LO sourceLID) {
           local_inds_device_value_t start     = srcLocalRowPtrsDevice(sourceLID);
