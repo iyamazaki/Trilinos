@@ -23,10 +23,10 @@ namespace Tacho {
 /// ==========
 template <> struct LU<Algo::External> {
   template <typename ViewTypeA, typename ViewTypeP> inline static int invoke(const ViewTypeA &A, const ViewTypeP &P) {
-    int r_val = 0;
 
     static constexpr bool runOnHost = run_tacho_on_host_v<typename ViewTypeA::execution_space>;
 
+    int r_val = 0;
     if constexpr(runOnHost) {
       typedef typename ViewTypeA::non_const_value_type value_type;
 
@@ -52,13 +52,13 @@ template <> struct LU<Algo::External> {
 
     static constexpr bool runOnHost = run_tacho_on_host_v<typename ViewTypeA::execution_space>;
 
+    int r_val = 0;
     if constexpr(runOnHost) {
-      int r_val = 0;
       r_val = invoke(A, P);
-      return r_val;
     } else {
       TACHO_TEST_FOR_ABORT(true, ">> This function is only allowed in host space.");
     }
+    return r_val;
   }
 
   template <typename MemberType, typename ViewTypeA, typename ViewTypeP>
@@ -72,7 +72,6 @@ template <> struct LU<Algo::External> {
     static constexpr bool runOnHost = run_tacho_on_host_v<typename ViewTypeP::execution_space>;
 
     int r_val = 0;
-
     if constexpr(runOnHost) {
       static_assert(ViewTypeP::rank == 1, "P is not rank 1 view.");
 
@@ -110,13 +109,13 @@ template <> struct LU<Algo::External> {
 
     static constexpr bool runOnHost = run_tacho_on_host_v<typename ViewTypeP::execution_space>;
 
+    int r_val = 0;
     if constexpr(runOnHost) {
-      int r_val = 0;
       r_val = modify(m, P);
-      return r_val;
     } else {
       TACHO_TEST_FOR_ABORT(true, ">> This function is only allowed in host space.");
     }
+    return r_val;
   }
 };
 
