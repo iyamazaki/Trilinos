@@ -74,6 +74,24 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
   }
 #endif
 
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+  template <typename ViewTypeA>
+  inline static int KokkosKernels_invoke(const ViewTypeA &A) {
+    const ordinal_type m = A.extent(0);
+
+    int r_val(0);
+    if (m > 0) {
+      try {
+        char uplo = ArgUplo::param;
+        KokkosLapack::potrf(&uplo, A);
+      } catch (...) {
+        r_val = -1;
+      }
+    }
+    return r_val;
+  }
+#endif
+
   template <typename MemberType, typename ViewTypeA, typename ViewTypeW>
   inline static int invoke(MemberType &member, const ViewTypeA &A, const ViewTypeW &W) {
     typedef typename ViewTypeA::non_const_value_type value_type;
@@ -88,9 +106,10 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
     static_assert(std::is_same<value_type, value_type_w>::value, "A and W do not have the same value type.");
 
     static_assert(std::is_same<memory_space, memory_space_w>::value, "A and W do not have the same memory space.");
-    int r_val(0);
+    int r_val(-1);
     if (std::is_same<memory_space, Kokkos::HostSpace>::value) {
       r_val = lapack_invoke(A);
+      return r_val;
     }
 
 #if defined(KOKKOS_ENABLE_CUDA)
@@ -103,6 +122,7 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
       } else {
         r_val = cusolver_invoke(member, A, W);
       }
+      return r_val;
     }
 #endif
 
@@ -110,9 +130,16 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
     if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
       if (W.span() == 0) {
         r_val = 2;
-      } else
+      } else {
         r_val = rocsolver_invoke(member, A, W);
+      }
+      return r_val;
     }
+#endif
+
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+    // Default (in case all the above did not return)
+    r_val = KokkosKernels_invoke(A);
 #endif
 
     return r_val;

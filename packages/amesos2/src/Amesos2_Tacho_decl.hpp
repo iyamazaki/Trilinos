@@ -208,6 +208,8 @@ private:
     bool diag_shift;
     bool pivot_pert;
     bool team_on_user_stream;
+    int device_factor_thres;
+    int device_solve_thres;
     // int num_kokkos_threads;
     // int max_num_superblocks;
   } data_;

@@ -189,8 +189,12 @@ void Driver<VT, DT>::setLevelSetOptionDeviceLevelCut(const ordinal_type device_l
 template <typename VT, typename DT>
 void Driver<VT, DT>::setLevelSetOptionDeviceFunctionThreshold(const ordinal_type device_factor_thres,
                                                               const ordinal_type device_solve_thres) {
-  _device_factor_thres = device_factor_thres;
-  _device_solve_thres = device_solve_thres;
+  if (device_factor_thres >= 0) {
+    _device_factor_thres = device_factor_thres;
+  }
+  if (device_solve_thres >= 0) {
+    _device_solve_thres = device_solve_thres;
+  }
 }
 
 template <typename VT, typename DT> void Driver<VT, DT>::setLevelSetOptionAlgorithmVariant(const ordinal_type variant) {

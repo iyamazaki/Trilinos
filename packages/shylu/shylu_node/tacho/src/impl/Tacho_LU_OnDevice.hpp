@@ -85,7 +85,7 @@ template <> struct LU<Algo::OnDevice> {
     static_assert(std::is_same<value_type, value_type_w>::value, "A and W do not have the same value type.");
 
     static_assert(std::is_same<memory_space, memory_space_w>::value, "A and W do not have the same memory space.");
-    int r_val(0);
+    int r_val(-1);
     if (std::is_same<memory_space, Kokkos::HostSpace>::value) {
       TACHO_TEST_FOR_EXCEPTION(A.data() == NULL, std::logic_error, "Error: A has null data pointer");
       TACHO_TEST_FOR_EXCEPTION(P.data() == NULL, std::logic_error, "Error: P has null data pointer");

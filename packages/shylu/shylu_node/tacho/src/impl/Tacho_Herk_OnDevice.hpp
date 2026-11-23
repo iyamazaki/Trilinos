@@ -97,7 +97,7 @@ template <typename ArgUplo, typename ArgTrans> struct Herk<ArgUplo, ArgTrans, Al
     static_assert(std::is_same<value_type, value_type_c>::value, "A and C do not have the same value type.");
 
     static_assert(std::is_same<memory_space, memory_space_c>::value, "A and C do not have the same memory space.");
-    int r_val(0);
+    int r_val(-1);
     if (std::is_same<memory_space, Kokkos::HostSpace>::value)
       r_val = blas_invoke(alpha, A, beta, C);
 #if defined(KOKKOS_ENABLE_CUDA)

@@ -91,7 +91,7 @@ template <typename ArgTransA, typename ArgTransB> struct Gemm<ArgTransA, ArgTran
     static_assert(std::is_same<memory_space, memory_space_b>::value &&
                       std::is_same<memory_space_b, memory_space_c>::value,
                   "A, B and C do not have the same memory space.");
-    int r_val(0);
+    int r_val(-1);
     if (std::is_same<memory_space, Kokkos::HostSpace>::value)
       r_val = blas_invoke(alpha, A, B, beta, C);
 #if defined(KOKKOS_ENABLE_CUDA)

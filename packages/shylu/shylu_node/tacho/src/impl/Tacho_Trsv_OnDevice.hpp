@@ -93,7 +93,7 @@ template <typename ArgUplo, typename ArgTransA> struct Trsv<ArgUplo, ArgTransA, 
     static_assert(std::is_same<value_type, value_type_b>::value, "A and B do not have the same value type.");
     static_assert(std::is_same<memory_space, memory_space_b>::value, "A and B do not have the same memory space.");
 
-    int r_val(0);
+    int r_val(-1);
     if (std::is_same<memory_space, Kokkos::HostSpace>::value)
       r_val = blas_invoke(diagA, A, B);
 #if defined(KOKKOS_ENABLE_CUDA)

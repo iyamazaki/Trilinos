@@ -86,7 +86,7 @@ template <> struct LDL<Uplo::Lower, Algo::OnDevice> {
     static_assert(std::is_same<value_type, value_type_w>::value, "A and W do not have the same value type.");
 
     static_assert(std::is_same<memory_space, memory_space_w>::value, "A and W do not have the same memory space.");
-    int r_val(0);
+    int r_val(-1);
     if (std::is_same<memory_space, Kokkos::HostSpace>::value) {
       if (W.span() == 0) {
         int lwork = A.extent(0) * 32;

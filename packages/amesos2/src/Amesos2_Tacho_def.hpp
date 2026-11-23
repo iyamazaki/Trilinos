@@ -36,6 +36,8 @@ TachoSolver<Matrix,Vector>::TachoSolver(
   data_.verbose    = false; // verbose
   data_.team_on_user_stream  = false; // use user stream-0 for team/batched kernels
   data_.small_problem_threshold_size = 1024;
+  data_.device_factor_thres = -1; // threshold for device/team kernels (used only if threshold >=0 )
+  data_.device_solve_thres = -1; // threshold for device/team kernels (used only if threshold >=0 )
   tacho_initialized_ = false;
 }
 
@@ -91,6 +93,8 @@ TachoSolver<Matrix,Vector>::symbolicFactorization_impl()
     data_.solver.setSmallProblemThresholdsize(data_.small_problem_threshold_size);
     data_.solver.setVerbose(data_.verbose);
     data_.solver.setLevelSetOptionNumStreams(data_.streams, data_.team_on_user_stream);
+    // Tacho actually set the threshold only if threshold >= 0.
+    data_.solver.setLevelSetOptionDeviceFunctionThreshold(data_.device_factor_thres, data_.device_solve_thres);
     // TODO: Confirm param options
     // data_.solver.setMaxNumberOfSuperblocks(data_.max_num_superblocks);
 
@@ -262,6 +266,10 @@ TachoSolver<Matrix,Vector>::setParameters_impl(const Teuchos::RCP<Teuchos::Param
   // Perturb tiny pivots
   data_.pivot_pert = parameterList->get<bool> ("perturb-pivot", false);
   data_.diag_shift = parameterList->get<bool> ("shift-diag", false);
+  // device call threshold
+  data_.device_factor_thres = parameterList->get<int> ("device-factor-thres", -1);
+  data_.device_solve_thres = parameterList->get<int> ("device-solve-thres", -1);
+
   // TODO: Confirm param options
   // data_.num_kokkos_threads = parameterList->get<int>("kokkos-threads", 1);
   // data_.max_num_superblocks = parameterList->get<int>("max-num-superblocks", 4);
@@ -286,6 +294,8 @@ TachoSolver<Matrix,Vector>::getValidParameters_impl() const
     pl->set("perturb-pivot", false, "Perturb tiny pivots");
     pl->set("shift-diag", false, "Shift diagonal entries");
     pl->set("team-on-user-stream", false, "Use user stream-0 for team/batched kernels");
+    pl->set("device-factor-thres", -1, "Threshold for using device kernels during factorize");
+    pl->set("device-solve-thres", -1, "Threshold for using device kernels during solve");
 
     // TODO: Confirm param options
     // pl->set("kokkos-threads", 1, "Number of threads");
@@ -391,6 +401,8 @@ TachoSolver<Matrix,Vector>::describe_impl(Teuchos::FancyOStream &out,
   out << " > shift-diag    = " << (data_.diag_shift ? "YES" : "NO") << std::endl;
   out << " > team-on-user-stream  = " << (data_.team_on_user_stream ? "YES" : "NO") << std::endl;
   out << " > small problem threshold size = " << data_.small_problem_threshold_size << std::endl;
+  out << " > device-factor-thres = " << data_.device_factor_thres << std::endl;
+  out << " > device-solve-thres  = " << data_.device_solve_thres << std::endl;
   out << std::endl;
 }
 

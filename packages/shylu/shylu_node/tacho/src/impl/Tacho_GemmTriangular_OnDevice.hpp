@@ -160,7 +160,7 @@ struct GemmTriangular<Trans::Transpose, Trans::NoTranspose, Uplo::Upper, Algo::O
                       std::is_same<memory_space_b, memory_space_c>::value,
                   "A, B and C do not have the same memory space.");
 
-    int r_val(0);
+    int r_val(-1);
     if (std::is_same<memory_space, Kokkos::HostSpace>::value)
       r_val = blas_invoke(alpha, A, B, beta, C);
 #if defined(KOKKOS_ENABLE_CUDA)

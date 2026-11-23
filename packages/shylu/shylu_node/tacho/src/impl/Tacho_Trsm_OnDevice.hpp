@@ -80,7 +80,7 @@ struct Trsm<ArgSide, ArgUplo, ArgTransA, Algo::OnDevice> {
 
     static_assert(std::is_same<memory_space, memory_space_b>::value, "A and B do not have the same memory space.");
 
-    int r_val(0);
+    int r_val(-1);
     if (std::is_same<memory_space, Kokkos::HostSpace>::value)
       r_val = blas_invoke(diagA, alpha, A, B);
 #if defined(KOKKOS_ENABLE_CUDA)

@@ -241,8 +241,12 @@ private:
 #elif defined(KOKKOS_ENABLE_HIP)
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "HostLapack" : "RocSolver");
+#elif defined(TACHO_HAVE_KOKKOS_KERNELS)
+    constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+    checkStatus(func, is_host ? "HostLapack" : "KokkosKernels Lapack ?");
 #else
-    checkStatus(func, "HostLapack");
+    constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+    checkStatus(func, is_host ? "HostLapack" : "Unknown Lapack");
 #endif
   }
   inline void checkDeviceBlasStatus(const char *func) {
@@ -253,7 +257,8 @@ private:
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "HostBlas" : "RocBlas");
 #else
-    checkStatus(func, "HostBlas");
+    constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+    checkStatus(func, is_host ? "HostBlas" : "Unknown Blas");
 #endif
   }
   inline void checkDeviceStatus(const char *func) {
@@ -264,7 +269,8 @@ private:
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "Host" : "HIP");
 #else
-    checkStatus(func, "Host");
+    constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+    checkStatus(func, is_host ? "Host" : "Unknown");
 #endif
   }
 

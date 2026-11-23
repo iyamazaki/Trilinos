@@ -50,6 +50,10 @@
 #include "rocsolver/rocsolver.h"
 #endif
 
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+#include "KokkosLapack_potrf.hpp"
+#endif
+
 #include "Tacho.hpp"
 
 /// \file Tacho_Util.hpp
