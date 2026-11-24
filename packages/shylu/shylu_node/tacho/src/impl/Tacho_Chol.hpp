@@ -29,12 +29,12 @@ template <typename ArgUplo, typename ArgAlgo> struct Chol;
 template <typename ArgUplo, typename ArgAlgo> struct LDL_nopiv;
 
 struct CholAlgorithm {
-  using type = ActiveAlgorithm<runsOnCudaOrHIP()>::type;
+  using type = ActiveAlgorithm<runsOnGPU()>::type;
 };
 
 struct CholAlgorithm_Team {
-#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
-  using type = ActiveAlgorithm<runsOnCudaOrHIP()>::type;
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
+  using type = ActiveAlgorithm<runsOnGPU()>::type;
 #else
   using type = ActiveHostAlgorithm<runsWithOMP()>::type;
 #endif

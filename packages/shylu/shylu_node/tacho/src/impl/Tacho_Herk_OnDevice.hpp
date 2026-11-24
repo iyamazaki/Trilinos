@@ -82,6 +82,38 @@ template <typename ArgUplo, typename ArgTrans> struct Herk<ArgUplo, ArgTrans, Al
   }
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+  template <typename ScalarType, typename ViewTypeA, typename ViewTypeC>
+  inline static int oneapi_invoke(sycl::queue &handle, const ScalarType alpha, const ViewTypeA &A,
+                                  const ScalarType beta, const ViewTypeC &C) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    const ordinal_type n = C.extent(0),
+                       k = (std::is_same<ArgTrans, Trans::NoTranspose>::value ? A.extent(1) : A.extent(0));
+
+    int r_val(0);
+    if (n > 0 && k > 0) {
+      try {
+        sycl::event e;
+        if (std::is_same<value_type, float>::value || std::is_same<value_type, double>::value)
+          e = oneapi::mkl::blas::column_major::syrk(handle, ArgUplo::oneapi_param,
+                                                    std::is_same<ArgTrans, Trans::ConjTranspose>::value ? Trans::Transpose::oneapi_param
+                                                                                                        : ArgTrans::oneapi_param,
+                                                    n, k, alpha, A.data(), A.stride(1), beta, C.data(), C.stride(1));
+        else if (std::is_same<value_type, Kokkos::complex<float>>::value ||
+                 std::is_same<value_type, Kokkos::complex<double>>::value)
+          e = oneapi::mkl::blas::column_major::syrk(handle, ArgUplo::oneapi_param, ArgTrans::oneapi_param,
+                                                    n, k, alpha, A.data(), A.stride(1), beta, C.data(), C.stride(1));
+        e.wait_and_throw();
+      } catch (const oneapi::mkl::lapack::exception& e) {
+        r_val = e.info();
+      } catch (...) {
+        r_val = -1;
+      }
+    }
+    return r_val;
+  }
+#endif
+
   template <typename MemberType, typename ScalarType, typename ViewTypeA, typename ViewTypeC>
   inline static int invoke(MemberType &member, const ScalarType alpha, const ViewTypeA &A, const ScalarType beta,
                            const ViewTypeC &C) {
@@ -107,6 +139,10 @@ template <typename ArgUplo, typename ArgTrans> struct Herk<ArgUplo, ArgTrans, Al
 #if defined(KOKKOS_ENABLE_HIP)
     if (std::is_same<memory_space, Kokkos::HIPSpace>::value)
       r_val = rocblas_invoke(member, alpha, A, beta, C);
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value)
+      r_val = oneapi_invoke(member, alpha, A, beta, C);
 #endif
     return r_val;
   }

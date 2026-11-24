@@ -28,12 +28,12 @@ namespace Tacho {
 template <typename ArgAlgo> struct LU;
 
 struct LU_Algorithm {
-  using type = ActiveAlgorithm<runsOnCudaOrHIP()>::type;
+  using type = ActiveAlgorithm<runsOnGPU()>::type;
 };
 
 struct LU_Algorithm_Team {
-#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
-  using type = ActiveAlgorithm<runsOnCudaOrHIP()>::type;
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
+  using type = ActiveAlgorithm<runsOnGPU()>::type;
 #else
   using type = ActiveHostAlgorithm<runsWithOMP()>::type;
 #endif

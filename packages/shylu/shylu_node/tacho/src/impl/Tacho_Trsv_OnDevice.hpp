@@ -79,6 +79,50 @@ template <typename ArgUplo, typename ArgTransA> struct Trsv<ArgUplo, ArgTransA, 
   }
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+  template <typename DiagType, typename ViewTypeA, typename ViewTypeB>
+  inline static int oneapi_invoke(sycl::queue &handle, const DiagType diagA, const ViewTypeA &A,
+                                  const ViewTypeB &B) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    const ordinal_type m = B.extent(0), n = B.extent(1);
+    int r_val(0);
+    if (m > 0 && n > 0) {
+      try {
+        sycl::event e;
+        if (n == 1) {
+          e = oneapi::mkl::blas::column_major::trsv(handle, ArgUplo::oneapi_param, ArgTransA::oneapi_param, diagA.oneapi_param,
+                                                    m, A.data(), A.stride(1), B.data(), B.stride(0));
+        } else {
+          e = oneapi::mkl::blas::column_major::trsm(handle, Side::Left::oneapi_param, ArgUplo::oneapi_param, ArgTransA::oneapi_param, diagA.oneapi_param,
+                                                    m, n, value_type(1), A.data(), A.stride(1), B.data(), B.stride(1));
+        }
+        e.wait_and_throw();
+      } catch (const oneapi::mkl::lapack::exception& e) {
+        r_val = e.info();
+      } catch (const std::exception& e) {
+        r_val = -1;
+      }
+    }
+    return r_val;
+  }
+#endif
+
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+  template <typename DiagType, typename ViewTypeA, typename ViewTypeB>
+  inline static int KokkosKernels_invoke(const DiagType diagA, const ViewTypeA &A,
+                                         const ViewTypeB &B) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    const ordinal_type m = B.extent(0);
+    const ordinal_type n = B.extent(1);
+
+    int r_val(0);
+    if (m > 0 && n > 0)
+      KokkosBlas::trsm(&Side::Left::param, &ArgUplo::param, &ArgTransA::param, &diagA.param,
+                       value_type(1), A, B);
+    return r_val;
+  }
+#endif
+
   template <typename MemberType, typename DiagType, typename ViewTypeA, typename ViewTypeB>
   inline static int invoke(MemberType &member, const DiagType diagA, const ViewTypeA &A, const ViewTypeB &B) {
     typedef typename ViewTypeA::non_const_value_type value_type;
@@ -94,15 +138,31 @@ template <typename ArgUplo, typename ArgTransA> struct Trsv<ArgUplo, ArgTransA, 
     static_assert(std::is_same<memory_space, memory_space_b>::value, "A and B do not have the same memory space.");
 
     int r_val(-1);
-    if (std::is_same<memory_space, Kokkos::HostSpace>::value)
+    if (std::is_same<memory_space, Kokkos::HostSpace>::value) {
       r_val = blas_invoke(diagA, A, B);
+      return r_val;
+    }
 #if defined(KOKKOS_ENABLE_CUDA)
-    if (std::is_same<memory_space, Kokkos::CudaSpace>::value || std::is_same<memory_space, Kokkos::CudaUVMSpace>::value)
+    if (std::is_same<memory_space, Kokkos::CudaSpace>::value || std::is_same<memory_space, Kokkos::CudaUVMSpace>::value) {
       r_val = cublas_invoke(member, diagA, A, B);
+      return r_val;
+    }
 #endif
 #if defined(KOKKOS_ENABLE_HIP)
-    if (std::is_same<memory_space, Kokkos::HIPSpace>::value)
+    if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
       r_val = rocblas_invoke(member, diagA, A, B);
+      return r_val;
+    }
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value) {
+      r_val = oneapi_invoke(member, diagA, A, B);
+      return r_val;
+    }
+#endif
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+    // Default (in case all the above did not return)
+    r_val = KokkosKernels_invoke(diagA, A, B);
 #endif
     return r_val;
   }

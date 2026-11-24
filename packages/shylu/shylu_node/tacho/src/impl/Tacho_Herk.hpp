@@ -27,12 +27,12 @@ namespace Tacho {
 template <typename ArgUplo, typename ArgTrans, typename ArgAlgo> struct Herk;
 
 struct HerkAlgorithm {
-  using type = ActiveAlgorithm<runsOnCudaOrHIP()>::type;
+  using type = ActiveAlgorithm<runsOnGPU()>::type;
 };
 
 struct HerkAlgorithm_Team {
-#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
-  using type = ActiveAlgorithm<runsOnCudaOrHIP()>::type;
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
+  using type = ActiveAlgorithm<runsOnGPU()>::type;
 #else
   using type = ActiveHostAlgorithm<runsWithOMP()>::type;
 #endif

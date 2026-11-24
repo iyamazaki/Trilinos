@@ -82,12 +82,50 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
     int r_val(0);
     if (m > 0) {
       try {
-        char uplo = ArgUplo::param;
-        KokkosLapack::potrf(&uplo, A);
+        KokkosLapack::potrf(&ArgUplo::param, A);
       } catch (...) {
         r_val = -1;
       }
     }
+    return r_val;
+  }
+#endif
+
+#if defined(KOKKOS_ENABLE_SYCL)
+  // Direct call to oneAPI (instead of Lapack_External) to avoid conflics with MKL (which is include through oneAPI)
+  template <typename ViewTypeA, typename ViewTypeW>
+  inline static int oneapi_invoke(sycl::queue &handle, const ViewTypeA &A, const ViewTypeW &W) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    typedef typename ViewTypeW::non_const_value_type work_value_type;
+    const ordinal_type m = A.extent(0);
+
+    int r_val(0);
+    if (m > 0) {
+      try {
+        value_type *workspace = W.data();
+        int lwork = W.span();
+        sycl::event ev = oneapi::mkl::lapack::potrf(handle, ArgUplo::oneapi_param, m, A.data(), A.stride(1), workspace, lwork);
+        ev.wait_and_throw();
+      } catch (const oneapi::mkl::lapack::exception& e) {
+        std::cout << " oneAPI POTRF threw: " << e.what() << std::endl;
+        r_val = e.info();
+      } catch (const std::exception& e) {
+        std::cout << " POTRF threw: " << e.what() << std::endl;
+        r_val = -1;
+      }
+    }
+    return r_val;
+  }
+
+  template <typename ViewTypeA>
+  inline static int oneapi_buffer_size(sycl::queue &handle, const ViewTypeA &A, int *lwork) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    const ordinal_type m = A.extent(0);
+
+    int r_val(0);
+    if (m > 0)
+      r_val = oneapi::mkl::lapack::potrf_scratchpad_size<value_type>(handle, ArgUplo::oneapi_param, m, A.stride(1));
+    *lwork = r_val;
     return r_val;
   }
 #endif
@@ -137,6 +175,17 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
     }
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value) {
+      if (W.span() == 0) {
+        int lwork;
+        r_val = oneapi_buffer_size(member, A, &lwork);
+      } else {
+        r_val = oneapi_invoke(member, A, W);
+      }
+      return r_val;
+    }
+#endif
 #if defined(TACHO_HAVE_KOKKOS_KERNELS)
     // Default (in case all the above did not return)
     r_val = KokkosKernels_invoke(A);

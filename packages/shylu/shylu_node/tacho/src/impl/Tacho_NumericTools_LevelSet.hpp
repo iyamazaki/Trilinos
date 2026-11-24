@@ -202,6 +202,15 @@ private:
   using stream_array_host = std::vector<hipStream_t>;
   #define getBlasHandle(id)   _handles[id]
   #define getLapackHandle(id) _handles[id]
+#elif defined(KOKKOS_ENABLE_SYCL)
+  bool _is_sycl_queue_created;
+  sycl::queue _handle_blas;
+  sycl::queue _handle_lapack;
+  using blas_handle_type = sycl::queue;
+  using lapack_handle_type = sycl::queue;
+  using stream_array_host = std::vector<int>;
+  #define getBlasHandle()   _handle_blas
+  #define getLapackHandle() _handle_lapack
 #else
   int _handle_blas, _handle_lapack; // dummy handle for convenience
   using blas_handle_type = int;
@@ -544,6 +553,12 @@ public:
       _is_rocblas_created = true;
     }
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (!_is_sycl_queue_created) {
+      _handle_lapack = sycl::queue(sycl::gpu_selector_v, sycl::property::queue::in_order());
+      _is_sycl_queue_created = true;
+    }
+#endif
     // pre-allocate buf
     _nrhs = 1;
     Kokkos::resize(_buf, max(_bufsize_factorize, _bufsize_solve));
@@ -553,14 +568,14 @@ public:
     switch (this->getSolutionMethod()) {
     case 0:   /// LDL no-pivot
     case 1: { /// Cholesky
-#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
       value_type_matrix T(NULL, _info.max_supernode_size, _info.max_supernode_size);
       _worksize = Chol<Uplo::Upper, Algo::OnDevice>::invoke(_handle_lapack, T, _work);
 #endif
       break;
     }
     case 2: { /// LDL
-#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
       value_type_matrix T(NULL, _info.max_supernode_size, _info.max_supernode_size);
       ordinal_type_array P(NULL, _info.max_supernode_size);
       _worksize = LDL<Uplo::Lower, Algo::OnDevice>::invoke(_handle_lapack, T, P, _work);
@@ -570,7 +585,7 @@ public:
       break;
     }
     case 3: { /// LU
-#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
       value_type_matrix T(NULL, _info.max_supernode_size, _info.max_num_cols);
       ordinal_type_array P(NULL, std::min(_info.max_supernode_size, _info.max_num_cols));
       _worksize = LU<Algo::OnDevice>::invoke(_handle_lapack, T, P, _work);
@@ -750,6 +765,9 @@ public:
 #if defined(KOKKOS_ENABLE_HIP)
     _is_rocblas_created = 0;
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    _is_sycl_queue_created = 0;
+#endif
     if (variant == 3)
       _spmv = new SpMV_type(_keep_zeros);
     else
@@ -791,6 +809,12 @@ public:
     for (ordinal_type i = 0; i < _nstreams; ++i) {
       _status = hipStreamDestroy(_streams[i]);
       checkDeviceStatus("cudaStreamDestroy");
+    }
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (_is_sycl_queue_created) {
+      // no need to free sycl::queue
+      _is_sycl_queue_created = 0;
     }
 #endif
     _streams.clear();
@@ -850,7 +874,7 @@ public:
     for (ordinal_type i = 0; i < _nstreams; ++i) {
       ExecSpaceFactory<exec_space>::createInstance(_streams[i], _exec_instances[i]);
     }
-#else
+#else // end of (CUDA or HIP)
     // just one dummy stream
     _streams.clear();
     _streams.resize(1);
@@ -858,7 +882,11 @@ public:
     // just one default execution space.
     _exec_instances.clear();
     _exec_instances.resize(1);
+#if defined(KOKKOS_ENABLE_SYCL)
+    ExecSpaceFactory<exec_space>::createInstance(_handle_lapack, _exec_instances[0]);
+#else
     _exec_instances[0] = exec_space();
+#endif
 #endif
     if (verbose) {
       printf("Summary: CreateStream : %3d\n", _nstreams);
@@ -1312,6 +1340,7 @@ public:
 
               _status = Herk<Uplo::Upper, Trans::ConjTranspose, Algo::OnDevice>::invoke(handle_blas, minus_one, ATR,
                                                                                         zero, ABR);
+              checkDeviceBlasStatus("herk");
             }
             num_device_calls ++;
           }
@@ -1416,6 +1445,7 @@ public:
               // ABR = -ATR'*ATR
               _status = Herk<Uplo::Upper, Trans::ConjTranspose, Algo::OnDevice>::invoke(handle_blas, minus_one, ATR,
                                                                                         zero, ABR);
+              checkDeviceBlasStatus("herk");
             } else {
               _status = Copy<Algo::OnDevice>::invoke(exec_instance, ATL, T);
               checkDeviceBlasStatus("Copy");
@@ -1509,6 +1539,7 @@ public:
 
               _status = Herk<Uplo::Upper, Trans::ConjTranspose, Algo::OnDevice>::invoke(handle_blas, minus_one, ATR,
                                                                                         zero, ABR);
+              checkDeviceBlasStatus("herk");
 
               /// additional things
               UnmanagedViewType<value_type_matrix> T(bptr, m, m);

@@ -50,7 +50,14 @@
 #include "rocsolver/rocsolver.h"
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+#include <oneapi/mkl.hpp>
+#endif
+
 #if defined(TACHO_HAVE_KOKKOS_KERNELS)
+#include "KokkosBlas2_gemv.hpp"
+#include "KokkosBlas3_gemm.hpp"
+#include "KokkosBlas3_trsm.hpp"
 #include "KokkosLapack_potrf.hpp"
 #endif
 
@@ -73,10 +80,10 @@ const char *Version();
 #define MSG_INVALID_TEMPLATE_ARGS "Invaid template arguments"
 #define MSG_INVALID_INPUT "Invaid input arguments"
 #define MSG_NOT_IMPLEMENTED "Not yet implemented"
-#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP)
-KOKKOS_FUNCTION constexpr bool runsOnCudaOrHIP() { return false; }
+#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
+KOKKOS_FUNCTION constexpr bool runsOnGPU() { return false; }
 #else
-KOKKOS_FUNCTION constexpr bool runsOnCudaOrHIP() {
+KOKKOS_FUNCTION constexpr bool runsOnGPU() {
   KOKKOS_IF_ON_HOST(return false;)
   KOKKOS_IF_ON_DEVICE(return true;)
 }
@@ -274,6 +281,9 @@ struct Uplo {
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_UPLO mkl_param = CblasUpper;
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::uplo oneapi_param = oneapi::mkl::uplo::upper;
+#endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasFillMode_t cublas_param = CUBLAS_FILL_MODE_UPPER;
 #endif
@@ -286,6 +296,9 @@ struct Uplo {
     static constexpr char param = 'L';
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_UPLO mkl_param = CblasLower;
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::uplo oneapi_param = oneapi::mkl::uplo::lower;
 #endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasFillMode_t cublas_param = CUBLAS_FILL_MODE_LOWER;
@@ -310,6 +323,9 @@ struct Side {
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_SIDE mkl_param = CblasLeft;
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::side oneapi_param = oneapi::mkl::side::left;
+#endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasSideMode_t cublas_param = CUBLAS_SIDE_LEFT;
 #endif
@@ -322,6 +338,9 @@ struct Side {
     static constexpr char param = 'R';
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_SIDE mkl_param = CblasRight;
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::side oneapi_param = oneapi::mkl::side::right;
 #endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasSideMode_t cublas_param = CUBLAS_SIDE_RIGHT;
@@ -346,6 +365,9 @@ struct Diag {
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_DIAG mkl_param = CblasUnit;
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::diag oneapi_param = oneapi::mkl::diag::unit;
+#endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasDiagType_t cublas_param = CUBLAS_DIAG_UNIT;
 #endif
@@ -358,6 +380,9 @@ struct Diag {
     static constexpr char param = 'N';
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_DIAG mkl_param = CblasNonUnit;
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::diag oneapi_param = oneapi::mkl::diag::nonunit;
 #endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasDiagType_t cublas_param = CUBLAS_DIAG_NON_UNIT;
@@ -379,6 +404,9 @@ struct Trans {
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_TRANSPOSE mkl_param = CblasTrans;
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::transpose oneapi_param = oneapi::mkl::transpose::trans;
+#endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasOperation_t cublas_param = CUBLAS_OP_T;
 #endif
@@ -392,6 +420,9 @@ struct Trans {
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_TRANSPOSE mkl_param = CblasConjTrans;
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::transpose oneapi_param = oneapi::mkl::transpose::conjtrans;
+#endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasOperation_t cublas_param = CUBLAS_OP_C;
 #endif
@@ -404,6 +435,9 @@ struct Trans {
     static constexpr char param = 'N';
 #if defined(__INTEL_MKL__)
     static constexpr CBLAS_TRANSPOSE mkl_param = CblasNoTrans;
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    static constexpr oneapi::mkl::transpose oneapi_param = oneapi::mkl::transpose::nontrans;
 #endif
 #if defined(CUBLAS_VERSION)
     static constexpr cublasOperation_t cublas_param = CUBLAS_OP_N;
@@ -544,6 +578,9 @@ template <typename T> struct ExecSpaceFactory {
 #if defined(KOKKOS_ENABLE_HIP)
   static void createInstance(const hipStream_t &s, T &exec_instance) { exec_instance = T(); }
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+  static void createInstance(const sycl::queue qs, T &exec_instance) { exec_instance = T(); }
+#endif
 };
 
 #if defined(KOKKOS_ENABLE_CUDA)
@@ -557,6 +594,14 @@ template <> struct ExecSpaceFactory<Kokkos::HIP> {
   static void createInstance(Kokkos::HIP &exec_instance) { exec_instance = Kokkos::HIP(); }
   static void createInstance(const hipStream_t &s, Kokkos::HIP &exec_instance) {
     exec_instance = Kokkos::HIP(s);
+  }
+};
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+template <> struct ExecSpaceFactory<Kokkos::SYCL> {
+  static void createInstance(Kokkos::SYCL &exec_instance) { exec_instance = Kokkos::SYCL(); }
+  static void createInstance(const sycl::queue &q, Kokkos::SYCL &exec_instance) {
+    exec_instance = Kokkos::SYCL(q);
   }
 };
 #endif

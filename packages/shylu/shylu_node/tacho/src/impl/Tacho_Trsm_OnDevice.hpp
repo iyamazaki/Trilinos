@@ -64,6 +64,22 @@ struct Trsm<ArgSide, ArgUplo, ArgTransA, Algo::OnDevice> {
   }
 #endif
 
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+  template <typename DiagType, typename ScalarType, typename ViewTypeA, typename ViewTypeB>
+  inline static int KokkosKernels_invoke(const DiagType diagA, const ScalarType alpha,
+                                         const ViewTypeA &A, const ViewTypeB &B) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    const ordinal_type m = B.extent(0);
+    const ordinal_type n = B.extent(1);
+
+    int r_val(0);
+    if (m > 0 && n > 0)
+      KokkosBlas::trsm(&ArgSide::param, &ArgUplo::param, &ArgTransA::param, &diagA.param,
+                       alpha, A, B);
+    return r_val;
+  }
+#endif
+
   template <typename MemberType, typename DiagType, typename ScalarType, typename ViewTypeA, typename ViewTypeB>
   inline static int invoke(MemberType &member, const DiagType diagA, const ScalarType alpha, const ViewTypeA &A,
                            const ViewTypeB &B) {
@@ -81,15 +97,25 @@ struct Trsm<ArgSide, ArgUplo, ArgTransA, Algo::OnDevice> {
     static_assert(std::is_same<memory_space, memory_space_b>::value, "A and B do not have the same memory space.");
 
     int r_val(-1);
-    if (std::is_same<memory_space, Kokkos::HostSpace>::value)
+    if (std::is_same<memory_space, Kokkos::HostSpace>::value) {
       r_val = blas_invoke(diagA, alpha, A, B);
+      return r_val;
+    }
 #if defined(KOKKOS_ENABLE_CUDA)
-    if (std::is_same<memory_space, Kokkos::CudaSpace>::value || std::is_same<memory_space, Kokkos::CudaUVMSpace>::value)
+    if (std::is_same<memory_space, Kokkos::CudaSpace>::value || std::is_same<memory_space, Kokkos::CudaUVMSpace>::value) {
       r_val = cublas_invoke(member, diagA, alpha, A, B);
+      return r_val;
+    }
 #endif
 #if defined(KOKKOS_ENABLE_HIP)
-    if (std::is_same<memory_space, Kokkos::HIPSpace>::value)
+    if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
       r_val = rocblas_invoke(member, diagA, alpha, A, B);
+      return r_val;
+    }
+#endif
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+    // Default (in case all the above did not return)
+    r_val = KokkosKernels_invoke(diagA, alpha, A, B);
 #endif
     return r_val;
   }

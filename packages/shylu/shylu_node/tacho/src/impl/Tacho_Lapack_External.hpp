@@ -25,6 +25,10 @@
 #define TACHO_ENABLE_ROCSOLVER
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+#define TACHO_ENABLE_ONEAPI
+#endif
+
 #if defined(TACHO_ENABLE_CUSOLVER)
 #include "cusolverDn.h"
 #endif
