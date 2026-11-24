@@ -88,19 +88,21 @@ template <typename ArgUplo, typename ArgTransA> struct Trsv<ArgUplo, ArgTransA, 
     int r_val(0);
     if (m > 0 && n > 0) {
       try {
-        sycl::event e;
+        sycl::event ev;
         if (n == 1) {
-          e = oneapi::mkl::blas::column_major::trsv(handle, ArgUplo::oneapi_param, ArgTransA::oneapi_param, diagA.oneapi_param,
-                                                    m, A.data(), A.stride(1), B.data(), B.stride(0));
+          ev = oneapi::mkl::blas::column_major::trsv(handle, ArgUplo::oneapi_param, ArgTransA::oneapi_param, diagA.oneapi_param,
+                                                     m, A.data(), A.stride(1), B.data(), B.stride(0));
         } else {
-          e = oneapi::mkl::blas::column_major::trsm(handle, Side::Left::oneapi_param, ArgUplo::oneapi_param, ArgTransA::oneapi_param, diagA.oneapi_param,
-                                                    m, n, value_type(1), A.data(), A.stride(1), B.data(), B.stride(1));
+          ev = oneapi::mkl::blas::column_major::trsm(handle, Side::Left::oneapi_param, ArgUplo::oneapi_param, ArgTransA::oneapi_param, diagA.oneapi_param,
+                                                     m, n, value_type(1), A.data(), A.stride(1), B.data(), B.stride(1));
         }
-        e.wait_and_throw();
-      } catch (const oneapi::mkl::lapack::exception& e) {
-        r_val = e.info();
-      } catch (const std::exception& e) {
+        ev.wait_and_throw();
+      } catch (const oneapi::mkl::exception& e) {
+        std::cout << " oneAPI TRSM threw: " << e.what() << std::endl;
         r_val = -1;
+      } catch (const std::exception& e) {
+        std::cout << " TRSM threw: " << e.what() << std::endl;
+        r_val = -2;
       }
     }
     return r_val;
@@ -117,8 +119,13 @@ template <typename ArgUplo, typename ArgTransA> struct Trsv<ArgUplo, ArgTransA, 
 
     int r_val(0);
     if (m > 0 && n > 0)
-      KokkosBlas::trsm(&Side::Left::param, &ArgUplo::param, &ArgTransA::param, &diagA.param,
-                       value_type(1), A, B);
+      try {
+        KokkosBlas::trsm(&Side::Left::param, &ArgUplo::param, &ArgTransA::param, &diagA.param,
+                         value_type(1), A, B);
+      } catch (const std::exception& e) {
+        std::cout << " KokkosLapack::trsm threw: " << e.what() << std::endl;
+        r_val = -1;
+      }
     return r_val;
   }
 #endif

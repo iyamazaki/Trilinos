@@ -83,7 +83,8 @@ template <typename ArgUplo> struct Chol<ArgUplo, Algo::OnDevice> {
     if (m > 0) {
       try {
         KokkosLapack::potrf(&ArgUplo::param, A);
-      } catch (...) {
+      } catch (const std::exception& e) {
+        std::cout << " KokkosLapack::potrf threw: " << e.what() << std::endl;
         r_val = -1;
       }
     }

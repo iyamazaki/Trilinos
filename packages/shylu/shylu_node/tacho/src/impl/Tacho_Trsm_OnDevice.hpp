@@ -64,6 +64,31 @@ struct Trsm<ArgSide, ArgUplo, ArgTransA, Algo::OnDevice> {
   }
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+  template <typename DiagType, typename ScalarType, typename ViewTypeA, typename ViewTypeB>
+  inline static int oneapi_invoke(sycl::queue &handle, const DiagType diagA, const ScalarType alpha,
+                                  const ViewTypeA &A, const ViewTypeB &B) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    const ordinal_type m = B.extent(0), n = B.extent(1);
+    int r_val(0);
+    if (m > 0 && n > 0) {
+      try {
+        sycl::event ev;
+        ev = oneapi::mkl::blas::column_major::trsm(handle, ArgSide::oneapi_param, ArgUplo::oneapi_param, ArgTransA::oneapi_param, diagA.oneapi_param,
+                                                   m, n, alpha, A.data(), A.stride(1), B.data(), B.stride(1));
+        ev.wait_and_throw();
+      } catch (const oneapi::mkl::exception& e) {
+        std::cout << " oneAPI TRSM thwos: " << e.what() << std::endl;
+        r_val = -1;
+      } catch (const std::exception& e) {
+        std::cout << " TRSM throws: " << e.what() << std::endl;
+        r_val = -2;
+      }
+    }
+    return r_val;
+  }
+#endif
+
 #if defined(TACHO_HAVE_KOKKOS_KERNELS)
   template <typename DiagType, typename ScalarType, typename ViewTypeA, typename ViewTypeB>
   inline static int KokkosKernels_invoke(const DiagType diagA, const ScalarType alpha,
@@ -74,8 +99,13 @@ struct Trsm<ArgSide, ArgUplo, ArgTransA, Algo::OnDevice> {
 
     int r_val(0);
     if (m > 0 && n > 0)
-      KokkosBlas::trsm(&ArgSide::param, &ArgUplo::param, &ArgTransA::param, &diagA.param,
-                       alpha, A, B);
+      try {
+        KokkosBlas::trsm(&ArgSide::param, &ArgUplo::param, &ArgTransA::param, &diagA.param,
+                         alpha, A, B);
+      } catch (const std::exception& e) {
+        std::cout << " KokkosLapack::trsm threw: " << e.what() << std::endl;
+        r_val = -1;
+      }
     return r_val;
   }
 #endif
@@ -110,6 +140,12 @@ struct Trsm<ArgSide, ArgUplo, ArgTransA, Algo::OnDevice> {
 #if defined(KOKKOS_ENABLE_HIP)
     if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
       r_val = rocblas_invoke(member, diagA, alpha, A, B);
+      return r_val;
+    }
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value) {
+      r_val = oneapi_invoke(member, diagA, alpha, A, B);
       return r_val;
     }
 #endif

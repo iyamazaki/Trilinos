@@ -250,6 +250,9 @@ private:
 #elif defined(KOKKOS_ENABLE_HIP)
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "HostLapack" : "RocSolver");
+#elif defined(KOKKOS_ENABLE_SYCL)
+    constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+    checkStatus(func, is_host ? "HostLapack" : "oneAPI(Lapack)");
 #elif defined(TACHO_HAVE_KOKKOS_KERNELS)
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "HostLapack" : "KokkosKernels Lapack ?");
@@ -265,6 +268,9 @@ private:
 #elif defined(KOKKOS_ENABLE_HIP)
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "HostBlas" : "RocBlas");
+#elif defined(KOKKOS_ENABLE_SYCL)
+    constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+    checkStatus(func, is_host ? "HostBlas" : "oneAPI(Blas)");
 #else
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "HostBlas" : "Unknown Blas");
@@ -277,6 +283,9 @@ private:
 #elif defined(KOKKOS_ENABLE_HIP)
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "Host" : "HIP");
+#elif defined(KOKKOS_ENABLE_SYCL)
+    constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
+    checkStatus(func, is_host ? "Host" : "SYCL");
 #else
     constexpr bool is_host = std::is_same<exec_memory_space, Kokkos::HostSpace>::value;
     checkStatus(func, is_host ? "Host" : "Unknown");
@@ -2084,24 +2093,27 @@ public:
             value_type *bptr = _buf.data() + h_buf_factor_ptr(p - pbeg);
 
             if (n_m > 0) {
-              UnmanagedViewType<value_type_matrix> ATL(s.u_buf, m, m);
-              UnmanagedViewType<value_type_matrix> ATR(s.u_buf + ATL.span(), m, n_m);
+              UnmanagedViewType<value_type_matrix> ATL(s.u_buf, m, m); // diagonal
+              UnmanagedViewType<value_type_matrix> ATR(s.u_buf + ATL.span(), m, n_m); // upper off-diag
 
               UnmanagedViewType<value_type_matrix> AL(s.l_buf, n, m);
               const auto ATL2 = Kokkos::subview(AL, range_type(0, m), Kokkos::ALL());
-              const auto ABL = Kokkos::subview(AL, range_type(m, n), Kokkos::ALL());
+              const auto ABL = Kokkos::subview(AL, range_type(m, n), Kokkos::ALL()); // lower off-diag
 
               UnmanagedViewType<value_type_matrix> ABR(bptr, n_m, n_m);
               UnmanagedViewType<value_type_matrix> T(bptr + ABR.span(), m, m);
 
-              _status = Copy<Algo::OnDevice>::invoke(exec_instance, T, ATL);
+	      // compute L's off-diagonal
+              _status = Copy<Algo::OnDevice>::invoke(exec_instance, T, ATL); // T = LU
               _status = Trsm<Side::Right, Uplo::Upper, Trans::NoTranspose, Algo::OnDevice>::invoke(
-                  handle_blas, Diag::NonUnit(), one, ATL, ABL);
+                  handle_blas, Diag::NonUnit(), one, ATL, ABL); // ABL  = A(2,1)\U
               checkDeviceBlasStatus("trsm");
 
               _status = SetIdentity<Algo::OnDevice>::invoke(exec_instance, ATL, minus_one);
               _status = SetIdentity<Algo::OnDevice>::invoke(exec_instance, ATL2, minus_one);
+              checkDeviceBlasStatus("identity");
 
+	      // update trailing submatrix
               _status = Gemm<Trans::NoTranspose, Trans::NoTranspose, Algo::OnDevice>::invoke(handle_blas, minus_one,
                                                                                              ABL, ATR, zero, ABR);
               checkDeviceBlasStatus("gemm");
@@ -2112,7 +2124,6 @@ public:
               _status = Trsm<Side::Right, Uplo::Lower, Trans::NoTranspose, Algo::OnDevice>::invoke(
                   handle_blas, Diag::Unit(), minus_one, T, AL);
               checkDeviceBlasStatus("trsm");
-
             } else {
               UnmanagedViewType<value_type_matrix> ATL(s.u_buf, m, m);
               UnmanagedViewType<value_type_matrix> ATL2(s.l_buf, m, m);
@@ -3449,6 +3460,7 @@ public:
 
             _status = ApplyPivots<PivotMode::Flame, Side::Left, Direct::Forward, Algo::OnDevice> /// row inter-change
                 ::invoke(exec_instance, fpiv, tT);
+            checkDeviceBlasStatus("pivot");
 
             _status =
                 Trsv<Uplo::Lower, Trans::NoTranspose, Algo::OnDevice>::invoke(handle_blas, Diag::Unit(), ATL, tT);
@@ -3513,6 +3525,7 @@ public:
               _status =
                   ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, tT, perm, bT);
             }
+            checkDeviceBlasStatus("pivot");
 
             _status = Gemv<Trans::NoTranspose, Algo::OnDevice>::invoke(handle_blas, one, ATL, bT, zero, tT);
             checkDeviceBlasStatus("gemv");
@@ -3572,6 +3585,7 @@ public:
               _status =
                   ApplyPermutation<Side::Left, Trans::NoTranspose, Algo::OnDevice>::invoke(exec_instance, bT, perm, tT);
             }
+            checkDeviceBlasStatus("pivot");
             _status = Gemv<Trans::NoTranspose, Algo::OnDevice>::invoke(handle_blas, one, AL, tT, zero, b);
             checkDeviceBlasStatus("gemv");
             num_device_calls ++;
@@ -4846,7 +4860,6 @@ public:
           }
         }
       } /// end of upper tri solve
-
     } // end of solve
     stat.t_solve = timer.seconds();
 
