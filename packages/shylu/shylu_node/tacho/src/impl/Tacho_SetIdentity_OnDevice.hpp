@@ -26,7 +26,6 @@ template <> struct SetIdentity<Algo::OnDevice> {
     static_assert(ViewTypeA::rank == 2, "A is not rank 2 view.");
 
     const ordinal_type m = A.extent(0), n = A.extent(1);
-
     if (m > 0 && n > 0) {
       const value_type diag(alpha), zero(0);
       using exec_space = MemberType;

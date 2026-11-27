@@ -116,7 +116,8 @@ struct GemmTriangular<Trans::Transpose, Trans::NoTranspose, Uplo::Upper, Algo::O
 
     if (m > 0 && n > 0 && k > 0) {
       if (m == n) {
-        const ordinal_type b = 256;
+        char *nb_env = getenv("TACHO_BLOCK_SIZE");
+        const ordinal_type b = (nb_env == NULL ? 256 : atoi(nb_env));
         value_type *aptr = A.data(), *bptr = B.data(), *cptr = C.data();
         const int as1 = A.stride(1), bs1 = B.stride(1), cs1 = C.stride(1);
         if (m < 2 * b) {
@@ -135,6 +136,115 @@ struct GemmTriangular<Trans::Transpose, Trans::NoTranspose, Uplo::Upper, Algo::O
       }
     }
     return 0;
+  }
+#endif
+
+#if defined(KOKKOS_ENABLE_SYCL)
+  template <typename ScalarType, typename ViewTypeA, typename ViewTypeB, typename ViewTypeC>
+  inline static int oneapi_invoke(sycl::queue &handle, const ScalarType alpha, const ViewTypeA &A,
+                                  const ViewTypeB &B, const ScalarType beta, const ViewTypeC &C) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    typedef typename ViewTypeB::non_const_value_type value_type_b;
+    typedef typename ViewTypeC::non_const_value_type value_type_c;
+
+    static_assert(ViewTypeA::rank == 2, "A is not rank 2 view.");
+    static_assert(ViewTypeB::rank == 2, "B is not rank 2 view.");
+    static_assert(ViewTypeC::rank == 2, "C is not rank 2 view.");
+
+    static_assert(std::is_same<value_type, value_type_b>::value && std::is_same<value_type_b, value_type_c>::value,
+                  "A, B and C do not have the same value type.");
+
+    const ordinal_type m = C.extent(0), n = C.extent(1), k = B.extent(0);
+
+    int r_val = 0;
+    if (m > 0 && n > 0 && k > 0) {
+      if (m == n) {
+        char *nb_env = getenv("TACHO_BLOCK_SIZE");
+        const ordinal_type b = (nb_env == NULL ? 256 : atoi(nb_env));
+        value_type *aptr = A.data(), *bptr = B.data(), *cptr = C.data();
+        const int as1 = A.stride(1), bs1 = B.stride(1), cs1 = C.stride(1);
+        sycl::event ev;
+        try {
+          if (m < 2 * b) {
+            ev = oneapi::mkl::blas::column_major::gemm(handle, Trans::Transpose::oneapi_param, Trans::NoTranspose::oneapi_param, m, n, k,
+                                                       value_type(alpha), aptr, as1, bptr, bs1, value_type(beta), cptr, cs1);
+            ev.wait_and_throw();
+          } else {
+            for (ordinal_type i = 0; i < m; i += b) {
+              const ordinal_type m2 = i + b, mm = (m2 > m ? m : m2), nn = mm - i;
+              value_type *aaptr = aptr, *bbptr = bptr + i * bs1, *ccptr = cptr + i * cs1;
+              ev = oneapi::mkl::blas::column_major::gemm(handle, Trans::Transpose::oneapi_param, Trans::NoTranspose::oneapi_param, mm, nn,
+                                                         k, value_type(alpha), aaptr, as1, bbptr, bs1, value_type(beta), ccptr, cs1);
+              ev.wait_and_throw();
+            }
+          }
+        } catch (const oneapi::mkl::lapack::exception& e) {
+          std::cout << " oneAPI threw for GemmTriangle: " << e.what() << std::endl;
+          r_val = e.info();
+        } catch (const std::exception& e) {
+          std::cout << " GemmTriangle threw: " << e.what() << std::endl;
+          r_val = -1;
+        }
+      } else {
+        TACHO_TEST_FOR_ABORT(true, "C is not a square matrix");
+      }
+    }
+    return r_val;
+  }
+#endif
+
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+  template <typename ScalarType, typename ViewTypeA, typename ViewTypeB, typename ViewTypeC>
+  inline static int KokkosKernels_invoke(const ScalarType alpha, const ViewTypeA &A,
+                                         const ViewTypeB &B, const ScalarType beta, const ViewTypeC &C) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    typedef typename ViewTypeB::non_const_value_type value_type_b;
+    typedef typename ViewTypeC::non_const_value_type value_type_c;
+
+    static_assert(ViewTypeA::rank == 2, "A is not rank 2 view.");
+    static_assert(ViewTypeB::rank == 2, "B is not rank 2 view.");
+    static_assert(ViewTypeC::rank == 2, "C is not rank 2 view.");
+
+    static_assert(std::is_same<value_type, value_type_b>::value && std::is_same<value_type_b, value_type_c>::value,
+                  "A, B and C do not have the same value type.");
+
+    using range_type = Kokkos::pair<ordinal_type, ordinal_type>;
+    const ordinal_type m = C.extent(0), n = C.extent(1), k = B.extent(0);
+
+    int r_val = 0;
+    if (m > 0 && n > 0 && k > 0) {
+      if (m == n) {
+        char *nb_env = getenv("TACHO_BLOCK_SIZE");
+        const ordinal_type nb = (nb_env == NULL ? 256 : atoi(nb_env));
+        if (m < 2 * nb) {
+          try {
+            KokkosBlas::gemm("T", "N", alpha, A, B, beta, C);
+          } catch (const std::exception& e) {
+            std::cout << " KokkosLapack::gemm threw for gemmTriangle: " << e.what() << std::endl;
+            r_val = -1;
+          }
+        } else {
+          for (ordinal_type i = 0; i < m && r_val == 0; i += nb) {
+            const ordinal_type m2 = i + nb;
+            const ordinal_type mm = (m2 > m ? m : m2);
+            const ordinal_type nn = mm - i;
+
+            const auto a = Kokkos::subview(A, Kokkos::ALL(),     range_type(0, mm));
+            const auto b = Kokkos::subview(B, Kokkos::ALL(),     range_type(i, i+nn));
+            const auto c = Kokkos::subview(C, range_type(0, mm), range_type(i, i+nn));
+            try {
+              KokkosBlas::gemm("T", "N", alpha, a, b, beta, c);
+            } catch (const std::exception& e) {
+              std::cout << " KokkosLapack::gemm threw for gemmTriangle: " << e.what() << std::endl;
+              r_val = -1;
+            }
+          }
+        }
+      } else {
+        TACHO_TEST_FOR_ABORT(true, "C is not a square matrix");
+      }
+    }
+    return r_val;
   }
 #endif
 
@@ -161,15 +271,32 @@ struct GemmTriangular<Trans::Transpose, Trans::NoTranspose, Uplo::Upper, Algo::O
                   "A, B and C do not have the same memory space.");
 
     int r_val(-1);
-    if (std::is_same<memory_space, Kokkos::HostSpace>::value)
+    if (std::is_same<memory_space, Kokkos::HostSpace>::value) {
       r_val = blas_invoke(alpha, A, B, beta, C);
+      return r_val;
+    }
 #if defined(KOKKOS_ENABLE_CUDA)
-    if (std::is_same<memory_space, Kokkos::CudaSpace>::value || std::is_same<memory_space, Kokkos::CudaUVMSpace>::value)
+    if (std::is_same<memory_space, Kokkos::CudaSpace>::value || std::is_same<memory_space, Kokkos::CudaUVMSpace>::value) {
       r_val = cublas_invoke(member, alpha, A, B, beta, C);
+      return r_val;
+    }
 #endif
 #if defined(KOKKOS_ENABLE_HIP)
-    if (std::is_same<memory_space, Kokkos::HIPSpace>::value)
+    if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
       r_val = rocblas_invoke(member, alpha, A, B, beta, C);
+      return r_val;
+    }
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value) {
+      r_val = oneapi_invoke(member, alpha, A, B, beta, C);
+      return r_val;
+    }
+#endif
+#if defined(TACHO_HAVE_KOKKOS_KERNELS)
+    // Default (in case all the above did not return)
+    // TODO: pass exec_instance !!
+    r_val = KokkosKernels_invoke(alpha, A, B, beta, C);
 #endif
     return r_val;
   }

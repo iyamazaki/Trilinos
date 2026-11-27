@@ -89,6 +89,40 @@ template <typename ArgTrans> struct Gemv<ArgTrans, Algo::OnDevice> {
   }
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+  template <typename ScalarType, typename ViewTypeA, typename ViewTypeB, typename ViewTypeC>
+  inline static int oneapi_invoke(sycl::queue &handle, const ScalarType alpha, const ViewTypeA &A,
+                                  const ViewTypeB &B, const ScalarType beta, const ViewTypeC &C) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+
+    const ordinal_type m = C.extent(0), n = C.extent(1);
+
+    int r_val(0);
+    if (m > 0 && n > 0) {
+      sycl::event ev;
+      try {
+        if (n == 1) {
+          const int mm = A.extent(0), nn = A.extent(1);
+          ev = oneapi::mkl::blas::column_major::gemv(handle, ArgTrans::oneapi_param, mm, nn, alpha, A.data(), A.stride(1), B.data(),
+                                                     B.stride(0), beta, C.data(), C.stride(0));
+        } else {
+          const int mm = C.extent(0), nn = C.extent(1), kk = B.extent(0);
+          ev = oneapi::mkl::blas::column_major::gemm(handle, ArgTrans::oneapi_param, Trans::NoTranspose::oneapi_param, mm, nn, kk,
+                                                     alpha, A.data(), A.stride(1), B.data(), B.stride(1), beta, C.data(), C.stride(1));
+        }
+        ev.wait_and_throw();
+      } catch (const oneapi::mkl::lapack::exception& e) {
+        std::cout << " oneAPI Gemm threw: " << e.what() << std::endl;
+        r_val = e.info();
+      } catch (const std::exception& e) {
+        std::cout << " Gemm threw: " << e.what() << std::endl;
+        r_val = -1;
+      }
+    }
+    return r_val;
+  }
+#endif
+
 #if defined(TACHO_HAVE_KOKKOS_KERNELS)
   template <typename ScalarType, typename ViewTypeA, typename ViewTypeB, typename ViewTypeC>
   inline static int KokkosKernels_invoke(const ScalarType alpha, const ViewTypeA &A, const ViewTypeB &B,
@@ -142,8 +176,15 @@ template <typename ArgTrans> struct Gemv<ArgTrans, Algo::OnDevice> {
       return r_val;
     }
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value) {
+      r_val = oneapi_invoke(member, alpha, A, B, beta, C);
+      return r_val;
+    }
+#endif
 #if defined(TACHO_HAVE_KOKKOS_KERNELS)
     // Default (in case all the above did not return)
+    // TODO: needs exec_instance (to make sure it runs on same stream and avoid sync)
     r_val = KokkosKernels_invoke(alpha, A, B, beta, C);
 #endif
     return r_val;

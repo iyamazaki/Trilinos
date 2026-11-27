@@ -101,7 +101,9 @@ int driver(const std::string file, const std::string rhs, const int nx,
 
   const bool detail = false;
   const bool verbose = true;
+#if !defined(KOKKOS_ENABLE_SYCL)
   Tacho::printExecSpaceConfiguration<typename device_type::execution_space>("DeviceSpace", detail);
+#endif
   Tacho::printExecSpaceConfiguration<typename host_device_type::execution_space>("HostSpace", detail);
   std::cout << std::endl << "    --------------------- " << std::endl;
   if (std::is_same<value_type, double>::value)

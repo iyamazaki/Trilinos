@@ -204,12 +204,11 @@ private:
   #define getLapackHandle(id) _handles[id]
 #elif defined(KOKKOS_ENABLE_SYCL)
   bool _is_sycl_queue_created;
-  sycl::queue _handle_blas;
   sycl::queue _handle_lapack;
   using blas_handle_type = sycl::queue;
   using lapack_handle_type = sycl::queue;
   using stream_array_host = std::vector<int>;
-  #define getBlasHandle()   _handle_blas
+  #define getBlasHandle()   _handle_lapack
   #define getLapackHandle() _handle_lapack
 #else
   int _handle_blas, _handle_lapack; // dummy handle for convenience
@@ -564,7 +563,10 @@ public:
 #endif
 #if defined(KOKKOS_ENABLE_SYCL)
     if (!_is_sycl_queue_created) {
-      _handle_lapack = sycl::queue(sycl::gpu_selector_v, sycl::property::queue::in_order());
+      //_handle_lapack = sycl::queue(sycl::gpu_selector_v, sycl::property::queue::in_order());
+      // Make sure all run on "default" queue
+      sycl::queue default_q = Kokkos::SYCL().sycl_queue();
+      _handle_lapack = sycl::queue(default_q.get_context(), default_q.get_device(), sycl::property::queue::in_order());
       _is_sycl_queue_created = true;
     }
 #endif
@@ -1001,7 +1003,7 @@ public:
               // ABR = -ATR*W
               _status = GemmTriangular<Trans::Transpose, Trans::NoTranspose, Uplo::Upper, Algo::OnDevice>::invoke(
                   handle_blas, minus_one, ATR, T, zero, ABR);
-              checkDeviceBlasStatus("gemm");
+              checkDeviceBlasStatus("gemm-triangle");
             } else if (ndefs > 0) {
               LDL_nopiv<Uplo::Upper, Algo::OnDevice>::reset_zero_diags(handle_blas, exec_instance, ATL);
             }
@@ -1150,7 +1152,7 @@ public:
         value_type_array W(work.data() + worksize * qid, worksize);
         ++q;
 #else
-        blas_handle_type   handle_blas   = getBlasHandle();
+        blas_handle_type handle_blas = getBlasHandle();
         value_type_array W = work;
 #endif
 
@@ -1204,14 +1206,16 @@ public:
               }
               {
                 // additional things
+                // > copy ATL to D
                 UnmanagedViewType<value_type_matrix> D(bptr, m, m);
                 _status = Copy<Algo::OnDevice>::invoke(exec_instance, D, ATL);
                 checkDeviceBlasStatus("Copy");
-
+                // > set ATL to I
                 _status = SetIdentity<Algo::OnDevice>::invoke(exec_instance, ATL, minus_one);
                 checkDeviceBlasStatus("SetIdentity");
 
-                UnmanagedViewType<value_type_matrix> AT(ATL.data(), m, n);
+                // D^{-1}[I, ATR]
+                UnmanagedViewType<value_type_matrix> AT(ATL.data(), m, n); // AT = [ATL, ATR], where ATL is I now
                 _status = Trsm<Side::Left, Uplo::Upper, Trans::NoTranspose, Algo::OnDevice>::invoke(
                     handle_blas, Diag::Unit(), minus_one, D, AT);
                 checkDeviceBlasStatus("trsm");
@@ -2103,7 +2107,7 @@ public:
               UnmanagedViewType<value_type_matrix> ABR(bptr, n_m, n_m);
               UnmanagedViewType<value_type_matrix> T(bptr + ABR.span(), m, m);
 
-	      // compute L's off-diagonal
+              // compute L's off-diagonal
               _status = Copy<Algo::OnDevice>::invoke(exec_instance, T, ATL); // T = LU
               _status = Trsm<Side::Right, Uplo::Upper, Trans::NoTranspose, Algo::OnDevice>::invoke(
                   handle_blas, Diag::NonUnit(), one, ATL, ABL); // ABL  = A(2,1)\U
@@ -2113,7 +2117,7 @@ public:
               _status = SetIdentity<Algo::OnDevice>::invoke(exec_instance, ATL2, minus_one);
               checkDeviceBlasStatus("identity");
 
-	      // update trailing submatrix
+              // update trailing submatrix
               _status = Gemm<Trans::NoTranspose, Trans::NoTranspose, Algo::OnDevice>::invoke(handle_blas, minus_one,
                                                                                              ABL, ATR, zero, ABR);
               checkDeviceBlasStatus("gemm");
@@ -2340,7 +2344,7 @@ public:
 
             // Solve diag (ATL is square)
             _status = Trmv<Uplo::Upper, Trans::Transpose, Algo::OnDevice>::invoke(handle_blas, Diag::Unit(), ATL, tT, bT);
-            checkDeviceBlasStatus("gemv");
+            checkDeviceBlasStatus("trmv");
 
             if (n_m > 0) {
               // Update offdiag
@@ -4138,7 +4142,6 @@ public:
           }
         }
       } /// end of upper tri solve
-
     } // end of solve
     stat.t_solve = timer.seconds();
 

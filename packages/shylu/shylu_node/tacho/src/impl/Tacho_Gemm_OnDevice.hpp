@@ -70,6 +70,33 @@ template <typename ArgTransA, typename ArgTransB> struct Gemm<ArgTransA, ArgTran
   }
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+  template <typename ScalarType, typename ViewTypeA, typename ViewTypeB, typename ViewTypeC>
+  inline static int oneapi_invoke(sycl::queue &handle, const ScalarType alpha, const ViewTypeA &A,
+                                  const ViewTypeB &B, const ScalarType beta, const ViewTypeC &C) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+
+    const ordinal_type m = C.extent(0), n = C.extent(1),
+                       k = (std::is_same<ArgTransB, Trans::NoTranspose>::value ? B.extent(0) : B.extent(1));
+
+    int r_val(0);
+    if (m > 0 && n > 0 && k > 0) {
+      try {
+        sycl::event ev = oneapi::mkl::blas::column_major::gemm(handle, ArgTransA::oneapi_param, ArgTransB::oneapi_param, m, n, k, alpha,
+                                                               A.data(), A.stride(1), B.data(), B.stride(1), beta, C.data(), C.stride(1));
+        ev.wait_and_throw();
+      } catch (const oneapi::mkl::lapack::exception& e) {
+        std::cout << " oneAPI Gemm threw: " << e.what() << std::endl;
+        r_val = e.info();
+      } catch (const std::exception& e) {
+        std::cout << " Gemm threw: " << e.what() << std::endl;
+        r_val = -1;
+      }
+    }
+    return r_val;
+  }
+#endif
+
 #if defined(TACHO_HAVE_KOKKOS_KERNELS)
   template <typename ScalarType, typename ViewTypeA, typename ViewTypeB, typename ViewTypeC>
   inline static int KokkosKernels_invoke(const ScalarType alpha, const ViewTypeA &A,
@@ -131,8 +158,15 @@ template <typename ArgTransA, typename ArgTransB> struct Gemm<ArgTransA, ArgTran
       return r_val;
     }
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value) {
+      r_val = oneapi_invoke(member, alpha, A, B, beta, C);
+      return r_val;
+    }
+#endif
 #if defined(TACHO_HAVE_KOKKOS_KERNELS)
     // Default (in case all the above did not return)
+    // TODO: needs exec_instance (to make sure it runs on same stream and avoid sync)
     r_val = KokkosKernels_invoke(alpha, A, B, beta, C);
 #endif
     return r_val;

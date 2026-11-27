@@ -133,7 +133,9 @@ template <typename value_type> int driver(int argc, char *argv[]) {
     using ordinal_type_array_host = typename CrsMatrixBaseTypeHost::ordinal_type_array;
 
     std::cout << std::endl << "   ---------------------- " << std::endl;
+#if !defined(KOKKOS_ENABLE_SYCL)
     Tacho::printExecSpaceConfiguration<typename device_type::execution_space>("DeviceSpace", detail);
+#endif
     Tacho::printExecSpaceConfiguration<typename host_device_type::execution_space>("HostSpace", detail);
     std::cout << "     Method Name:: " << method_name << " (" << method << ")" << std::endl;
     std::cout << "     Solver Type:: " << variant << std::endl;

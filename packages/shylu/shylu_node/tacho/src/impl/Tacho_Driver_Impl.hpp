@@ -119,6 +119,13 @@ void Driver<VT, DT>::setSolutionMethod(const int method) { // 0 - LDL nopivot, 1
     TACHO_TEST_FOR_EXCEPTION(method != LDL_nopiv && method != Cholesky && method != LDL && method != SymLU, std::logic_error,
                              ss.str().c_str());
   }
+#if defined(KOKKOS_ENABLE_SYCL)
+  {
+    std::stringstream ss;
+    ss << "Error: LDL (" << method << ") is not supported by oneAPI";
+    TACHO_TEST_FOR_EXCEPTION(method == LDL, std::logic_error, ss.str().c_str());
+  }
+#endif
   _method_setup = method;
   _method = method;
 }

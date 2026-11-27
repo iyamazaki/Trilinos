@@ -135,7 +135,8 @@ template <typename ArgUplo, typename ArgTransA> struct Trmv<ArgUplo, ArgTransA, 
       const auto dC = Kokkos::subview(C, range_type(0, mn), Kokkos::ALL());
       Kokkos::deep_copy(dC, dB); // TODO: Can we skip this?
       if (nB == 1) {
-        r_val = Blas<value_type>::trmv(handle, ArgUplo::cublas_param, ArgTransA::cublas_param, diagA.cublas_param, mA,
+        r_val = Blas<value_type>::trmv(handle, ArgUplo::cublas_param,
+                                       ArgTransA::cublas_param, diagA.cublas_param, mA,
                                        A.data(), A.stride(1), C.data(), C.stride(0));
         if (nA > mA) {
           if (!transA) {
@@ -159,7 +160,8 @@ template <typename ArgUplo, typename ArgTransA> struct Trmv<ArgUplo, ArgTransA, 
       } else {
         for (ordinal_type j = 0; j < nB; j++) {
           const auto Cj = Kokkos::subview(C, Kokkos::ALL(), range_type(j, j + 1));
-          r_val = Blas<value_type>::trmv(handle, ArgUplo::cublas_param, ArgTransA::cublas_param, diagA.cublas_param, mA,
+          r_val = Blas<value_type>::trmv(handle, ArgUplo::cublas_param,
+                                         ArgTransA::cublas_param, diagA.cublas_param, mA,
                                          A.data(), A.stride(1), Cj.data(), Cj.stride(0));
         }
         if (nA > mA) {
@@ -267,6 +269,98 @@ template <typename ArgUplo, typename ArgTransA> struct Trmv<ArgUplo, ArgTransA, 
     return r_val;
   }
 #endif
+#if defined(KOKKOS_ENABLE_SYCL)
+  template <typename DiagType, typename ViewTypeA, typename ViewTypeB, typename ViewTypeC>
+  inline static int oneapi_invoke(sycl::queue &handle, const DiagType diagA, const ViewTypeA &A,
+                                  const ViewTypeB &B, const ViewTypeC &C) {
+    using value_type = typename ViewTypeA::non_const_value_type;
+    using range_type = Kokkos::pair<ordinal_type, ordinal_type>;
+
+    const value_type one(1);
+    const value_type zero(0);
+
+    const ordinal_type mB = B.extent(0), nB = B.extent(1);
+    const ordinal_type mA = A.extent(0), nA = A.extent(1);
+    const ordinal_type mC = C.extent(0), nC = C.extent(1);
+    const bool transA = (ArgTransA::param != 'N' && ArgTransA::param != 'n');
+
+    int r_val(0);
+    if (mB > 0 && nB > 0) {
+      const ordinal_type mn = (mA < nA ? mA : nA);
+      const auto dB = Kokkos::subview(B, range_type(0, mn), Kokkos::ALL());
+      const auto dC = Kokkos::subview(C, range_type(0, mn), Kokkos::ALL());
+      Kokkos::deep_copy(dC, dB); // TODO: Can we skip this?
+      sycl::event ev;
+      try {
+        if (nB == 1) {
+          ev = oneapi::mkl::blas::column_major::trmv(handle, ArgUplo::oneapi_param,
+                                                     ArgTransA::oneapi_param, diagA.oneapi_param, mA,
+                                                     A.data(), A.stride(1), C.data(), C.stride(0));
+          ev.wait_and_throw();
+          if (nA > mA) {
+            if (!transA) {
+              const auto A12 = Kokkos::subview(A, Kokkos::ALL(), range_type(mA, nA));
+              const auto B21 = Kokkos::subview(B, range_type(mA, nA), Kokkos::ALL());
+              ev = oneapi::mkl::blas::column_major::gemv(handle, ArgTransA::oneapi_param, mA, nA-mA,
+                                                         one, A12.data(), A12.stride(1),
+                                                              B21.data(), B21.stride(0), 
+                                                         one, C.data(),   C.stride(0));
+            } else {
+              const auto A12 = Kokkos::subview(A, Kokkos::ALL(), range_type(mA, nA));
+              const auto C21 = Kokkos::subview(C, range_type(mA, mC), Kokkos::ALL());
+              ev = oneapi::mkl::blas::column_major::gemv(handle, ArgTransA::oneapi_param, mA, nA-mA,
+                                                         one,  A12.data(), A12.stride(1),
+                                                               B.data(),   B.stride(0), 
+                                                         zero, C21.data(), C21.stride(0));
+            }
+            ev.wait_and_throw();
+          } else if (nA != mA) {
+            TACHO_TEST_FOR_ABORT(true, "Tall-skinny TRMV not implemented");
+          }
+        } else {
+          for (ordinal_type j = 0; j < nB; j++) {
+            const auto Cj = Kokkos::subview(C, Kokkos::ALL(), range_type(j, j + 1));
+            ev = oneapi::mkl::blas::column_major::trmv(handle, ArgUplo::oneapi_param,
+                                                       ArgTransA::oneapi_param, diagA.oneapi_param, mA,
+                                                       A.data(), A.stride(1), Cj.data(), Cj.stride(0));
+            ev.wait_and_throw();
+          }
+          if (nA > mA) {
+            if (!transA) {
+              const auto A12 = Kokkos::subview(A, Kokkos::ALL(), range_type(mA, nA));
+              const auto B21 = Kokkos::subview(B, range_type(mA, nA), Kokkos::ALL());
+              ev = oneapi::mkl::blas::column_major::gemm(handle, ArgTransA::oneapi_param,
+                                                         Trans::NoTranspose::oneapi_param,
+                                                         mC, nC, nA-mA,
+                                                         one, A12.data(), A12.stride(1),
+                                                              B21.data(), B21.stride(1), 
+                                                         one, C.data(),   C.stride(1));
+            } else {
+              const auto A12 = Kokkos::subview(A, Kokkos::ALL(), range_type(mA, nA));
+              const auto C21 = Kokkos::subview(C, range_type(mA, mC), Kokkos::ALL());
+              ev = oneapi::mkl::blas::column_major::gemm(handle, ArgTransA::oneapi_param,
+                                                         Trans::NoTranspose::oneapi_param,
+                                                         nA-mA, nC, mA,
+                                                         one,  A12.data(), A12.stride(1),
+                                                                 B.data(),   B.stride(1), 
+                                                         zero, C21.data(), C21.stride(1));
+            }
+            ev.wait_and_throw();
+          } else if (nA != mA) {
+            TACHO_TEST_FOR_ABORT(true, "Tall-skinny TRMV not implemented");
+          }
+        }
+      } catch (const oneapi::mkl::lapack::exception& e) {
+        std::cout << " oneAPI trmv threw: " << e.what() << std::endl;
+        r_val = e.info();
+      } catch (const std::exception& e) {
+        std::cout << " trmv threw: " << e.what() << std::endl;
+        r_val = -1;
+      }
+    }
+    return r_val;
+  }
+#endif
 
   template <typename MemberType, typename DiagType, typename ViewTypeA, typename ViewTypeB, typename ViewTypeC>
   inline static int invoke(MemberType &member, const DiagType diagA, const ViewTypeA &A, const ViewTypeB &B, const ViewTypeC &C) {
@@ -292,6 +386,10 @@ template <typename ArgUplo, typename ArgTransA> struct Trmv<ArgUplo, ArgTransA, 
 #if defined(KOKKOS_ENABLE_HIP)
     if (std::is_same<memory_space, Kokkos::HIPSpace>::value)
       r_val = rocblas_invoke(member, diagA, A, B, C);
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value)
+      r_val = oneapi_invoke(member, diagA, A, B, C);
 #endif
 
     return r_val;

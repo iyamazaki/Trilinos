@@ -72,6 +72,63 @@ template <> struct LDL<Uplo::Lower, Algo::OnDevice> {
   }
 #endif
 
+#if defined(KOKKOS_ENABLE_SYCL)
+  // Direct call to oneAPI (instead of Lapack_External) to avoid conflics with MKL (which is include through oneAPI)
+  template <typename ViewTypeA, typename ViewTypeP, typename ViewTypeW>
+  inline static int oneapi_invoke(sycl::queue &handle, const ViewTypeA &A, const ViewTypeP &P,
+                                  const ViewTypeW &W) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    typedef typename ViewTypeW::non_const_value_type work_value_type;
+    typedef typename ViewTypeP::non_const_value_type pivot_ordinal_type;
+    const ordinal_type m = A.extent(0);
+
+    int r_val(0);
+    if (m > 0) {
+      try {
+        value_type *workspace = W.data();
+        int lwork = W.span();
+        if constexpr (std::is_same_v<pivot_ordinal_type, std::int64_t>) {
+          sycl::event ev = oneapi::mkl::lapack::sytrf(
+            handle, oneapi::mkl::uplo::lower, m, A.data(), A.stride(1), P.data(), workspace, lwork);
+          ev.wait_and_throw();
+        } else {
+          typedef typename ViewTypeP::device_type device_type;
+          Kokkos::View<std::int64_t *, device_type> oneapiP("oneapiP", m);
+          sycl::event ev = oneapi::mkl::lapack::sytrf(
+            handle, oneapi::mkl::uplo::lower, m, A.data(), A.stride(1), oneapiP.data(), workspace, lwork);
+          ev.wait_and_throw();
+
+          auto exec_instance = Kokkos::SYCL(handle);
+          Kokkos::RangePolicy<Kokkos::SYCL> range_policy(exec_instance, 0, m);
+          Kokkos::parallel_for(
+              range_policy, KOKKOS_LAMBDA(const ordinal_type i) {
+                P(i) = oneapiP(i);
+          });
+        }
+      } catch (const oneapi::mkl::lapack::exception& e) {
+        std::cout << " oneAPI SYTRF threw: " << e.what() << std::endl;
+        r_val = e.info();
+      } catch (const std::exception& e) {
+        std::cout << " SYTRF threw: " << e.what() << std::endl;
+        r_val = -1;
+      }
+    }
+    return r_val;
+  }
+
+  template <typename ViewTypeA>
+  inline static int oneapi_buffer_size(sycl::queue &handle, const ViewTypeA &A, int *lwork) {
+    typedef typename ViewTypeA::non_const_value_type value_type;
+    const ordinal_type m = A.extent(0);
+
+    int r_val(0);
+    if (m > 0)
+      r_val = oneapi::mkl::lapack::sytrf_scratchpad_size<value_type>(handle, oneapi::mkl::uplo::lower, m, A.stride(1));
+    *lwork = r_val;
+    return r_val;
+  }
+#endif
+
   template <typename MemberType, typename ViewTypeA, typename ViewTypeP, typename ViewTypeW>
   inline static int invoke(MemberType &member, const ViewTypeA &A, const ViewTypeP &P, const ViewTypeW &W) {
     typedef typename ViewTypeA::non_const_value_type value_type;
@@ -116,6 +173,16 @@ template <> struct LDL<Uplo::Lower, Algo::OnDevice> {
         r_val = rocsolver_invoke(member, A, P, W);
     }
 #endif
+
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value) {
+      if (W.span() == 0) {
+        int lwork;
+        r_val = oneapi_buffer_size(member, A, &lwork);
+      } else
+        r_val = oneapi_invoke(member, A, P, W);
+    }
+#endif
     return r_val;
   }
 
@@ -124,7 +191,7 @@ template <> struct LDL<Uplo::Lower, Algo::OnDevice> {
     return LDL<Uplo::Lower, Algo::External>::modify(A, P, D);
   }
 
-#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
   template <typename ExecSpaceType, typename ViewTypeA, typename ViewTypeP, typename ViewTypeD>
   inline static int device_modify(ExecSpaceType &exec_instance, const ViewTypeA &A, const ViewTypeP &P,
                                   const ViewTypeD &D, const bool conjugate) {
@@ -253,6 +320,11 @@ template <> struct LDL<Uplo::Lower, Algo::OnDevice> {
 #endif
 #if defined(KOKKOS_ENABLE_HIP)
     if (std::is_same<memory_space, Kokkos::HIPSpace>::value) {
+      r_val = device_modify(member, A, P, D, conjugate);
+    }
+#endif
+#if defined(KOKKOS_ENABLE_SYCL)
+    if (std::is_same<memory_space, Kokkos::SYCLDeviceUSMSpace>::value) {
       r_val = device_modify(member, A, P, D, conjugate);
     }
 #endif

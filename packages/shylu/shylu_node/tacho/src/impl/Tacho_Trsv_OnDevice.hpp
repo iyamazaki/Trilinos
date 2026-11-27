@@ -169,6 +169,7 @@ template <typename ArgUplo, typename ArgTransA> struct Trsv<ArgUplo, ArgTransA, 
 #endif
 #if defined(TACHO_HAVE_KOKKOS_KERNELS)
     // Default (in case all the above did not return)
+    // TODO: needs exec_instance (to make sure it runs on same stream and avoid sync)
     r_val = KokkosKernels_invoke(diagA, A, B);
 #endif
     return r_val;
